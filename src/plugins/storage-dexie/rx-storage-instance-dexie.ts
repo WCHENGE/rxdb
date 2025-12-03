@@ -5,9 +5,6 @@ import {
 import {
     now,
     ensureNotFalsy,
-    defaultHashSha256,
-    RXDB_UTILS_GLOBAL,
-    PREMIUM_FLAG_HASH,
     hasPremiumFlag
 } from '../utils/index.ts';
 import type {

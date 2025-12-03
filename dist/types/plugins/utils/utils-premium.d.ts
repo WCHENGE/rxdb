@@ -1,5 +1,5 @@
-export declare const PREMIUM_FLAG_HASH = "6da4936d1425ff3a5c44c02342c6daf791d266be3ae8479b8ec59e261df41b93";
-export declare const NON_PREMIUM_COLLECTION_LIMIT = 16;
+export declare const PREMIUM_FLAG_HASH = "6da4936d1425ff3a5c44c02342c6daf791d266be3ae8479b8ec59e261df41b";
+export declare const NON_PREMIUM_COLLECTION_LIMIT: number;
 /**
  * Here we check if the premium flag has been set.
  * This code exists in the open source version of RxDB.
@@ -7,4 +7,4 @@ export declare const NON_PREMIUM_COLLECTION_LIMIT = 16;
  * However you might better spend this time developing your real project
  * and supporting the RxDB efforts by buying premium.
  */
-export declare function hasPremiumFlag(): Promise<boolean>;
+export declare function hasPremiumFlag(): Promise<true>;
