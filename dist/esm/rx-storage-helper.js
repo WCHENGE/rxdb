@@ -9,7 +9,7 @@ import { PROMISE_RESOLVE_TRUE, RXDB_VERSION, RX_META_LWT_MINIMUM, appendToArray,
 import { filter, map, startWith, switchMap } from 'rxjs';
 import { normalizeMangoQuery, prepareQuery } from "./rx-query-helper.js";
 import { runPluginHooks } from "./hooks.js";
-export var INTERNAL_STORAGE_NAME = '#internal';
+export var INTERNAL_STORAGE_NAME = 'db_internal';
 export var RX_DATABASE_LOCAL_DOCS_STORAGE_NAME = 'storage_local';
 export async function getSingleDocument(storageInstance, documentId) {
   var results = await storageInstance.findDocumentsById([documentId], false);
