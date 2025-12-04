@@ -33,7 +33,7 @@ var _hooks = require("./hooks.js");
  * Helper functions for accessing the RxStorage instances.
  */
 
-var INTERNAL_STORAGE_NAME = exports.INTERNAL_STORAGE_NAME = 'storage_internal';
+var INTERNAL_STORAGE_NAME = exports.INTERNAL_STORAGE_NAME = '#internal';
 var RX_DATABASE_LOCAL_DOCS_STORAGE_NAME = exports.RX_DATABASE_LOCAL_DOCS_STORAGE_NAME = 'storage_local';
 async function getSingleDocument(storageInstance, documentId) {
   var results = await storageInstance.findDocumentsById([documentId], false);

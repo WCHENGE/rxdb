@@ -25,7 +25,7 @@ export function getDexieDbWithTables(
     settings: DexieSettings,
     schema: RxJsonSchema<any>
 ): DexieStorageInternals {
-    const dexieDbName = `${databaseName}--${collectionName}--v${schema.version}`;
+    const dexieDbName = `${databaseName}--${schema.version}--${collectionName}`;
 
     const state = getFromMapOrCreate(
         DEXIE_STATE_DB_BY_NAME,

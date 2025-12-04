@@ -3,7 +3,7 @@
  */
 import type { BulkWriteRow, BulkWriteRowProcessed, CategorizeBulkWriteRowsOutput, RxAttachmentData, RxAttachmentWriteData, RxCollection, RxDatabase, RxDocumentData, RxDocumentWriteData, RxJsonSchema, RxStorageWriteError, RxStorageInstance, RxStorageInstanceCreationParams, StringKeys, RxStorage, FilledMangoQuery, RxStorageBulkWriteResponse } from './types/index.d.ts';
 import { Observable } from 'rxjs';
-export declare const INTERNAL_STORAGE_NAME = "storage_internal";
+export declare const INTERNAL_STORAGE_NAME = "db_internal";
 export declare const RX_DATABASE_LOCAL_DOCS_STORAGE_NAME = "storage_local";
 export declare function getSingleDocument<RxDocType>(storageInstance: RxStorageInstance<RxDocType, any, any>, documentId: string): Promise<RxDocumentData<RxDocType> | undefined>;
 /**

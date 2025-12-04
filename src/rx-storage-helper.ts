@@ -49,7 +49,7 @@ import { Observable, filter, map, startWith, switchMap } from 'rxjs';
 import { normalizeMangoQuery, prepareQuery } from './rx-query-helper.ts';
 import { runPluginHooks } from './hooks.ts';
 
-export const INTERNAL_STORAGE_NAME = 'storage_internal';
+export const INTERNAL_STORAGE_NAME = 'db_internal';
 export const RX_DATABASE_LOCAL_DOCS_STORAGE_NAME = 'storage_local';
 
 export async function getSingleDocument<RxDocType>(
