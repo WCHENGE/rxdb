@@ -8,7 +8,7 @@ export var RX_STORAGE_NAME_DEXIE = 'dexie';
 var DEXIE_STATE_DB_BY_NAME = new Map();
 var REF_COUNT_PER_DEXIE_DB = new Map();
 export function getDexieDbWithTables(databaseName, collectionName, settings, schema) {
-  var dexieDbName = 'rxdb-dexie-' + databaseName + '--' + schema.version + '--' + collectionName;
+  var dexieDbName = databaseName + "--" + collectionName + "--v" + schema.version;
   var state = getFromMapOrCreate(DEXIE_STATE_DB_BY_NAME, dexieDbName, () => {
     var value = (async () => {
       /**

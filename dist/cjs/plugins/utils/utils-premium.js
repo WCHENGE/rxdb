@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.PREMIUM_FLAG_HASH = exports.NON_PREMIUM_COLLECTION_LIMIT = void 0;
 exports.hasPremiumFlag = hasPremiumFlag;
 var _utilsPromise = require("./utils-promise.js");
-var PREMIUM_FLAG_HASH = exports.PREMIUM_FLAG_HASH = '6da4936d1425ff3a5c44c02342c6daf791d266be3ae8479b8ec59e261df41b';
+var PREMIUM_FLAG_HASH = exports.PREMIUM_FLAG_HASH = '6da4936d1425ff3a5c44c02342c6daf791d266be3ae8479b8ec59e261df41b93';
 var NON_PREMIUM_COLLECTION_LIMIT = exports.NON_PREMIUM_COLLECTION_LIMIT = Number.MAX_SAFE_INTEGER;
 
 /**
