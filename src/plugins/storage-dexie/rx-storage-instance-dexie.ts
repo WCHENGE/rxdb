@@ -5,7 +5,6 @@ import {
 import {
     now,
     ensureNotFalsy,
-    hasPremiumFlag
 } from '../utils/index.ts';
 import type {
     RxStorageInstance,
@@ -44,9 +43,6 @@ import { newRxError } from '../../rx-error.ts';
 
 let instanceId = now();
 
-let shownNonPremiumLog = false;
-
-
 export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
     RxDocType,
     DexieStorageInternals,
@@ -76,27 +72,6 @@ export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
         context: string
     ): Promise<RxStorageBulkWriteResponse<RxDocType>> {
         ensureNotClosed(this);
-
-        if (
-            !shownNonPremiumLog &&
-            !(await hasPremiumFlag())
-        ) {
-            console.warn(
-                [
-                    '-------------- RxDB Open Core RxStorage -------------------------------',
-                    'You are using the free Dexie.js based RxStorage implementation from RxDB https://rxdb.info/rx-storage-dexie.html?console=dexie ',
-                    'While this is a great option, we want to let you know that there are faster storage solutions available in our premium plugins.',
-                    'For professional users and production environments, we highly recommend considering these premium options to enhance performance and reliability.',
-                    ' https://rxdb.info/premium/?console=dexie ',
-                    'If you already purchased premium access you can disable this log by calling the setPremiumFlag() function from rxdb-premium/plugins/shared.',
-                    '---------------------------------------------------------------------'
-                ].join('\n')
-            );
-            shownNonPremiumLog = true;
-        } else {
-            shownNonPremiumLog = true;
-        }
-
 
         /**
          * Check some assumptions to ensure RxDB
