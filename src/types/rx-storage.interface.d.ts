@@ -27,16 +27,17 @@ import type {
  * @link https://github.com/pubkey/rxdb/issues/1636
  */
 
-
 /**
  * A RxStorage is a module that acts
  * as a factory that can create multiple RxStorageInstance
  * objects.
  *
- * All data inputs and outputs of a StorageInstance must be plain json objects.
- * Do not use Map, Set or anything else that cannot be JSON.stringify-ed.
+ * All data inputs and outputs of a StorageInstance must be structured-cloneable.
+ * Document data must be plain JSON objects. Attachment data uses Blob.
+ * Do not use Map, Set or anything else that is not structured-cloneable.
  * This will ensure that the storage can exchange data
  * when it is a WebWorker or a WASM process or data is send via BroadcastChannel.
+ * The only exception is the WebSocket transport, which serializes at its boundary.
  */
 export interface RxStorage<Internals, InstanceCreationOptions> {
     /**
@@ -211,20 +212,23 @@ export interface RxStorageInstance<
     /**
      * Returns the amount of non-deleted documents
      * that match the given query.
-     * Sort, skip and limit of the query must be ignored!
+     * Must return the same amount as if the equivalent query()
+     * was run and the result array length measured.
+     * For example with .count({limit: 3}) must return the same
+     * as .query({limit: 3}).documents.length .
      */
     count(
         preparedQuery: PreparedQuery<RxDocType>
     ): Promise<RxStorageCountResult>;
 
     /**
-     * Returns the plain data of a single attachment.
+     * Returns the data of a single attachment as a Blob.
      */
     getAttachmentData(
         documentId: string,
         attachmentId: string,
         digest: string
-    ): Promise<string>;
+    ): Promise<Blob>;
 
     /**
      * Returns the current (not the old!) data of all documents that have been changed AFTER the given checkpoint.

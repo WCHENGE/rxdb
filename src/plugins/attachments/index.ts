@@ -1,4 +1,5 @@
 import {
+    distinctUntilChanged,
     map
 } from 'rxjs';
 
@@ -6,8 +7,8 @@ import {
     blobToBase64String,
     blobToString,
     createBlobFromBase64,
+    deepEqual,
     flatClone,
-    getBlobSize,
     PROMISE_RESOLVE_VOID
 } from '../../plugins/utils/index.ts';
 import type {
@@ -20,11 +21,12 @@ import type {
     RxAttachmentWriteData,
     RxCollection,
     RxAttachmentCreatorBase64
-} from '../../types/index.ts';
+} from '../../types/index.d.ts';
 import {
     assignMethodsToAttachment,
     ensureSchemaSupportsAttachments
 } from './attachments-utils.ts';
+import { isWriteAllowed } from '../../rx-collection-helper.ts';
 
 
 
@@ -55,6 +57,7 @@ export class RxAttachment {
     }
 
     remove(): Promise<void> {
+        isWriteAllowed(this.doc.collection);
         return this.doc.collection.incrementalWriteQueue.addWrite(
             this.doc._data,
             docWriteData => {
@@ -68,12 +71,17 @@ export class RxAttachment {
      * returns the data for the attachment
      */
     async getData(): Promise<Blob> {
-        const plainDataBase64 = await this.getDataBase64();
-        const ret = await createBlobFromBase64(
-            plainDataBase64,
-            this.type as any
+        const blob = await this.doc.collection.storageInstance.getAttachmentData(
+            this.doc.primary,
+            this.id,
+            this.digest
         );
-        return ret;
+        // Some storage layers return blobs without the original MIME type.
+        // Ensure the returned Blob has the attachment's MIME type.
+        if (blob && blob.type !== this.type) {
+            return blob.slice(0, blob.size, this.type);
+        }
+        return blob;
     }
 
     async getStringData(): Promise<string> {
@@ -83,12 +91,8 @@ export class RxAttachment {
     }
 
     async getDataBase64(): Promise<string> {
-        const plainDataBase64 = await this.doc.collection.storageInstance.getAttachmentData(
-            this.doc.primary,
-            this.id,
-            this.digest
-        );
-        return plainDataBase64;
+        const blob = await this.getData();
+        return blobToBase64String(blob);
     }
 }
 
@@ -106,23 +110,57 @@ export function fromStorageInstanceResult<RxDocType>(
     });
 }
 
+async function _putAttachmentsImpl<RxDocType>(
+    doc: RxDocument<RxDocType>,
+    attachments: RxAttachmentCreator[]
+): Promise<RxAttachment[]> {
+    ensureSchemaSupportsAttachments(doc);
+    isWriteAllowed(doc.collection);
 
+    if (attachments.length === 0) {
+        return [];
+    }
+
+    const prepared = await Promise.all(
+        attachments.map(async (att) => ({
+            id: att.id,
+            type: att.type,
+            data: att.data,
+            digest: await doc.collection.database.hashFunction(att.data)
+        }))
+    );
+
+    const writeResult = await doc.collection.incrementalWriteQueue.addWrite(
+        doc._data,
+        (docWriteData: RxDocumentWriteData<RxDocType>) => {
+            docWriteData = flatClone(docWriteData);
+            docWriteData._attachments = flatClone(docWriteData._attachments);
+            for (const att of prepared) {
+                docWriteData._attachments[att.id] = {
+                    length: att.data.size,
+                    type: att.type,
+                    data: att.data,
+                    digest: att.digest
+                };
+            }
+            return docWriteData;
+        }
+    );
+
+    const newDocument = doc.collection._docCache.getCachedRxDocument(writeResult);
+    return prepared.map((att) => fromStorageInstanceResult(
+        att.id,
+        writeResult._attachments[att.id],
+        newDocument
+    ));
+}
 
 export async function putAttachment<RxDocType>(
     this: RxDocument<RxDocType>,
     attachmentData: RxAttachmentCreator
 ): Promise<RxAttachment> {
-    ensureSchemaSupportsAttachments(this);
-
-    const dataSize = getBlobSize(attachmentData.data);
-    const dataString = await blobToBase64String(attachmentData.data);
-
-    return this.putAttachmentBase64({
-        id: attachmentData.id,
-        length: dataSize,
-        type: attachmentData.type,
-        data: dataString
-    }) as any;
+    const results = await _putAttachmentsImpl(this, [attachmentData]);
+    return results[0];
 }
 
 export async function putAttachmentBase64<RxDocType>(
@@ -130,34 +168,22 @@ export async function putAttachmentBase64<RxDocType>(
     attachmentData: RxAttachmentCreatorBase64
 ) {
     ensureSchemaSupportsAttachments(this);
-    const digest = await this.collection.database.hashFunction(attachmentData.data);
+    const blob = await createBlobFromBase64(attachmentData.data, attachmentData.type);
+    return this.putAttachment({
+        id: attachmentData.id,
+        type: attachmentData.type,
+        data: blob
+    });
+}
 
-    const id = attachmentData.id;
-    const type = attachmentData.type;
-    const data = attachmentData.data;
-
-    return this.collection.incrementalWriteQueue.addWrite(
-        this._data,
-        (docWriteData: RxDocumentWriteData<RxDocType>) => {
-            docWriteData = flatClone(docWriteData);
-            docWriteData._attachments = flatClone(docWriteData._attachments);
-            docWriteData._attachments[id] = {
-                length: attachmentData.length,
-                type,
-                data,
-                digest
-            };
-            return docWriteData;
-        }).then(writeResult => {
-            const newDocument = this.collection._docCache.getCachedRxDocument(writeResult);
-            const attachmentDataOfId = writeResult._attachments[id];
-            const attachment = fromStorageInstanceResult(
-                id,
-                attachmentDataOfId,
-                newDocument
-            );
-            return attachment;
-        });
+/**
+ * Write multiple attachments in a single atomic operation.
+ */
+export function putAttachments<RxDocType>(
+    this: RxDocument<RxDocType>,
+    attachments: RxAttachmentCreator[]
+): Promise<RxAttachment[]> {
+    return _putAttachmentsImpl(this, attachments);
 }
 
 /**
@@ -217,16 +243,16 @@ export async function preMigrateDocument<RxDocType>(
             Object.keys(attachments).map(async (attachmentId) => {
                 const attachment: RxAttachmentData = attachments[attachmentId];
                 const docPrimary: string = (data.docData as any)[data.oldCollection.schema.primaryPath];
-                const rawAttachmentData = await data.oldCollection.storageInstance.getAttachmentData(
+                const rawAttachmentBlob = await data.oldCollection.storageInstance.getAttachmentData(
                     docPrimary,
                     attachmentId,
                     attachment.digest
                 );
-                const digest = await data.oldCollection.database.hashFunction(rawAttachmentData);
+                const digest = await data.oldCollection.database.hashFunction(rawAttachmentBlob);
                 newAttachments[attachmentId] = {
-                    length: attachment.length,
+                    length: rawAttachmentBlob.size,
                     type: attachment.type,
-                    data: rawAttachmentData,
+                    data: rawAttachmentBlob,
                     digest
                 };
             })
@@ -254,6 +280,7 @@ export const RxDBAttachmentsPlugin: RxPlugin = {
     prototypes: {
         RxDocument: (proto: any) => {
             proto.putAttachment = putAttachment;
+            proto.putAttachments = putAttachments;
             proto.putAttachmentBase64 = putAttachmentBase64;
             proto.getAttachment = getAttachment;
             proto.allAttachments = allAttachments;
@@ -261,18 +288,27 @@ export const RxDBAttachmentsPlugin: RxPlugin = {
                 get: function allAttachments$(this: RxDocument) {
                     return this.$
                         .pipe(
-                            map(rxDocument => Object.entries(
-                                rxDocument.toJSON(true)._attachments
+                            /**
+                             * Only emit when the set of attachments has actually changed.
+                             * Without this filter, any unrelated document revision
+                             * (e.g. a field update) would cause a new emission, which is
+                             * both wasteful and surprising for consumers that only care
+                             * about attachment changes.
+                             */
+                            distinctUntilChanged((prev: RxDocument, curr: RxDocument) => deepEqual(
+                                Object.keys((prev as any)._data._attachments || {}),
+                                Object.keys((curr as any)._data._attachments || {})
                             )),
-                            map(entries => {
-                                return (entries as any)
-                                    .map(([id, attachmentData]: any) => {
-                                        return fromStorageInstanceResult(
-                                            id,
-                                            attachmentData,
-                                            this
-                                        );
-                                    });
+                            map((rxDocument: RxDocument) => {
+                                return Object.entries(
+                                    rxDocument.toJSON(true)._attachments
+                                ).map(([id, attachmentData]: [string, any]) => {
+                                    return fromStorageInstanceResult(
+                                        id,
+                                        attachmentData,
+                                        rxDocument
+                                    );
+                                });
                             })
                         );
                 }

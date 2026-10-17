@@ -2,6 +2,7 @@ import { Observable, Subject, Subscription } from 'rxjs';
 import {
     PROMISE_RESOLVE_TRUE,
     PROMISE_RESOLVE_VOID,
+    arrayBufferToBase64,
     ensureNotFalsy,
     now,
     toArray
@@ -62,8 +63,8 @@ export type ChangeStreamStoredData<RxDocType> = {
 
 
 /**
- * StorageEvents are not send to the same
- * browser tab where they where created.
+ * StorageEvents are not sent to the same
+ * browser tab where they were created.
  * This makes it hard to write unit tests
  * so we redistribute the events here instead.
  */
@@ -129,14 +130,19 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
         public readonly multiInstance: boolean,
         public readonly databaseInstanceToken: string
     ) {
-        this.localStorage = settings.localStorage ? settings.localStorage : window.localStorage;
+        this.localStorage = settings.localStorage ? settings.localStorage : (typeof window !== 'undefined' ? window.localStorage : undefined as any);
         this.primaryPath = getPrimaryFieldOfPrimaryKey(this.schema.primaryKey) as any;
         this.docsKey = 'RxDB-ls-doc-' + this.databaseName + '--' + this.collectionName + '--' + this.schema.version;
         this.changestreamStorageKey = 'RxDB-ls-changes-' + this.databaseName + '--' + this.collectionName + '--' + this.schema.version;
         this.indexesKey = 'RxDB-ls-idx-' + this.databaseName + '--' + this.collectionName + '--' + this.schema.version;
         this.attachmentsKey = 'RxDB-ls-attachment-' + this.databaseName + '--' + this.collectionName + '--' + this.schema.version;
 
-        this.changeStreamSub = getStorageEventStream().subscribe((ev) => {
+        this.changeStreamSub = getStorageEventStream().subscribe((ev: {
+            fromStorageEvent: boolean;
+            key: string;
+            newValue: string | null;
+            databaseInstanceToken?: string;
+        }) => {
             if (
                 ev.key !== this.changestreamStorageKey ||
                 !ev.newValue ||
@@ -182,13 +188,35 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
     }
 
 
-    bulkWrite(
+    async bulkWrite(
         documentWrites: BulkWriteRow<RxDocType>[],
         context: string
     ): Promise<RxStorageBulkWriteResponse<RxDocType>> {
         const ret: RxStorageBulkWriteResponse<RxDocType> = {
             error: []
         };
+
+        /**
+         * Pre-convert all Blob attachment data to base64 BEFORE
+         * calling categorizeBulkWriteRows. localStorage has no transactions
+         * and is non-async, so all writes after the conflict check
+         * must be synchronous to avoid interleaving.
+         */
+        const attachmentBase64Map = new Map<Blob, string>();
+        await Promise.all(
+            documentWrites.map(async (row) => {
+                if (row.document._attachments) {
+                    await Promise.all(
+                        Object.values(row.document._attachments).map(async (att: any) => {
+                            if (att.data instanceof Blob) {
+                                const ab = await att.data.arrayBuffer();
+                                attachmentBase64Map.set(att.data, arrayBufferToBase64(ab));
+                            }
+                        })
+                    );
+                }
+            })
+        );
 
         const docsInDb = new Map<RxDocumentData<RxDocType>[StringKeys<RxDocType>] | string, RxDocumentData<RxDocType>>();
         documentWrites.forEach(row => {
@@ -285,21 +313,25 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
             this.setIndex(index[i].index, indexValue);
         });
 
-        // attachments
+        // attachments — use pre-converted base64 data (synchronous)
         categorized.attachmentsAdd.forEach(attachment => {
+            const base64 = ensureNotFalsy(attachmentBase64Map.get(attachment.attachmentData.data));
+            const mimeType = attachment.attachmentData.type || 'application/octet-stream';
             this.localStorage.setItem(
                 this.attachmentsKey +
                 '-' + attachment.documentId +
                 '||' + attachment.attachmentId,
-                attachment.attachmentData.data
+                'data:' + mimeType + ';base64,' + base64
             );
         });
         categorized.attachmentsUpdate.forEach(attachment => {
+            const base64 = ensureNotFalsy(attachmentBase64Map.get(attachment.attachmentData.data));
+            const mimeType = attachment.attachmentData.type || 'application/octet-stream';
             this.localStorage.setItem(
                 this.attachmentsKey +
                 '-' + attachment.documentId +
                 '||' + attachment.attachmentId,
-                attachment.attachmentData.data
+                'data:' + mimeType + ';base64,' + base64
             );
         });
         categorized.attachmentsRemove.forEach(attachment => {
@@ -358,7 +390,12 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
         const query = preparedQuery.query;
 
         const skip = query.skip ? query.skip : 0;
-        const limit = query.limit ? query.limit : Infinity;
+        /**
+         * Use typeof so an explicit `limit: 0` from the mango query is
+         * honored. The previous truthy check treated `0` as "no limit"
+         * and returned all matching documents.
+         */
+        const limit = typeof query.limit === 'number' ? query.limit : Infinity;
         const skipPlusLimit = skip + limit;
 
         let queryMatcher: QueryMatcher<RxDocumentData<RxDocType>> | false = false;
@@ -441,6 +478,10 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
         });
     }
 
+    /**
+     * Returns the same count as query().documents.length
+     * to fulfill the RxStorageInstance interface contract.
+     */
     async count(
         preparedQuery: PreparedQuery<RxDocType>
     ): Promise<RxStorageCountResult> {
@@ -514,9 +555,18 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
         return PROMISE_RESOLVE_TRUE;
     }
 
-    async getAttachmentData(documentId: string, attachmentId: string): Promise<string> {
-        const data = this.localStorage.getItem(this.attachmentsKey + '-' + documentId + '||' + attachmentId);
-        return ensureNotFalsy(data);
+    async getAttachmentData(documentId: string, attachmentId: string): Promise<Blob> {
+        const stored = ensureNotFalsy(
+            this.localStorage.getItem(this.attachmentsKey + '-' + documentId + '||' + attachmentId)
+        );
+        // Stored value is a data URL like "data:<mime>;base64,<payload>".
+        // Fall back to application/octet-stream for legacy bare base64 payloads.
+        let dataUrl = stored;
+        if (!stored.startsWith('data:')) {
+            dataUrl = 'data:application/octet-stream;base64,' + stored;
+        }
+        const response = await fetch(dataUrl);
+        return response.blob();
     }
 
     remove(): Promise<void> {
@@ -527,12 +577,20 @@ export class RxStorageInstanceLocalstorage<RxDocType> implements RxStorageInstan
         this.changeStreamSub.unsubscribe();
         this.localStorage.removeItem(this.changestreamStorageKey);
 
-        // delete documents
+        // delete documents and their attachments
         const firstIndex = Object.values(this.internals.indexes)[0];
         const indexedDocs = this.getIndex(firstIndex.index);
         indexedDocs.forEach(row => {
             const docId = row[1];
+            const doc = this.getDoc(docId);
             this.localStorage.removeItem(this.docsKey + '-' + docId);
+            if (doc && doc._attachments) {
+                Object.keys(doc._attachments).forEach(attachmentId => {
+                    this.localStorage.removeItem(
+                        this.attachmentsKey + '-' + docId + '||' + attachmentId
+                    );
+                });
+            }
         });
 
         // delete indexes

@@ -2,7 +2,10 @@
 title: Migration Storage
 slug: migration-storage.html
 description: Effortlessly migrate your data between storages in RxDB using the Storage Migration plugin. Retain your documents when switching storages or major versions.
+image: /headers/migration-storage.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # Storage Migration
 
@@ -47,7 +50,9 @@ await migrateStorage({
     oldDatabaseName: 'myOldDatabaseName',
     oldStorage: getRxStorageLocalstorage(), // RxStorage of the old database
     batchSize: 500, // batch size
-    parallel: false, // <- true if it should migrate all collections in parallel. False (default) if should migrate in serial
+    // true: migrate all collections in parallel
+    // false (default): migrate in serial
+    parallel: false,
     afterMigrateBatch: (input: AfterMigrateBatchHandlerInput) => {
         console.log('storage migration: batch processed');
     }
@@ -80,7 +85,10 @@ Then you can run the migration by providing the old storage:
 ```ts
 /* ... */
 import { migrateStorage } from 'rxdb/plugins/migration-storage';
-import { getRxStorageLocalstorage } from 'rxdb-old/plugins/storage-localstorage'; // <- import from the old RxDB version
+// import from the old RxDB version
+import {
+    getRxStorageLocalstorage
+} from 'rxdb-old/plugins/storage-localstorage';
 
 await migrateStorage({
     database: db as any,
@@ -128,3 +136,13 @@ import {
 } from 'rxdb-premium-old/dist/lib/shared/version-check.js';
 disableVersionCheck();
 ```
+
+## FAQ
+
+<Faq>
+<FaqItem question="What is storage migration and how to run schema migrations in PouchDB vs RxDB?">
+
+Storage migration involves physically shifting all existing documents from one underlying RxStorage adapter (e.g., IndexedDB) into an entirely different storage engine (e.g., SQLite), often required during platform upgrades. Unlike PouchDB which lacked robust native migration rails, **[RxDB](./rx-database.md)** enforces distinct boundaries between structural Data Migrations (changing schema formats via the `migrationStrategy` map) and underlying Storage Migrations (`migrateStorage()`). These two distinct mechanisms must *never* be executed simultaneously.
+
+</FaqItem>
+</Faq>

@@ -1,8 +1,14 @@
 ---
-title: Fulltext Search 👑
+title: Fulltext Search
 slug: fulltext-search.html
 description: Master local fulltext search with RxDB's FlexSearch plugin. Enjoy real-time indexing, efficient queries, and offline-first support made easy.
+image: /headers/fulltext-search.jpg
 ---
+
+import {PremiumBlock} from '@site/src/components/premium-block';
+import {Steps} from '@site/src/components/steps';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {FulltextSearchLens} from '@site/src/components/animations/fulltext-search-lens';
 
 
 # Fulltext Search
@@ -11,6 +17,10 @@ To run fulltext search queries on the local data, RxDB has a fulltext search plu
 The index can then be queried efficiently with complex fulltext search operations.
 
 
+
+<DocsAnimation subtitle="Fulltext search over local documents">
+<FulltextSearchLens />
+</DocsAnimation>
 
 ## Benefits of using a local fulltext search
 
@@ -41,9 +51,11 @@ As RxDB is designed with [offline-first applications](./offline-first.md) in min
 
 ## Using the RxDB Fulltext Search
 
-The flexsearch search is a [RxDB Premium Package 👑](/premium/) which must be purchased and imported from the `rxdb-premium` npm package.
+<PremiumBlock />
 
-Step 1: Add the `RxDBFlexSearchPlugin` to RxDB.
+<Steps>
+
+### Step 1: Add the `RxDBFlexSearchPlugin` to RxDB.
 
 ```ts
 import { RxDBFlexSearchPlugin } from 'rxdb-premium/plugins/flexsearch';
@@ -51,12 +63,13 @@ import { addRxPlugin } from 'rxdb/plugins/core';
 addRxPlugin(RxDBFlexSearchPlugin);
 ```
 
-Step 2: Create a `RxFulltextSearch` instance on top of a collection with the `addFulltextSearch()` function.
+### Step 2: Create a `RxFulltextSearch` instance on top of a collection with the `addFulltextSearch()` function.
 
 ```ts
 import { addFulltextSearch } from 'rxdb-premium/plugins/flexsearch';
 const flexSearch = await addFulltextSearch({
-    // unique identifier. Used to store metadata and continue indexing on restarts/reloads.
+    // unique identifier. Used to store metadata
+    // and continue indexing on restarts/reloads.
     identifier: 'my-search',
     // The source collection on whose documents the search is based on
     collection: myRxCollection,
@@ -76,7 +89,8 @@ const flexSearch = await addFulltextSearch({
     /**
      * (Optional)
      * lazy: Initialize the in memory fulltext index at the first search query.
-     * instant: Directly initialize so that the index is already there on the first query.
+     * instant: Directly initialize so that the
+     * index is already there on the first query.
      * Default: 'instant'
      */
     initialization: 'instant',
@@ -88,7 +102,7 @@ const flexSearch = await addFulltextSearch({
 });
 ```
 
-Step 3: Run a search operation:
+### Step 3: Run a search operation:
 
 
 ```ts
@@ -101,3 +115,5 @@ const foundDocuments = await flexSearch.find('foobar');
  */
 const foundDocuments = await flexSearch.find('foobar', { limit: 10 });
 ```
+
+</Steps>

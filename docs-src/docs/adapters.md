@@ -1,6 +1,8 @@
 ---
 title: PouchDB Adapters
 slug: adapters.html
+description: Overview of PouchDB adapters for RxDB, including options for browser and Node.js environments. The PouchDB RxStorage has been removed and is no longer available for new projects.
+image: /headers/adapters.jpg
 ---
 
 # PouchDB Adapters
@@ -8,7 +10,7 @@ slug: adapters.html
 
 
 When you use PouchDB `RxStorage`, there are many adapters that define where the data has to be stored.
-Depending on which environment you work in, you can choose between different adapters. For example, in the browser you want to store the data inside of IndexedDB but on NodeJS you want to store the data on the filesystem.
+Depending on which environment you work in, you can choose between different adapters. For example, in the browser you want to store the data inside of [IndexedDB](./rx-storage-indexeddb.md) but on [NodeJS](./nodejs-database.md) you want to store the data on the filesystem.
 
 This page is an overview over the different adapters with recommendations on what to use where.
 
@@ -55,7 +57,8 @@ With RxDB you can also use adapters that implement [abstract-leveldown](https://
 ```js
 // npm install memdown --save
 // npm install pouchdb-adapter-leveldb --save
-addPouchPlugin(require('pouchdb-adapter-leveldb')); // leveldown adapters need the leveldb plugin to work
+// leveldown adapters need the leveldb plugin
+addPouchPlugin(require('pouchdb-adapter-leveldb'));
 
 const memdown = require('memdown');
 
@@ -124,7 +127,8 @@ This adapter uses a [LevelDB C++ binding](https://github.com/Level/leveldown) to
 ```js
 // npm install leveldown --save
 // npm install pouchdb-adapter-leveldb --save
-addPouchPlugin(require('pouchdb-adapter-leveldb')); // leveldown adapters need the leveldb plugin to work
+// leveldown adapters need the leveldb plugin
+addPouchPlugin(require('pouchdb-adapter-leveldb'));
 const leveldown = require('leveldown');
 
 const database = await createRxDatabase({
@@ -239,7 +243,8 @@ A leveldown adapter that stores on asyncstorage.
 
 ```js
 // npm install pouchdb-adapter-asyncstorage-down --save
-addPouchPlugin(require('pouchdb-adapter-leveldb')); // leveldown adapters need the leveldb plugin to work
+// leveldown adapters need the leveldb plugin
+addPouchPlugin(require('pouchdb-adapter-leveldb'));
 
 const asyncstorageDown = require('asyncstorage-down');
 
@@ -253,17 +258,20 @@ const database = await createRxDatabase({
 
 ## cordova-sqlite
 
-Uses cordova's global `cordova.sqlitePlugin`. It can be used with cordova and capacitor.
+Uses cordova's global `cordova.sqlitePlugin`. It can be used with cordova and [capacitor](./capacitor-database.md).
 
 ```js
 // npm install pouchdb-adapter-cordova-sqlite --save
 addPouchPlugin(require('pouchdb-adapter-cordova-sqlite'));
 
 /**
- * In capacitor/cordova you have to wait until all plugins are loaded and 'window.sqlitePlugin'
- * can be accessed.
- * This function waits until document deviceready is called which ensures that everything is loaded.
- * @link https://cordova.apache.org/docs/de/latest/cordova/events/events.deviceready.html
+ * In capacitor/cordova you have to wait until
+ * all plugins are loaded and
+ * 'window.sqlitePlugin' can be accessed.
+ * This function waits until document deviceready
+ * is called which ensures everything is loaded.
+ * @link https://cordova.apache.org/docs/de/
+ * latest/cordova/events/events.deviceready.html
  */
 export function awaitCapacitorDeviceReady(): Promise<void> {
     return new Promise(res => {
@@ -284,7 +292,8 @@ async function getDatabase(){
             'cordova-sqlite',
             // pouch settings are passed as second parameter
             {
-                // for ios devices, the cordova-sqlite adapter needs to know where to save the data.
+                // for ios, cordova-sqlite needs
+                // to know where to save data.
                 iosDatabaseLocation: 'Library'
             }
         )

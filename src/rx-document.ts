@@ -1,5 +1,6 @@
 import {
-    Observable
+    Observable,
+    defer
 } from 'rxjs';
 import {
     distinctUntilChanged,
@@ -13,10 +14,10 @@ import {
     trimDots,
     pluginMissing,
     flatClone,
+    deepEqual,
     PROMISE_RESOLVE_NULL,
     RXJS_SHARE_REPLAY_DEFAULTS,
     getProperty,
-    getFromMapOrCreate,
     ensureNotFalsy
 } from './plugins/utils/index.ts';
 import {
@@ -40,6 +41,7 @@ import { overwritable } from './overwritable.ts';
 import { getSchemaByObjectPath } from './rx-schema-helper.ts';
 import { getWrittenDocumentsFromBulkWriteResponse, throwIfIsStorageWriteError } from './rx-storage-helper.ts';
 import { modifierFromPublicToInternal } from './incremental-write.ts';
+import { isWriteAllowed } from './rx-collection-helper.ts';
 
 export const basePrototype = {
     get primaryPath() {
@@ -69,7 +71,8 @@ export const basePrototype = {
             return undefined;
         }
         return _this.$.pipe(
-            map((d: any) => d._data._deleted)
+            map((d: any) => d._data._deleted),
+            distinctUntilChanged()
         );
     },
     get deleted$$() {
@@ -101,14 +104,18 @@ export const basePrototype = {
         const _this: RxDocument<{}, {}, {}> = this as any;
         const id = this.primary;
 
-        return _this.collection.eventBulks$.pipe(
-            filter(bulk => !bulk.isLocal),
-            map(bulk => bulk.events.find(ev => ev.documentId === id)),
-            filter(event => !!event),
-            map(changeEvent => getDocumentDataOfRxChangeEvent(ensureNotFalsy(changeEvent))),
-            startWith(_this.collection._docCache.getLatestDocumentData(id)),
-            distinctUntilChanged((prev, curr) => prev._rev === curr._rev),
-            map(docData => (this as RxDocument<any>).collection._docCache.getCachedRxDocument(docData)),
+        return defer(() => {
+            const latestDocData = _this.collection._docCache.getLatestDocumentData(id);
+            return _this.collection.eventBulks$.pipe(
+                filter((bulk: any) => !bulk.isLocal),
+                map((bulk: any) => bulk.events.find((ev: any) => ev.documentId === id)),
+                filter((event: any) => !!event),
+                map((changeEvent: any) => getDocumentDataOfRxChangeEvent(ensureNotFalsy(changeEvent))),
+                startWith(latestDocData),
+                distinctUntilChanged((prev: RxDocumentData<any>, curr: RxDocumentData<any>) => prev._rev === curr._rev),
+                map((docData: RxDocumentData<any>) => (this as RxDocument<any>).collection._docCache.getCachedRxDocument(docData)),
+            );
+        }).pipe(
             shareReplay(RXJS_SHARE_REPLAY_DEFAULTS)
         );
     },
@@ -158,8 +165,15 @@ export const basePrototype = {
 
         return this.$
             .pipe(
-                map(data => getProperty(data, path)),
-                distinctUntilChanged()
+                map((data: any) => getProperty(data, path)),
+                distinctUntilChanged((prev: any, curr: any) => {
+                    /**
+                     * Use deepEqual for non-primitive values (objects/arrays)
+                     * because the default === comparison always fails across
+                     * document revisions since each revision creates new object references.
+                     */
+                    return deepEqual(prev, curr);
+                })
             );
     },
     get$$(this: RxDocument, path: string) {
@@ -180,35 +194,56 @@ export const basePrototype = {
             this.collection.schema.jsonSchema,
             path
         );
-        const value = this.get(path);
-        if (!value) {
-            return PROMISE_RESOLVE_NULL;
-        }
+        /**
+         * Validate the schema path BEFORE looking at the document value
+         * so that invalid paths and non-ref fields surface as DOC5/DOC6
+         * errors even when the value at that path happens to be falsy.
+         * Previously the `!value` short-circuit below swallowed these errors.
+         */
         if (!schemaObj) {
             throw newRxError('DOC5', {
                 path
             });
         }
-        if (!schemaObj.ref) {
+        const ref = schemaObj.ref
+            ? schemaObj.ref
+            : (schemaObj.type === 'array' && schemaObj.items && (schemaObj.items as any).ref
+                ? (schemaObj.items as any).ref
+                : undefined);
+        if (!ref) {
             throw newRxError('DOC6', {
                 path,
                 schemaObj
             });
         }
 
-        const refCollection: RxCollection = this.collection.database.collections[schemaObj.ref];
+        const refCollection: RxCollection = this.collection.database.collections[ref];
         if (!refCollection) {
             throw newRxError('DOC7', {
-                ref: schemaObj.ref,
+                ref,
                 path,
                 schemaObj
             });
         }
 
+        const value = this.get(path);
+        if (!value) {
+            return PROMISE_RESOLVE_NULL;
+        }
+
         if (schemaObj.type === 'array') {
             return refCollection.findByIds(value).exec().then(res => {
-                const valuesIterator = res.values();
-                return Array.from(valuesIterator) as any;
+                // Preserve the original array order of the ref ids
+                // instead of using the Map iteration order which depends
+                // on the query cache and storage return order.
+                const result = [];
+                for (let i = 0; i < value.length; i++) {
+                    const doc = res.get(value[i]);
+                    if (doc) {
+                        result.push(doc);
+                    }
+                }
+                return result as any;
             });
         } else {
             return refCollection.findOne(value).exec();
@@ -276,7 +311,7 @@ export const basePrototype = {
         _context?: string
     ): Promise<RxDocument> {
         const oldData = this._data;
-        const newData: RxDocumentData<RxDocType> = await modifierFromPublicToInternal<RxDocType>(mutationFunction)(oldData) as any;
+        const newData: RxDocumentData<RxDocType> = await modifierFromPublicToInternal<RxDocType>(mutationFunction)(clone(oldData)) as any;
         return this._saveData(newData, oldData) as any;
     },
 
@@ -290,6 +325,7 @@ export const basePrototype = {
         // used by some plugins that wrap the method
         _context?: string
     ): Promise<RxDocument> {
+        isWriteAllowed(this.collection);
         return this.collection.incrementalWriteQueue.addWrite(
             this._data,
             modifierFromPublicToInternal(mutationFunction)
@@ -336,6 +372,7 @@ export const basePrototype = {
         newData: RxDocumentWriteData<RxDocType>,
         oldData: RxDocumentData<RxDocType>
     ): Promise<RxDocument<RxDocType>> {
+        isWriteAllowed(this.collection);
         newData = flatClone(newData);
 
         // deleted documents cannot be changed
@@ -415,7 +452,15 @@ export function createRxDocumentConstructor(proto = basePrototype) {
 
         // assume that this is always equal to the doc-data in the database
         this._data = docData;
-        this._propertyCache = new Map<string, any>();
+
+        /**
+         * @performance
+         * Lazy-initialize _propertyCache only when first needed
+         * instead of creating a new Map for every RxDocument,
+         * since many documents (e.g. from query results) may never
+         * have their properties accessed via the cache.
+         */
+        this._propertyCache = undefined;
 
         /**
          * because of the prototype-merge,
@@ -470,73 +515,114 @@ export function beforeDocumentUpdateWrite<RxDocType>(
 
 
 function getDocumentProperty(doc: RxDocument, objPath: string): any | null {
-    return getFromMapOrCreate(
-        doc._propertyCache,
-        objPath,
-        () => {
-            const valueObj = getProperty(doc._data, objPath);
+    /**
+     * @performance Lazy-initialize _propertyCache on first access
+     * to avoid creating a Map for documents that never use it.
+     */
+    let propertyCache = doc._propertyCache;
+    if (!propertyCache) {
+        propertyCache = new Map<string, any>();
+        doc._propertyCache = propertyCache;
+    }
+    let ret = propertyCache.get(objPath);
+    if (ret === undefined) {
+        ret = createDocumentPropertyValue(doc, objPath, getProperty(doc._data, objPath));
+        propertyCache.set(objPath, ret);
+    }
+    return ret;
+}
 
-            // direct return if array or non-object
-            if (
-                typeof valueObj !== 'object' ||
-                valueObj === null ||
-                Array.isArray(valueObj)
-            ) {
-                return overwritable.deepFreezeWhenDevMode(valueObj);
-            }
-            const proxy = new Proxy(
-                /**
-                 * In dev-mode, the _data is deep-frozen
-                 * so we have to flat clone here so that
-                 * the proxy can work.
-                 */
-                flatClone(valueObj),
-                {
-                    /**
-                     * @performance is really important here
-                     * because people access nested properties very often
-                     * and might not be aware that this is internally using a Proxy
-                     */
-                    get(target, property: any) {
-                        if (typeof property !== 'string') {
-                            return target[property];
-                        }
+/**
+ * Same as getDocumentProperty() but used when the value
+ * at the objPath is already known.
+ * @performance This avoids walking the whole objPath
+ * from the document root again on each nested property access.
+ */
+function getNestedDocumentProperty(doc: RxDocument, objPath: string, valueObj: any): any | null {
+    const propertyCache = doc._propertyCache as Map<string, any>;
+    let ret = propertyCache.get(objPath);
+    if (ret === undefined) {
+        ret = createDocumentPropertyValue(doc, objPath, valueObj);
+        propertyCache.set(objPath, ret);
+    }
+    return ret;
+}
+
+function createDocumentPropertyValue(doc: RxDocument, objPath: string, valueObj: any): any {
+    // direct return if array or non-object
+    if (
+        typeof valueObj !== 'object' ||
+        valueObj === null ||
+        Array.isArray(valueObj)
+    ) {
+        return overwritable.deepFreezeWhenDevMode(valueObj);
+    }
+    return new Proxy(
+        /**
+         * In dev-mode, the _data is deep-frozen
+         * so we have to flat clone here so that
+         * the proxy can work.
+         */
+        flatClone(valueObj),
+        {
+            /**
+             * @performance is really important here
+             * because people access nested properties very often
+             * and might not be aware that this is internally using a Proxy
+             */
+            get(target, property: any) {
+                if (typeof property !== 'string') {
+                    return target[property];
+                }
 
 
-                        const lastChar = property.charAt(property.length - 1);
-                        if (lastChar === '$') {
-                            if (property.endsWith('$$')) {
-                                const key = property.slice(0, -2);
-                                return doc.get$$(trimDots(objPath + '.' + key));
-                            } else {
-                                const key = property.slice(0, -1);
-                                return doc.get$(trimDots(objPath + '.' + key));
-                            }
-                        } else if (lastChar === '_') {
-                            const key = property.slice(0, -1);
-                            return doc.populate(trimDots(objPath + '.' + key));
-                        } else {
-
-                            /**
-                             * Performance shortcut
-                             * In most cases access to nested properties
-                             * will only access simple values which can be directly returned
-                             * without creating a new Proxy or utilizing the cache.
-                             */
-                            const plainValue = target[property];
-                            if (
-                                typeof plainValue === 'number' ||
-                                typeof plainValue === 'string' ||
-                                typeof plainValue === 'boolean'
-                            ) {
-                                return plainValue;
-                            }
-
-                            return getDocumentProperty(doc, trimDots(objPath + '.' + property));
-                        }
+                const lastChar = property.charAt(property.length - 1);
+                if (lastChar === '$') {
+                    if (property.endsWith('$$')) {
+                        const key = property.slice(0, -2);
+                        return doc.get$$(trimDots(objPath + '.' + key));
+                    } else {
+                        const key = property.slice(0, -1);
+                        return doc.get$(trimDots(objPath + '.' + key));
                     }
-                });
-            return proxy;
-        }
-    );
-};
+                } else if (lastChar === '_') {
+                    const key = property.slice(0, -1);
+                    return doc.populate(trimDots(objPath + '.' + key));
+                } else {
+
+                    /**
+                     * Performance shortcut
+                     * In most cases access to nested properties
+                     * will only access simple values which can be directly returned
+                     * without creating a new Proxy or utilizing the cache.
+                     */
+                    const plainValue = target[property];
+                    if (
+                        typeof plainValue === 'number' ||
+                        typeof plainValue === 'string' ||
+                        typeof plainValue === 'boolean'
+                    ) {
+                        return plainValue;
+                    }
+
+                    const nestedPath = trimDots(objPath + '.' + property);
+                    /**
+                     * Property names that contain path syntax characters
+                     * must use getProperty() so that their cache key
+                     * cannot point to a value of another path.
+                     */
+                    if (
+                        typeof plainValue === 'object' &&
+                        property !== '__proto__' &&
+                        !property.includes('.') &&
+                        !property.includes('[') &&
+                        !property.includes('\\')
+                    ) {
+                        return getNestedDocumentProperty(doc, nestedPath, plainValue);
+                    }
+                    return getDocumentProperty(doc, nestedPath);
+                }
+            }
+        });
+}
+

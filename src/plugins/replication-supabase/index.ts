@@ -86,7 +86,7 @@ export function replicateSupabase<RxDocType>(
         return doc;
     }
     async function fetchById(id: string): Promise<WithDeleted<RxDocType>> {
-        const { data, error } = await options.client
+        const { data, error } = await (options.client as any)
             .from(options.tableName)
             .select()
             .eq(primaryPath, id)
@@ -106,6 +106,7 @@ export function replicateSupabase<RxDocType>(
                 let query = options.client
                     .from(options.tableName)
                     .select('*');
+
 
                 if (options.pull?.queryBuilder) {
                     const maybeNewQuery = options.pull.queryBuilder({
@@ -140,13 +141,13 @@ export function replicateSupabase<RxDocType>(
                     throw error;
                 }
 
-                const lastDoc = lastOfArray(data);
+                const lastDoc: any = lastOfArray(data);
                 const newCheckpoint: SupabaseCheckpoint | undefined = lastDoc ? {
                     id: lastDoc[primaryPath],
                     modified: lastDoc[modifiedField]
                 } : undefined;
 
-                const docs = data.map(row => rowToDoc(row))
+                const docs = data.map((row: any) => rowToDoc(row))
                 return {
                     documents: docs,
                     checkpoint: newCheckpoint
@@ -256,13 +257,22 @@ export function replicateSupabase<RxDocType>(
     if (options.live && options.pull) {
         const startBefore = replicationState.start.bind(replicationState);
         const cancelBefore = replicationState.cancel.bind(replicationState);
-        replicationState.start = () => {
+        replicationState.start = async () => {
+            /**
+             * Use a unique channel name per replication instance.
+             * The supabase client reuses channels with the same topic, so
+             * two replications sharing the same client and tableName would
+             * otherwise get the same channel object. Calling .on() on an
+             * already-joined channel throws in realtime-js v2.101+, which
+             * prevents startBefore() from running and leaves startPromise
+             * forever unresolved.
+             */
             const sub = options.client
-                .channel('realtime:' + options.tableName)
+                .channel(options.replicationIdentifier)
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: options.tableName },
-                    (payload) => {
+                    (payload: any) => {
                         /**
                          * We assume soft-deletes in supabase
                          * and therefore cleanup-hard-deletes
@@ -292,10 +302,18 @@ export function replicateSupabase<RxDocType>(
                     }
                 });
             replicationState.cancel = () => {
-                sub.unsubscribe();
+                options.client.removeChannel(sub);
                 return cancelBefore();
             };
-            return startBefore();
+            await startBefore();
+            /**
+             * Emit a RESYNC after startBefore() resolves so that
+             * pull.stream$ is guaranteed to have a subscriber by now.
+             * Without this, a SUBSCRIBED event emitted by the channel
+             * before _start() subscribes to pull.stream$ would be
+             * silently dropped, causing the initial resync to be missed.
+             */
+            replicationState.reSync();
         };
     }
 

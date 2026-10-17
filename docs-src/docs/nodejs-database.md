@@ -2,16 +2,19 @@
 title: RxDB - The Real-Time Database for Node.js
 slug: nodejs-database.html
 description: Discover how RxDB brings flexible, reactive NoSQL to Node.js. Scale effortlessly, persist data, and power your server-side apps with ease.
+image: /headers/nodejs-database.jpg
 ---
+
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_NODE, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Node.js Database
 
-[RxDB](https://rxdb.info) is a fast, reactive realtime NoSQL **database** made for **JavaScript** applications like Websites, hybrid Apps, [Electron-Apps](./electron-database.md), Progressive Web Apps and **Node.js**. While RxDB was initially created to be used with UI applications, it has been matured and optimized to make it useful for pure server-side use cases. It can be used as embedded, local database inside of the Node.js JavaScript process, or it can be used similar to a database server that Node.js can connect to. The [RxStorage](./rx-storage.md) layer makes it possible to switch out the underlying storage engine which makes RxDB a very flexible database that can be optimized for many scenarios.
+[RxDB](https://rxdb.info) is a fast, reactive realtime NoSQL **database** made for **JavaScript** applications like Websites, [hybrid Apps](./articles/mobile-database.md), [Electron-Apps](./electron-database.md), [Progressive Web Apps](./articles/progressive-web-app-database.md) and **Node.js**. While RxDB was initially created to be used with UI applications, it has been matured and optimized to make it useful for pure server-side use cases. It can be used as embedded, [local database](./articles/local-database.md) inside of the Node.js JavaScript process, or it can be used similar to a database server that Node.js can connect to. The [RxStorage](./rx-storage.md) layer makes it possible to switch out the underlying storage engine which makes RxDB a very flexible database that can be optimized for many scenarios.
 
-
-<p align="center">
-  <img src="./files/icons/nodejs.svg" alt="Node.js" width="70" />
-</p>
+<CenteredImage src="./files/icons/nodejs.svg" alt="Node.js" width={70} />
 
 ## Persistent Database
 
@@ -49,7 +52,7 @@ const result = await db.users.find({
 
 ```
 
-Another alternative storage is the [SQLite RxStorage](./rx-storage-sqlite.md) that stores the data inside of a SQLite filebased database. The SQLite storage is faster than FoundationDB and does not require to set up a cluster or anything because SQLite directly stores and reads the data inside of the filesystem. The downside of that is that it only scales vertically.
+Another alternative storage is the [SQLite RxStorage](./rx-storage-sqlite.md) that stores the data inside of a SQLite file-based database. The SQLite storage is faster than FoundationDB and does not require to set up a cluster or anything because SQLite directly stores and reads the data inside of the filesystem. The downside of that is that it only scales vertically.
 
 ```ts
 import { createRxDatabase } from 'rxdb';
@@ -81,13 +84,9 @@ const myRxDatabase = await createRxDatabase({
 });
 ```
 
-
 Here is a performance comparison chart of the different storages (lower is better):
 
-<p align="center">
-  <img src="./files/rx-storage-performance-node.png" alt="database performance - Node.js" width="700" />
-</p>
-
+<PerformanceChart title="Node/Native Storages" data={PERFORMANCE_DATA_NODE} metrics={PERFORMANCE_METRICS} />
 
 ## RxDB as Node.js In-Memory Database
 
@@ -113,7 +112,6 @@ node --max-old-space-size=8192 index.js
 ## Hybrid In-memory-persistence-synced storage
 
 If you want to have the performance of an **in-memory database** but require persistency of the data, you can use the [memory-mapped storage](./rx-storage-memory-mapped.md). On database creation it will load all data into the memory and on writes it will first write the data into memory and later also write it to the persistent storage in the background. In the following example the FoundationDB storage is used, but any other RxStorage can be used as persistence layer.
-
 
 ```typescript
 import { createRxDatabase } from 'rxdb';
@@ -142,6 +140,20 @@ To share the database state with other instances, RxDB provides two different me
 The replication copies over the whole database set to other instances live-replicates all ongoing writes. This has the benefit of scaling better because each of your microservice will run queries on its own copy of the dataset.
 Sometimes however you might not want to store the full dataset on each microservice. Then it is better to use the remote RxStorage and connect it to the "main" database. The remote storage will run all operations the main database and return the result to the calling database.
 
+## FAQ
+
+<Faq>
+<FaqItem question="What is the best database to use with Node.js?">
+
+You must choose a database based on your project requirements. For simple server-side document storage you use MongoDB or CouchDB. For relational data you use PostgreSQL or MySQL. If you need realtime synchronization between your Node.js backend and client applications you use RxDB. RxDB provides local-first offline support and seamless data replication. You can combine RxDB with storage plugins like SQLite or FoundationDB to achieve high performance.
+
+</FaqItem>
+<FaqItem question="Is LocalStorage available as an API in Node.js server environments?">
+
+No, the `LocalStorage` API is strictly a browser-exclusive `window` object feature and does *not* exist in native Node.js V8 execution environments. Attempting to mount the `getRxStorageLocalstorage` plugin inside a pure Node server will immediately trigger `ReferenceError: localStorage is not defined`. To achieve persistent local storage within Node.js architecture blocks, you must implement explicitly file-driven adapters like the **[Filesystem Node Storage](./rx-storage-filesystem-node.md)** or the **[SQLite Storage](./rx-storage-sqlite.md)**.
+
+</FaqItem>
+</Faq>
 
 ## Follow up on RxDB+Node.js
 

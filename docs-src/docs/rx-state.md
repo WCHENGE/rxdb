@@ -2,13 +2,22 @@
 title: RxState - Reactive Persistent State with RxDB
 slug: rx-state.html
 description: Get real-time, persistent state without the hassle. RxState integrates easily with signals and hooks, ensuring smooth updates across tabs and devices.
+image: /headers/rx-state.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {RxStateBars} from '@site/src/components/animations/rx-state-bars';
 
 # RxState - Reactive Persistent State with RxDB
 
 RxState is a flexible state library build on top of the [RxDB Database](https://rxdb.info/). While RxDB stores similar documents inside of collections, RxState can store any complex JSON data without having a predefined schema.
 
 The state is automatically persisted through RxDB and states changes are propagated between browser tabs. Even setting up replication is simple by using the RxDB [Replication feature](./replication.md).
+
+<DocsAnimation subtitle="Reactive state values updated with set()">
+<RxStateBars />
+</DocsAnimation>
 
 ## Creating a RxState
 
@@ -51,7 +60,7 @@ await myState.set('myField', v => v + 1);
 await myState.set('myField', v => 42);
 ```
 
-The modifier is used instead of a direct assignment to ensure correct behavior when other JavaScript realms write to the state at the same time, like other browser tabs or webworkers. On conflicts, the modifier will just be run again to ensure deterministic and correct behavior. Therefore mutation is `async`, you have to `await` the call to the set function when you care about the moment when the change actually happened.
+The modifier is used instead of a direct assignment to ensure correct behavior when other JavaScript realms write to the state at the same time, like other browser tabs or WebWorkers. On conflicts, the modifier will just be run again to ensure deterministic and correct behavior. Therefore mutation is `async`, you have to `await` the call to the set function when you care about the moment when the change actually happened.
 
 
 ## Get State Data
@@ -92,7 +101,7 @@ observable.subscribe(newValue => {
     // update the UI
 });
 ```
-Subscription works across multiple JavaScript realms like browser tabs or Webworkers.
+Subscription works across multiple JavaScript realms like browser tabs or WebWorkers.
 
 ## RxState with signals and hooks
 
@@ -168,3 +177,38 @@ const replicationPool = await replicateWebRTC(
     }
 );
 ```
+
+## FAQ
+
+<Faq>
+<FaqItem question="What is the difference between RxState and LocalDocuments?">
+
+RxState can be synced.
+
+RxState is used for persisted on-page state like "is element toggled" while [LocalDocuments](./rx-local-document.md) are more for logic-state like user-settings.
+
+RxState is a complex object while LocalDocuments are a key-object store.
+
+LocalDocuments can be modified like any other RxDocument with conflict handling and incremental writes while RxState has its own API.
+
+RxState is mapped fully into memory while LocalDocuments are in memory only when needed. For big data, LocalDocuments should be used.
+
+RxState is stored per RxDatabase while LocalDocuments can be stored either per RxDatabase or RxCollection.
+
+</FaqItem>
+<FaqItem question="When should I use RxState instead of Redux, Zustand, or Vuex?">
+
+You should use RxState when you need state that automatically persists, synchronizes across browser tabs, or replicates between devices. While traditional in-memory stores require boilerplate replication logic and manual persistence, RxState handles these features out of the box.
+
+</FaqItem>
+<FaqItem question="Why do I have to use a modifier function?">
+
+Using a modifier function guarantees deterministic conflict resolution when multiple JavaScript realms (like WebWorkers or multiple browser tabs) attempt to update the state simultaneously. It ensures the state evaluates correctly even under concurrent modifications.
+
+</FaqItem>
+<FaqItem question="Does RxState validate data against a schema?">
+
+No, RxState is schema-less by default. Unlike standard RxDB collections, it accepts any complex JSON data without requiring a rigid schema definition, allowing for flexible state updates.
+
+</FaqItem>
+</Faq>

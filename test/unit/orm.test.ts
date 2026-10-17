@@ -1,7 +1,7 @@
 import assert from 'assert';
 import AsyncTestUtil from 'async-test-util';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     createRxDatabase,
     randomToken,
@@ -16,7 +16,7 @@ import {
     HumanDocumentType
 } from '../../plugins/test-utils/index.mjs';
 
-describeParallel('orm.test.js', () => {
+describe('orm.test.js', () => {
     describe('statics', () => {
         describe('create', () => {
             describe('positive', () => {
@@ -58,6 +58,29 @@ describeParallel('orm.test.js', () => {
                         'RxTypeError',
                         'cannot start'
                     );
+                    db.close();
+                });
+                it('crash when static is no function and report the type of the value', async () => {
+                    const db = await createRxDatabase({
+                        name: randomToken(10),
+                        storage: config.storage.getStorage(),
+                    });
+                    let thrown: any;
+                    try {
+                        await db.addCollections({
+                            humans: {
+                                schema: schemas.human,
+                                statics: {
+                                    foobar: 123
+                                } as any
+                            }
+                        });
+                    } catch (err) {
+                        thrown = err;
+                    }
+                    assert.ok(thrown);
+                    assert.strictEqual(thrown.code, 'COL16');
+                    assert.strictEqual(thrown.parameters.type, 'number');
                     db.close();
                 });
                 it('crash when name not allowed (name reserved)', async () => {
@@ -370,6 +393,159 @@ describeParallel('orm.test.js', () => {
         });
     });
     describe('ISSUES', () => {
+        it('attachment ORM method with built-in name should throw', async () => {
+            /**
+             * BUG: Attachment ORM methods with a name that matches a
+             * built-in RxAttachment method (getData, getStringData,
+             * getDataBase64, remove) silently override that built-in
+             * method on every attachment instance via Object.defineProperty.
+             * The user thinks they're adding a new method, but they've
+             * replaced the data-retrieval API without any warning.
+             *
+             * The fix: checkOrmMethods must reject attachment ORM method
+             * names that conflict with the built-in RxAttachment methods.
+             *
+             * To stay in sync with future RxAttachment changes, this test
+             * creates a real attachment, enumerates its instance and
+             * prototype property names, and asserts that none of them can
+             * be registered as an attachment ORM method.
+             */
+            if (!config.storage.hasAttachments) {
+                return;
+            }
+
+            type DocType = { id: string; };
+            const schema: RxJsonSchema<DocType> = {
+                version: 0,
+                type: 'object',
+                primaryKey: 'id',
+                properties: {
+                    id: { type: 'string', maxLength: 100 }
+                },
+                required: ['id'],
+                attachments: {}
+            };
+
+            // 1. Create a real attachment to introspect.
+            const introspectDb = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                multiInstance: false
+            });
+            const cols = await introspectDb.addCollections({
+                humans: { schema }
+            });
+            const doc = await cols.humans.insert({ id: 'a' });
+            const attachment = await doc.putAttachment({
+                id: 'cat.txt',
+                data: new Blob(['meow'], { type: 'text/plain' }),
+                type: 'text/plain'
+            });
+
+            // Collect every own property name on the instance and on its
+            // prototype chain (skipping Object.prototype and 'constructor'),
+            // since both are reachable on each attachment instance and would
+            // be silently shadowed by an ORM method of the same name.
+            const reservedNames = new Set<string>();
+            Object.getOwnPropertyNames(attachment).forEach(n => reservedNames.add(n));
+            let proto = Object.getPrototypeOf(attachment);
+            while (proto && proto !== Object.prototype) {
+                Object.getOwnPropertyNames(proto)
+                    .filter(n => n !== 'constructor')
+                    .forEach(n => reservedNames.add(n));
+                proto = Object.getPrototypeOf(proto);
+            }
+            await introspectDb.close();
+
+            assert.ok(reservedNames.size > 0, 'expected at least one reserved name');
+
+            // 2. For each reserved name, attempt to register an attachment
+            //    ORM method with that name and assert it throws.
+            for (const reservedName of reservedNames) {
+                const db = await createRxDatabase({
+                    name: randomToken(10),
+                    storage: config.storage.getStorage(),
+                    multiInstance: false
+                });
+                await AsyncTestUtil.assertThrows(
+                    () => db.addCollections({
+                        humans: {
+                            schema,
+                            attachments: {
+                                [reservedName]: function () {
+                                    return 'hijacked';
+                                }
+                            }
+                        }
+                    }),
+                    'RxError',
+                    reservedName
+                );
+                await db.close();
+            }
+        });
+        it('ORM method with populate-getter suffix should throw COL18', async () => {
+            /**
+             * BUG: The schema generates populate getters for each field
+             * with a '_' suffix (e.g. field 'name' -> getter 'name_').
+             * An ORM method named 'name_' passes all validation in dev-mode
+             * but then causes a TypeError crash at runtime when the
+             * prototype merge tries to redefine the non-configurable
+             * schema property.
+             *
+             * The fix: checkOrmDocumentMethods must also check for
+             * conflicts with the suffixed schema-generated getters
+             * (field$, field$$, field_).
+             */
+            const db = await createRxDatabase({
+                name: randomToken(),
+                storage: config.storage.getStorage(),
+                multiInstance: false
+            });
+
+            type DocType = {
+                id: string;
+                name: string;
+            };
+
+            const schema: RxJsonSchema<DocType> = {
+                version: 0,
+                type: 'object',
+                primaryKey: 'id',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    }
+                },
+                required: ['id', 'name']
+            };
+
+            /**
+             * 'name_' is exactly the populate getter name for 'name'.
+             * This must throw a clear RxError COL18 during collection
+             * creation, not a raw TypeError later on document access.
+             */
+            await AsyncTestUtil.assertThrows(
+                () => db.addCollections({
+                    humans: {
+                        schema,
+                        methods: {
+                            name_: function (this: any) {
+                                return this.name;
+                            }
+                        } as any
+                    }
+                }),
+                'RxError',
+                'COL18'
+            );
+
+            db.close();
+        });
         it('#791 Document methods are not bind() to the document', async () => {
             const db = await createRxDatabase({
                 name: randomToken(),

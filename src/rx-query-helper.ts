@@ -18,7 +18,6 @@ import {
     firstPropertyNameOfObject,
     toArray,
     isMaybeReadonlyArray,
-    flatClone,
     objectPathMonad,
     ObjectPathMonadFunction
 } from './plugins/utils/index.ts';
@@ -34,10 +33,16 @@ import { getMingoQuery } from './rx-query-mingo.ts';
  */
 export function normalizeMangoQuery<RxDocType>(
     schema: RxJsonSchema<RxDocumentData<RxDocType>>,
-    mangoQuery: MangoQuery<RxDocType>
+    mangoQuery: MangoQuery<RxDocType>,
+    /**
+     * @performance
+     * Count queries do not need sort order.
+     * Skipping the sort computation avoids iterating over schema indexes
+     * and comparing fields, which improves count query performance.
+     */
+    skipSort?: boolean
 ): FilledMangoQuery<RxDocType> {
     const primaryKey: string = getPrimaryFieldOfPrimaryKey(schema.primaryKey);
-    mangoQuery = flatClone(mangoQuery);
 
     const normalizedMangoQuery: FilledMangoQuery<RxDocType> = clone(mangoQuery) as any;
     if (typeof normalizedMangoQuery.skip !== 'number') {
@@ -59,19 +64,10 @@ export function normalizeMangoQuery<RxDocType>(
          * For normalization, we have to normalize this
          * so our checks can perform properly.
          *
-         *
-         * TODO this must work recursive with nested queries that
-         * contain multiple selectors via $and or $or etc.
+         * This works recursively for nested queries that
+         * contain multiple selectors via $and, $or, $nor or $not.
          */
-        Object
-            .entries(normalizedMangoQuery.selector)
-            .forEach(([field, matcher]) => {
-                if (typeof matcher !== 'object' || matcher === null) {
-                    (normalizedMangoQuery as any).selector[field] = {
-                        $eq: matcher
-                    };
-                }
-            });
+        normalizeQuerySelectorShorthands(normalizedMangoQuery.selector);
     }
 
     /**
@@ -94,7 +90,15 @@ export function normalizeMangoQuery<RxDocType>(
      * similar to how we add the primary key to indexes that do not have it.
      *
      */
-    if (!normalizedMangoQuery.sort) {
+    if (skipSort && !normalizedMangoQuery.sort) {
+        /**
+         * @performance
+         * Count queries do not need sorted results.
+         * Use a simple primary key sort to avoid the expensive
+         * index-matching sort computation.
+         */
+        normalizedMangoQuery.sort = [{ [primaryKey]: 'asc' }] as any;
+    } else if (!normalizedMangoQuery.sort) {
         /**
          * If no sort is given at all,
          * we can assume that the user does not care about sort order at al.
@@ -114,7 +118,7 @@ export function normalizeMangoQuery<RxDocType>(
             if (schema.indexes) {
                 const fieldsWithLogicalOperator: Set<string> = new Set();
                 Object.entries(normalizedMangoQuery.selector).forEach(([field, matcher]) => {
-                    let hasLogical = false;
+                    let hasLogical;
                     if (typeof matcher === 'object' && matcher !== null) {
                         hasLogical = !!Object.keys(matcher).find(operator => LOGICAL_OPERATORS.has(operator));
                     } else {
@@ -131,11 +135,12 @@ export function normalizeMangoQuery<RxDocType>(
                 schema.indexes.forEach(index => {
                     const useIndex = isMaybeReadonlyArray(index) ? index : [index];
                     const firstWrongIndex = useIndex.findIndex(indexField => !fieldsWithLogicalOperator.has(indexField));
+                    const matchingFieldCount = firstWrongIndex === -1 ? useIndex.length : firstWrongIndex;
                     if (
-                        firstWrongIndex > 0 &&
-                        firstWrongIndex > currentFieldsAmount
+                        matchingFieldCount > 0 &&
+                        matchingFieldCount > currentFieldsAmount
                     ) {
-                        currentFieldsAmount = firstWrongIndex;
+                        currentFieldsAmount = matchingFieldCount;
                         currentBestIndexForSort = useIndex;
                     }
                 });
@@ -181,7 +186,7 @@ export function normalizeMangoQuery<RxDocType>(
  * a query over the db would do.
  */
 export function getSortComparator<RxDocType>(
-    schema: RxJsonSchema<RxDocumentData<RxDocType>>,
+    _schema: RxJsonSchema<RxDocumentData<RxDocType>>,
     query: FilledMangoQuery<RxDocType>
 ): DeterministicSortComparator<RxDocType> {
     if (!query.sort) {
@@ -207,6 +212,18 @@ export function getSortComparator<RxDocType>(
             const valueA = sortPart.getValueFn(a);
             const valueB = sortPart.getValueFn(b);
             if (valueA !== valueB) {
+                /**
+                 * @performance
+                 * Use a fast inline comparison for common types (string, number)
+                 * instead of the more general mingoSortComparator.
+                 * Mingo's compare does extra type checks that are unnecessary
+                 * when both values share the same primitive type.
+                 */
+                const dirMultiplier = sortPart.direction === 'asc' ? 1 : -1;
+                const typeA = typeof valueA;
+                if (typeA === typeof valueB && (typeA === 'string' || typeA === 'number')) {
+                    return ((valueA < valueB ? -1 : 1) * dirMultiplier) as any;
+                }
                 const ret = sortPart.direction === 'asc' ? mingoSortComparator(valueA, valueB) : mingoSortComparator(valueB, valueA);
                 return ret as any;
             }
@@ -252,14 +269,73 @@ export async function runQueryUpdateFunction<RxDocType, RxQueryResult>(
             docs.map(doc => fn(doc))
         ) as any;
     } else if (docs instanceof Map) {
-        return Promise.all(
-            [...docs.values()].map((doc) => fn(doc))
-        ) as any;
+        const resultMap = new Map();
+        await Promise.all(
+            [...docs.entries()].map(async ([key, doc]) => {
+                const updatedDoc = await fn(doc);
+                resultMap.set(key, updatedDoc);
+            })
+        );
+        return resultMap as any;
     } else {
         // via findOne()
         const result = await fn(docs as any);
         return result as any;
     }
+}
+
+/**
+ * Normalizes selector shorthand values recursively.
+ * Converts `{field: value}` to `{field: {$eq: value}}`
+ * and recurses into $and, $or, $nor arrays and $not objects.
+ */
+const SELECTOR_ARRAY_OPERATORS = new Set(['$and', '$or', '$nor']);
+const SELECTOR_OBJECT_OPERATORS = new Set(['$not']);
+function shouldNormalizeElemMatchSelector(elemMatch: any): boolean {
+    const keys = Object.keys(elemMatch);
+    if (keys.length === 0) {
+        return false;
+    }
+    /**
+     * If at least one key is not an operator,
+     * it is a nested selector object and shorthand values
+     * should be normalized.
+     */
+    if (keys.some(key => !key.startsWith('$'))) {
+        return true;
+    }
+    /**
+     * If all keys are operators, only recurse for selector operators.
+     * This avoids breaking operator payloads like
+     * { $regex: 'x', $options: 'i' } or { $eq: 'foo' }.
+     */
+    return keys.some(key => SELECTOR_ARRAY_OPERATORS.has(key) || SELECTOR_OBJECT_OPERATORS.has(key));
+}
+function normalizeQuerySelectorShorthands(selector: any): void {
+    Object
+        .entries(selector)
+        .forEach(([field, matcher]) => {
+            if (typeof matcher !== 'object' || matcher === null) {
+                selector[field] = { $eq: matcher };
+            } else if (SELECTOR_ARRAY_OPERATORS.has(field) && Array.isArray(matcher)) {
+                (matcher as any[]).forEach(subSelector => normalizeQuerySelectorShorthands(subSelector));
+            } else if (field === '$not' && typeof matcher === 'object') {
+                normalizeQuerySelectorShorthands(matcher);
+            } else if (!field.startsWith('$') && typeof matcher === 'object') {
+                /**
+                 * Recurse into field-level operator objects to normalize
+                 * sub-selectors like $elemMatch which contain nested selectors.
+                 */
+                const matcherObj = matcher as any;
+                if (
+                    matcherObj.$elemMatch &&
+                    typeof matcherObj.$elemMatch === 'object' &&
+                    shouldNormalizeElemMatchSelector(matcherObj.$elemMatch)
+                ) {
+                    normalizeQuerySelectorShorthands(matcherObj.$elemMatch);
+                }
+            }
+        });
 }
 
 /**

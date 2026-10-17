@@ -1,11 +1,15 @@
 ---
 title: GraphQL Replication
 slug: replication-graphql.html
+description: Set up GraphQL-based replication with RxDB including pull, push, and live streaming handlers for syncing data between client and server.
+image: /headers/replication-graphql.jpg
 ---
 
-# Replication with GraphQL
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
 
-The GraphQL replication provides handlers for GraphQL to run [replication](./replication.md) with GraphQL as the transportation layer.
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/graphql.svg" alt="GraphQL" />}>Replication with GraphQL</HeadlineWithIcon>
+
+The GraphQL replication provides handlers for GraphQL to run [replication](./replication.md) with GraphQL as the transport layer.
 
 The GraphQL replication is mostly used when you already have a backend that exposes a GraphQL API that can be adjusted to serve as a replication endpoint. If you do not already have a GraphQL endpoint, using the [HTTP replication](./replication-http.md) is an easier solution.
 
@@ -109,19 +113,17 @@ const rootValue = {
 
         // use the last document for the checkpoint
         const lastDoc = limitedDocs[limitedDocs.length - 1];
-        const retCheckpoint = {
+        const retCheckpoint = lastDoc ? {
             id: lastDoc.id,
             updatedAt: lastDoc.updatedAt
-        }
+        } : args.checkpoint;
 
         return {
             documents: limitedDocs,
             checkpoint: retCheckpoint
-        }
-
-        return limited;
+        };
     }
-}
+};
 ```
 
 For examples for the other resolvers, consult the [GraphQL Example Project](https://github.com/pubkey/rxdb/blob/master/examples/graphql/server/index.js).
@@ -183,8 +185,14 @@ const replicationState = replicateGraphQL(
         },
         pull: {
             queryBuilder: pullQueryBuilder, // the queryBuilder from above
-            modifier: doc => doc, // (optional) modifies all pulled documents before they are handled by RxDB
-            dataPath: undefined, // (optional) specifies the object path to access the document(s). Otherwise, the first result of the response data is used.
+            // (optional) modifies all pulled documents
+            // before they are handled by RxDB
+            modifier: doc => doc,
+            // (optional) specifies the object path to
+            // access the document(s). Otherwise, the
+            // first result of the response data
+            // is used.
+            dataPath: undefined,
             /**
              * Amount of documents that the remote will send in one request.
              * If the response contains less than [batchSize] documents,
@@ -205,16 +213,16 @@ const replicationState = replicateGraphQL(
          */
         deletedField: 'deleted',
         live: true,
-        retryTime = 1000 * 5,
-        waitForLeadership = true,
-        autoStart = true,
+        retryTime: 1000 * 5,
+        waitForLeadership: true,
+        autoStart: true,
     }
 );
 ```
 
 #### Push replication
 
-For the push-replication, you also need a `queryBuilder`. Here, the builder receives a changed document as input which has to be send to the server. It also returns a GraphQL-Query and its data.
+For the push-replication, you also need a `queryBuilder`. Here, the builder receives a changed document as input which has to be sent to the server. It also returns a GraphQL-Query and its data.
 
 ```js
 const pushQueryBuilder = rows => {
@@ -254,12 +262,14 @@ const replicationState = replicateGraphQL(
             queryBuilder: pushQueryBuilder, // the queryBuilder from above
             /**
              * batchSize (optional)
-             * Amount of document that will be pushed to the server in a single request.
+             * Amount of document that will be pushed
+             * to the server in a single request.
              */
             batchSize: 5,
             /**
              * modifier (optional)
-             * Modifies all pushed documents before they are send to the GraphQL endpoint.
+             * Modifies all pushed documents before
+             * they are sent to the GraphQL endpoint.
              * Returning null will skip the document.
              */
             modifier: doc => doc
@@ -316,7 +326,8 @@ const replicationState = replicateGraphQL(
         // urls to the GraphQL endpoints
         url: {
             http: 'http://example.com/graphql',
-            ws: 'ws://example.com/subscriptions' // <- The websocket has to use a different url.
+            // The websocket has to use a different url.
+            ws: 'ws://example.com/subscriptions'
         },
         push: {
             batchSize: 100,
@@ -329,13 +340,25 @@ const replicationState = replicateGraphQL(
             batchSize: 100,
             queryBuilder: pullQueryBuilder,
             streamQueryBuilder: pullStreamQueryBuilder,
-            includeWsHeaders: false, // Includes headers as connection parameter to Websocket.
+            // Includes headers as connection
+            // parameter to Websocket.
+            includeWsHeaders: false,
 
-            // Websocket options that can be passed as a parameter to initialize the subscription
-            // Can be applied anything from the graphql-ws ClientOptions - https://the-guild.dev/graphql/ws/docs/interfaces/client.ClientOptions
-            // Except these parameters: 'url', 'shouldRetry', 'webSocketImpl' - locked for internal usage
-            // Note: if you provide connectionParams as a wsOption, make sure it returns any necessary headers (e.g. authorization)
-            // because providing your own connectionParams prevents headers from being included automatically
+            // Websocket options that can be passed
+            // as a parameter to initialize the
+            // subscription
+            // Can be applied anything from the
+            // graphql-ws ClientOptions:
+            // https://the-guild.dev/graphql/ws/docs/client/interfaces/ClientOptions
+            // Except these parameters: 'url',
+            // 'shouldRetry', 'webSocketImpl' -
+            // locked for internal usage
+            // Note: if you provide connectionParams
+            // as a wsOption, make sure it returns any
+            // necessary headers (e.g. authorization)
+            // because providing your own
+            // connectionParams prevents headers from
+            // being included automatically
             wsOptions: { 
                 retryAttempts: 10,
             }
@@ -346,7 +369,7 @@ const replicationState = replicateGraphQL(
 ```
 
 :::note
-If it is not possible to create a websocket server on your backend, you can use any other method of pull out the ongoing events from the backend and then you can send them into `RxReplicationState.emitEvent()`.
+If it is not possible to create a websocket server on your backend, you can use any other method to pull out the ongoing events from the backend and then you can send them into `RxReplicationState.emitEvent()`.
 :::
 
 ### Transforming null to undefined in optional fields
@@ -396,11 +419,20 @@ const replicationState: RxGraphQLReplicationState<RxDocType> = replicateGraphQL(
         pull: {
             responseModifier: async function(
                 plainResponse, // the exact response that was returned from the server
-                origin, // either 'handler' if plainResponse came from the pull.handler, or 'stream' if it came from the pull.stream
-                requestCheckpoint // if origin==='handler', the requestCheckpoint contains the checkpoint that was send to the backend
+                // either 'handler' if plainResponse
+                // came from the pull.handler,
+                // or 'stream' if it came from
+                // the pull.stream
+                origin,
+                // if origin==='handler', the
+                // requestCheckpoint contains the
+                // checkpoint that was sent to
+                // the backend
+                requestCheckpoint
             ) {
                 /**
-                 * In this example we aggregate the checkpoint from the documents array
+                 * In this example we aggregate the
+                 * checkpoint from the documents array
                  * that was returned from the graphql endpoint.
                  */
                 const docs = plainResponse;
@@ -420,7 +452,7 @@ const replicationState: RxGraphQLReplicationState<RxDocType> = replicateGraphQL(
 
 ### push.responseModifier
 
-It's also possible to modify the response of a push mutation. For example if your server returns more than the just conflicting docs:
+It's also possible to modify the response of a push mutation. For example if your server returns more than just the conflicting docs:
 
 ```graphql
 type PushResponse {
@@ -429,7 +461,8 @@ type PushResponse {
 }
 
 type Mutation {
-    # Returns a PushResponse type that contains the conflicts along with other information
+    # Returns a PushResponse type that contains
+    # the conflicts along with other information
     pushHuman(rows: [HumanInputPushRow!]): PushResponse!
 }
 ```
@@ -444,7 +477,9 @@ const replicationState: RxGraphQLReplicationState<RxDocType> = replicateGraphQL(
         push: {
             responseModifier: async function (plainResponse) {
                 /**
-                 * In this example we aggregate the conflicting documents from a response object
+                 * In this example we aggregate the
+                 * conflicting documents from a
+                 * response object
                  */
                 return plainResponse.conflicts;
             },
@@ -457,7 +492,7 @@ const replicationState: RxGraphQLReplicationState<RxDocType> = replicateGraphQL(
 
 #### Helper Functions
 
-RxDB provides the helper functions `graphQLSchemaFromRxSchema()`, `pullQueryBuilderFromRxSchema()`, `pullStreamBuilderFromRxSchema()` and `pushQueryBuilderFromRxSchema()` that can be used to generate handlers and schemas from the `RxJsonSchema`. To learn how to use them, please inspect the [GraphQL Example](https://github.com/pubkey/rxdb/tree/master/examples/graphql).
+RxDB provides the helper functions `graphQLSchemaFromRxSchema()`, `pullQueryBuilderFromRxSchema()`, `pullStreamBuilderFromRxSchema()` and `pushQueryBuilderFromRxSchema()` that can be used to generate handlers and schemas from the [RxJsonSchema](./rx-schema.md). To learn how to use them, please inspect the [GraphQL Example](https://github.com/pubkey/rxdb/tree/master/examples/graphql).
 
 
 ### RxGraphQLReplicationState
@@ -476,7 +511,7 @@ replicationState.setHeaders({
 
 #### Sending Cookies
 
-The underlying fetch framework uses a `same-origin` policy for credentials per default. That means, cookies and session data is only shared if you backend and frontend run on the same domain and port. Pass the credential parameter to `include` cookies in requests to servers from different origins via:
+The underlying fetch framework uses a `same-origin` policy for credentials by default. That means, cookies and session data is only shared if you backend and frontend run on the same domain and port. Pass the credential parameter to `include` cookies in requests to servers from different origins via:
 
 ```js
 replicationState.setCredentials('include');

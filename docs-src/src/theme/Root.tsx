@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { triggerTrackingEvent } from '../components/trigger-event';
+import { AD_CLICK_STORAGE_ID, getUtmCampaign, onCopy, setTrackingConsent, triggerTrackingEvent } from '../components/trigger-event';
+import { isLikelyEuUser } from './eu-consent';
+import { type ConsentState, initEuConsentBanner, updateGoogleConsent } from './consent-manager';
 import { randomNumber } from '../../../plugins/utils';
-
+import { IconClose } from '../components/icons/close';
+import { Button } from '../components/button';
+import LinkedInLogo from '@site/static/img/community-links/linkedin-logo.svg';
+import { IconNewsletter } from '../components/icons/newsletter';
 
 type CallToActionItem = {
     /**
@@ -12,7 +17,7 @@ type CallToActionItem = {
     text: string;
     keyword: string;
     url: string;
-    icon: string;
+    icon: any;
 };
 const callToActions: CallToActionItem[] = [
     {
@@ -27,7 +32,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Star',
         keyword: '@github',
         url: 'https://rxdb.info/code/',
-        icon: '🐙💻',
+        icon: <span className="navbar-icon-github" style={{ width: 22, height: 22, display: 'inline-block' }}></span>,
     },
     {
         title: [
@@ -41,7 +46,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Follow',
         keyword: '@twitter',
         url: 'https://twitter.com/intent/user?screen_name=rxdbjs',
-        icon: '🐦',
+        icon: '/files/icons/twitter-blue.svg',
     },
     {
         title: [
@@ -55,7 +60,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Follow',
         keyword: '@LinkedIn',
         url: 'https://www.linkedin.com/company/rxdb',
-        icon: '[in]',
+        icon: <LinkedInLogo style={{ width: 20, height: 20 }}></LinkedInLogo>,
     },
     {
         title: [
@@ -69,7 +74,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Follow',
         keyword: '@LinkedIn',
         url: 'https://www.linkedin.com/in/danielmeyerdev/',
-        icon: '[in]',
+        icon: <LinkedInLogo style={{ width: 20, height: 20 }}></LinkedInLogo>,
     },
     {
         title: [
@@ -83,7 +88,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Chat',
         keyword: '@discord',
         url: 'https://rxdb.info/chat/',
-        icon: '💬',
+        icon: <span className="navbar-icon-discord" style={{ width: 22, height: 22, display: 'inline-block' }}></span>,
     },
     {
         title: [
@@ -97,7 +102,7 @@ const callToActions: CallToActionItem[] = [
         text: 'Subscribe',
         keyword: '@newsletter',
         url: 'https://rxdb.info/newsletter',
-        icon: '📰',
+        icon: <IconNewsletter />,
     },
     // {
     //     title: 'RxDB needs your feedback, please take part in our user Survey',
@@ -112,6 +117,44 @@ const callToActions: CallToActionItem[] = [
 const NOTIFICATION_SPLIT_TEST_VERSION = 'B';
 const POPUP_DISABLED_IF_CLOSED_TIME = 1000 * 60 * 10; // 10 minutes
 
+/**
+ * Guards so the tracker suite and the marketing pixels are each started only
+ * once, even when the visitor changes the consent multiple times.
+ */
+let trackerSuiteStarted = false;
+let marketingPixelsLoaded = false;
+
+/**
+ * Applies a consent decision: updates Google Consent Mode, unlocks the
+ * in-app tracking guard and starts the trackers that match the granted
+ * categories. Called for every consent change and, for non-EU visitors,
+ * once with everything granted.
+ */
+function applyConsent(state: ConsentState): void {
+    updateGoogleConsent(state);
+
+    const anyTracking = state.analytics || state.marketing;
+    setTrackingConsent(anyTracking);
+
+    if (anyTracking && !trackerSuiteStarted) {
+        trackerSuiteStarted = true;
+        setTimeout(() => {
+            startAnalytics();
+            trackReturnAfter3to14Days();
+            trackCopy();
+            trackUrlChanges();
+            addCallToActionButton();
+            triggerClickEventWhenFromCode();
+            triggerClickEventWhenFromDiscord();
+        }, 0);
+    }
+
+    if (state.marketing && !marketingPixelsLoaded) {
+        marketingPixelsLoaded = true;
+        loadMarketingPixels();
+    }
+}
+
 // Default implementation, that you can customize
 export default function Root({ children }) {
     const [showPopup, setShowPopup] = useState<{
@@ -122,20 +165,32 @@ export default function Root({ children }) {
     }>();
     const DOC_TITLE_PREFIX = '(1) ';
     useEffect(() => {
-
         // addCommunityChatButton();
+        storeAdClickId();
+        /**
+         * Persist the utm_campaign of the landing URL so later events on
+         * other pages still attribute to the campaign (used for the a/b-test
+         * event prefix and the sem-page variation keying).
+         */
+        getUtmCampaign();
 
-        setTimeout(() => {
-            startAnalytics();
-            trackReturnAfter3to14Days();
-            addCallToActionButton();
-            triggerClickEventWhenFromCode();
-        }, 0);
+        /**
+         * EU/EEA visitors only get trackers after they accepted them in the
+         * consent banner. Everyone else keeps the previous behavior where
+         * everything starts right away.
+         */
+        if (isLikelyEuUser()) {
+            initEuConsentBanner(applyConsent).catch(err => {
+                console.log('# Error while starting the consent banner:');
+                console.dir(err);
+            });
+        } else {
+            applyConsent({ analytics: true, marketing: true });
+        }
 
         const showTime = location.pathname.includes('.html') ? 30 : 60;
         // const showTime = 1;
         const intervalId = setInterval(() => {
-            return;
             if (location.pathname.includes('premium')) {
                 return;
             }
@@ -152,7 +207,12 @@ export default function Root({ children }) {
                  */
                 const closedAt = localStorage.getItem('notification_popup_closed_at');
                 const closedToday = localStorage.getItem('notification_popup_closed_today');
+                const weeklyCloseCountKey = getWeeklyCloseCountKey();
+                const closedCountThisWeek = Number(localStorage.getItem(weeklyCloseCountKey) || '0');
+
                 if (
+                    // more than 5 times in a week => do not show again for that week
+                    closedCountThisWeek > 3 ||
                     (closedAt && (Date.now() - Number(closedAt)) < POPUP_DISABLED_IF_CLOSED_TIME) ||
                     /**
                      * If it was closed today, only show it when the browser tab is not active.
@@ -199,6 +259,11 @@ export default function Root({ children }) {
         document.title = document.title.replace(DOC_TITLE_PREFIX, '');
         localStorage.setItem('notification_popup_closed_at', Date.now().toString());
         localStorage.setItem('notification_popup_closed_today', new Date().getDay() + '');
+
+        // weekly close counter
+        const key = getWeeklyCloseCountKey();
+        const prev = Number(localStorage.getItem(key) || '0');
+        localStorage.setItem(key, String(prev + 1));
     }
     return <>
         {children}
@@ -206,10 +271,10 @@ export default function Root({ children }) {
             {
                 showPopup ? <>
                     <h3>{showPopup.callToAction.title[showPopup.titleId]}</h3>
-                    <a
+                    <Button
+                        primary
                         href={showPopup.callToAction.url}
-                        className='hover-shadow-top'
-                        id="rxdb-call-to-action-button"
+                        icon={showPopup.callToAction.icon}
                         target="_blank"
                         onClick={() => {
                             triggerTrackingEvent('notification_call_to_action', 0.40);
@@ -220,13 +285,11 @@ export default function Root({ children }) {
                             );
                             closePopup();
                         }}
-                    >
-                        {showPopup.callToAction.text} {showPopup.callToAction.keyword}
-                    </a>
+                    >{showPopup.callToAction.text} {showPopup.callToAction.keyword}</Button>
                 </> : ''
             }
-            <div className='close' onClick={() => closePopup()}>
-                <div className='text'>&#x2715;</div>
+            <div className='close-popup' onClick={() => closePopup()}>
+                <IconClose clickable />
             </div>
         </div>
     </>;
@@ -293,18 +356,52 @@ function addCallToActionButton() {
 }
 
 /**
+ * Stores the ad click id (gclid and its iOS-privacy variants gbraid/wbraid)
+ * in localStorage on every page load so it can be used
+ * for conversion tracking later.
+ */
+function storeAdClickId() {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+        return;
+    }
+    const p = new URLSearchParams(location.search);
+    for (const k of ['gclid', 'gbraid', 'wbraid']) {
+        const v = p.get(k);
+        if (v) {
+            localStorage.setItem(AD_CLICK_STORAGE_ID, JSON.stringify({ k, v, t: Date.now() }));
+            triggerTrackingEvent('click_id_' + k, 0.01, 1);
+        }
+    }
+}
+
+/**
  * There are some logs that RxDB prints out to the console of the developers.
  * These logs can contain links with the query param ?console=foobar
  * which allows us to detect that a user has really installed and started RxDB.
  */
 function triggerClickEventWhenFromCode() {
-    const TRIGGER_CONSOLE_EVENT_ID = 'console-log-click';
+    const EVENT_ID = 'console-log-click';
     const urlParams = new URLSearchParams(window.location.search);
     if (!urlParams.has('console')) {
         return;
     }
-    triggerTrackingEvent(TRIGGER_CONSOLE_EVENT_ID, 10);
-    triggerTrackingEvent(TRIGGER_CONSOLE_EVENT_ID + '_' + urlParams.get('console'), 10);
+    triggerTrackingEvent(EVENT_ID, 10, 1, 'Lead');
+    triggerTrackingEvent(EVENT_ID + '_' + urlParams.get('console'), 10, 1);
+}
+
+/**
+ * All links that we post on discord have this
+ * discord param so we can conversion-track people who
+ * joined the discord
+ */
+function triggerClickEventWhenFromDiscord() {
+    const EVENT_ID = 'via-discord';
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!urlParams.has('discord')) {
+        return;
+    }
+    triggerTrackingEvent(EVENT_ID, 3, 1, 'Lead');
+    triggerTrackingEvent(EVENT_ID + '_' + urlParams.get('discord'), 0, 1);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -353,13 +450,73 @@ function addCommunityChatButton() {
 
 
 
+/**
+ * Loads the marketing pixels that are not aware of Google Consent Mode.
+ * Only called after the visitor granted the "marketing" category (or for
+ * non-EU visitors, where marketing is granted by default).
+ */
+function loadMarketingPixels() {
+    // reddit pixel TODO move into google tag manager
+    // @ts-ignore eslint-disable-next-line
+    (function (w, d) {
+        if (!(w as any).rdt) {
+            // @ts-ignore
+            const rdt: any = (w as any).rdt = function () {
+                // @ts-ignore
+                if (rdt.sendEvent) {
+                    rdt.sendEvent.apply(rdt, arguments);
+                } else {
+                    rdt.callQueue.push(arguments);
+                }
+            };
+            rdt.callQueue = [];
+            const t = d.createElement('script');
+            t.src = 'https://www.redditstatic.com/ads/pixel.js';
+            t.async = true;
+            const s: any = d.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(t, s);
+        }
+
+        // Initialize pixel and track page visit
+        (w as any).rdt('init', 'a2_irjdz88999o9');
+        (w as any).rdt('track', 'PageVisit');
+    })(window, document);
+    // /reddit pixel
+
+
+
+    // pipedrive chat
+    (window as any).pipedriveLeadboosterConfig = {
+        base: 'leadbooster-chat.pipedrive.com', companyId: 11404711, playbookUuid:
+            '16a8caba-6b26-4bb1-a1fa-434c4171d542', version: 2
+    }; (function () {
+        const w = window; if ((w as any).LeadBooster) {
+            console.warn('LeadBooster already exists');
+        } else {
+            (w as any).LeadBooster = {
+                q: [], on: function (n, h) {
+                    this.q.push({ t: 'o', n: n, h: h });
+                }, trigger: function (n) {
+                    this.q.push({ t: 't', n: n });
+                },
+            };
+        }
+    })();
+    // /pipedrive chat
+}
+
+
 function startAnalytics() {
     console.log('load analytics code');
 
     [10, 20, 60].forEach(time => {
         setTimeout(function () {
             const value = 0.002 * time;
-            triggerTrackingEvent(time + '_sec_on_page', value);
+            if (time === 60) {
+                triggerTrackingEvent(time + '_sec_on_page', value, 1, 'ViewContent');
+            } else {
+                triggerTrackingEvent(time + '_sec_on_page', value);
+            }
         }, time * 1000);
     });
 
@@ -401,7 +558,11 @@ function startAnalytics() {
                 if (scrollPercentage > percent) {
                     trackScrollPercentages.delete(percent);
                     const value = parseFloat((0.10 * (percent / 100)).toFixed(2));
-                    triggerTrackingEvent('scroll_to_' + percent, value);
+                    if (percent === 90) {
+                        triggerTrackingEvent('scroll_to_' + percent, value, 1, 'ViewContent');
+                    } else {
+                        triggerTrackingEvent('scroll_to_' + percent, value);
+                    }
                 }
             });
         });
@@ -421,7 +582,7 @@ function startAnalytics() {
         }
         const version = hasCookie.split('=')[1];
         console.log(DEV_MODE_EVENT_ID + ': track me version ' + version);
-        triggerTrackingEvent(DEV_MODE_EVENT_ID, 10, 1);
+        triggerTrackingEvent(DEV_MODE_EVENT_ID, 10, 1, 'Purchase');
         triggerTrackingEvent(DEV_MODE_EVENT_ID + '_' + version, 10, 1);
     }
     checkDevModeEvent();
@@ -430,57 +591,6 @@ function startAnalytics() {
     // const bc = new BroadcastChannel(DEV_MODE_EVENT_ID);
     // bc.onmessage = () => checkDevModeEvent();
     // /track dev_mode_tracking_iframe event
-
-
-    // reddit pixel TODO move into google tag manager
-    // @ts-ignore eslint-disable-next-line
-    (function (w, d) {
-        if (!(w as any).rdt) {
-            // @ts-ignore
-            const p: any = w.rdt = function () {
-                // @ts-ignore
-                if (p.sendEvent) {
-                    p.sendEvent.apply(p, arguments);
-                } else {
-                    p.callQueue.push(arguments);
-                }
-            };
-            p.callQueue = [];
-            const t = d.createElement('script');
-            t.src = 'https://www.redditstatic.com/ads/pixel.js';
-            t.async = true;
-            const s: any = d.getElementsByTagName('script')[0];
-            s.parentNode.insertBefore(t, s);
-        }
-    })(window, document);
-    (window as any).rdt('init', 't2_131k54', {
-        'aaid': '<AAID-HERE>', 'email': '<EMAIL-HERE>', 'externalId': '<EXTERNAL-ID-HERE>', 'idfa': '<IDFA-HERE>'
-    });
-    (window as any).rdt('track', 'PageVisit');
-    // /reddit pixel
-
-
-
-    // pipedrive chat
-    (window as any).pipedriveLeadboosterConfig = {
-        base: 'leadbooster-chat.pipedrive.com', companyId: 11404711, playbookUuid:
-            '16a8caba-6b26-4bb1-a1fa-434c4171d542', version: 2
-    }; (function () {
-        const w = window; if ((w as any).LeadBooster) {
-            console.warn('LeadBooster already exists');
-        } else {
-            (w as any).LeadBooster = {
-                q: [], on: function (n, h) {
-                    this.q.push({ t: 'o', n: n, h: h });
-                }, trigger: function (n) {
-                    this.q.push({ t: 't', n: n });
-                },
-            };
-        }
-    })();
-    // /pipedrive chat
-
-
 
 
 
@@ -559,8 +669,82 @@ function startAnalytics() {
     // }
     // historyHack();
 
+}
 
 
+/**
+ * Tracks if a user copies anything on the page.
+ * Useful because normal devs often copy parts of the
+ * code from the docs, so we have a good way to measure real
+ * engagement.
+ */
+function trackCopy() {
+    if (typeof document === 'undefined') {
+        return;
+    }
+    document.addEventListener('copy', onCopy);
+}
+
+
+
+/**
+ * Tracks the already visited urls on the page.
+ * Useful because normal devs browse multiple docs pages
+ * so we can track "real" engagement.
+ */
+function trackUrlChanges() {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    const STORAGE_KEY = 'visited_urls';
+    const URL_EVENT_COUNT = 3;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const visitedUrls = new Set<string>(stored ? JSON.parse(stored) : []);
+
+    function normalizeUrl(url: string) {
+        try {
+            const u = new URL(url);
+            return u.origin + u.pathname;
+        } catch {
+            return url.split('?')[0].split('#')[0];
+        }
+    }
+
+    function rememberAndLog() {
+        const normalized = normalizeUrl(location.href);
+
+        if (!visitedUrls.has(normalized)) {
+            visitedUrls.add(normalized);
+            localStorage.setItem(
+                STORAGE_KEY,
+                JSON.stringify(Array.from(visitedUrls))
+            );
+            console.log('New URL visited:', normalized);
+
+            if (visitedUrls.size >= URL_EVENT_COUNT) {
+                triggerTrackingEvent('visit_x_urls', 1.5, 1, 'Lead');
+                triggerTrackingEvent('visit_' + URL_EVENT_COUNT + '_urls', 0, 1);
+            }
+        }
+    }
+
+    rememberAndLog();
+
+    window.addEventListener('popstate', rememberAndLog);
+
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function (...args) {
+        originalPushState.apply(this, args);
+        rememberAndLog();
+    };
+
+    history.replaceState = function (...args) {
+        originalReplaceState.apply(this, args);
+        rememberAndLog();
+    };
 }
 
 
@@ -596,6 +780,38 @@ function trackReturnAfter3to14Days() {
 
     // Only trigger conversion if between 3 and 14 days
     if (diff >= THREE_DAYS_MS && diff <= FOURTEEN_DAYS_MS) {
-        triggerTrackingEvent('revisit_3_days', 0.5);
+        /**
+         * This must not be a primary event because
+         * when we retarget, we do no want
+         * to count these as conversion just because
+         * they clicked the ad some days later again.
+         */
+        triggerTrackingEvent('revisit_3_days', 3.5, 1);
     }
+}
+
+/**
+ * Returns a unique-per-week identifier
+ * that looks like 2026_24 (year+week)
+ */
+function getWeekKey(date: Date = new Date()): string {
+    const d = new Date(Date.UTC(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate()
+    ));
+
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+
+    const weekNo = Math.ceil(
+        ((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7
+    );
+
+    return `${d.getUTCFullYear()}_${weekNo}`;
+}
+
+function getWeeklyCloseCountKey() {
+    return `notification_popup_closed_count_${getWeekKey()}`;
 }

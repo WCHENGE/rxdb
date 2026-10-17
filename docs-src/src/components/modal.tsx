@@ -1,8 +1,9 @@
 // Modal.tsx
-import React, { forwardRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { ModalProps as AntdModalProps } from 'antd';
 import { Modal as AntdModal } from 'antd';
 import { IconClose } from './icons/close';
+import { triggerTrackingEvent } from './trigger-event';
 
 export interface ModalProps
     extends Omit<AntdModalProps, 'closeIcon' | 'rootClassName'> {
@@ -11,7 +12,7 @@ export interface ModalProps
     title?: string;
 }
 
-export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
+export function Modal(
     {
         centered = true,
         maskClosable = false,
@@ -22,12 +23,10 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
         title = '‎',
         children,
         ...rest
-    },
-    ref
+    }: ModalProps
 ) {
     return (
         <AntdModal
-            ref={ref as any}
             centered={centered}
             maskClosable={maskClosable}
             footer={footer}
@@ -42,7 +41,8 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
                     padding: 16,
                     paddingTop: 12,
                     width: '90vw',
-                    maxWidth: '100%'
+                    maxWidth: '100%',
+                    maxHeight: '90vh'
                 },
                 header: { margin: 0, padding: '16px 20px', borderBottom: '1px solid #f0f0f0' },
                 body: { padding: 0 },
@@ -70,17 +70,71 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
             {children}
         </AntdModal>
     );
-});
+}
 
 
 export function IframeFormModal(props: {
     iframeUrl: string;
     onClose: Function;
     open: boolean;
+    /**
+     * When provided, tracking events are fired on iframe load and error
+     * so we can measure how often the embedded form successfully loads.
+     * e.g. 'buy_form' fires 'buy_form_loaded' on success and 'buy_form_error' on failure.
+     */
+    eventId?: string;
+    /**
+     * When provided, this event is fired once the visitor keeps keyboard
+     * focus inside the form iframe for 10 seconds. The form is a
+     * cross-origin iframe so we cannot observe typing; sustained focus is
+     * the closest measurable signal for "started filling the form" and
+     * separates it from an accidental single click.
+     */
+    focusEventType?: string;
 }) {
     const handleClose = () => {
         props.onClose();
     };
+    const eventId = props.eventId;
+    const focusEventType = props.focusEventType;
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+
+    useEffect(() => {
+        if (!props.open || !focusEventType) {
+            return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const cancel = () => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+            }
+        };
+        const onWindowBlur = () => {
+            // focus moved into the iframe (not to another tab/app)
+            if (document.activeElement === iframeRef.current && !document.hidden) {
+                cancel();
+                timer = setTimeout(() => {
+                    triggerTrackingEvent(focusEventType, 1, 1);
+                }, 10 * 1000);
+            }
+        };
+        const onVisibilityChange = () => {
+            if (document.hidden) {
+                cancel();
+            }
+        };
+        window.addEventListener('blur', onWindowBlur);
+        window.addEventListener('focus', cancel);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            cancel();
+            window.removeEventListener('blur', onWindowBlur);
+            window.removeEventListener('focus', cancel);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [props.open, focusEventType]);
+
     return <Modal
         className="modal-consulting-page"
         open={props.open}
@@ -89,11 +143,14 @@ export function IframeFormModal(props: {
         footer={null}
     >
         <iframe
+            ref={iframeRef}
             style={{
                 width: '100%',
                 height: '70vh',
             }}
             src={props.iframeUrl}
+            onLoad={eventId ? () => triggerTrackingEvent(eventId + '_loaded', 0, 50) : undefined}
+            onError={eventId ? () => triggerTrackingEvent(eventId + '_error', 0, 50) : undefined}
         >
             Your browser doesn't support iframes,{' '}
             <a

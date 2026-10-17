@@ -2,18 +2,25 @@
 title: Cleanup
 slug: cleanup.html
 description: Optimize storage and speed up queries with RxDB's Cleanup Plugin, automatically removing old deleted docs while preserving replication states.
+image: /headers/cleanup.jpg
 ---
 
-
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {CleanupSweep} from '@site/src/components/animations/cleanup-sweep';
 
 # 🧹 Cleanup
 
-To make the replication work, and for other reasons, RxDB has to keep deleted documents in storage so that it can replicate their deletion state.
-This ensures that when a client is offline, the deletion state is still known and can be replicated with the backend when the client goes online again.
+To make the [replication](./replication.md) work, and for other reasons, RxDB has to keep deleted documents in storage so that it can replicate their deletion state.
+This ensures that when a client is [offline](./offline-first.md), the deletion state is still known and can be replicated with the backend when the client goes online again.
 
 Keeping too many deleted documents in the storage, can slow down queries or fill up too much disc space.
 With the cleanup plugin, RxDB will run cleanup cycles that clean up deleted documents when it can be done safely.
 
+
+<DocsAnimation subtitle="Deleted documents removed by the cleanup">
+<CleanupSweep />
+</DocsAnimation>
 
 ## Installation
 
@@ -25,7 +32,7 @@ addRxPlugin(RxDBCleanupPlugin);
 
 ## Create a database with cleanup options
 
-You can set a specific cleanup policy when a `RxDatabase` is created. For most use cases, the defaults should be ok.
+You can set a specific cleanup policy when a [RxDatabase](./rx-database.md) is created. For most use cases, the defaults should be ok.
 
 ```ts
 import { createRxDatabase } from 'rxdb';
@@ -42,7 +49,7 @@ const db = await createRxDatabase({
        */
       minimumDeletedTime: 1000 * 60 * 60 * 24 * 31, // one month,
       /**
-       * The minimum amount of that that the RxCollection must have existed.
+       * The minimum amount of time that the RxCollection must have existed.
        * This ensures that at the initial page load, more important
        * tasks are not slowed down because a cleanup process is running.
        * [default=60 seconds]
@@ -78,7 +85,7 @@ const db = await createRxDatabase({
 
 ## Calling cleanup manually
 
-You can manually run a cleanup per collection by calling `RxCollection.cleanup()`.
+You can manually run a cleanup per collection by calling [RxCollection](./rx-collection.md).cleanup().
 
 ```ts
 
@@ -97,7 +104,7 @@ await myRxCollection.cleanup(1000);
 
 /**
  * Purge all deleted documents no
- * matter when they where deleted
+ * matter when they were deleted
  * by setting minimumDeletedTime to zero.
  */
 await myRxCollection.cleanup(0);
@@ -118,9 +125,12 @@ await myRxCollection.cleanup(0);
 
 ## FAQ
 
-<details>
-    <summary>When does the cleanup run</summary>
+<Faq>
+<FaqItem question="When does the cleanup run">
+
 <div>
   The cleanup cycles are optimized to run only when the database is idle and it is unlikely that another database interaction performance will be decreased in the meantime. For example, by default, the cleanup does not run in the first 60 seconds of the creation of a collection to ensure the initial page load of your website does not slow down. Also, we use mechanisms like the `requestIdleCallback()` API to improve the correct timing of the cleanup cycle.
 </div>
-</details>
+
+</FaqItem>
+</Faq>

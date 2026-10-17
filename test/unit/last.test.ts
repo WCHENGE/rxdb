@@ -4,7 +4,8 @@ import {
     dbCount,
     BROADCAST_CHANNEL_BY_TOKEN,
     getFromMapOrThrow,
-    OPEN_COLLECTIONS
+    OPEN_COLLECTIONS,
+    OPEN_REPLICATION_STATES
 } from '../../plugins/core/index.mjs';
 import config from './config.ts';
 
@@ -12,17 +13,42 @@ import {
     GRAPHQL_WEBSOCKET_BY_URL
 } from '../../plugins/replication-graphql/index.mjs';
 import {
+    OPEN_LEADER_ELECTORS
+} from '../../plugins/leader-election/index.mjs';
+import {
     OPEN_REMOTE_MESSAGE_CHANNELS,
     CACHE_ITEM_BY_MESSAGE_CHANNEL
 } from '../../plugins/storage-remote/index.mjs';
 import { OPEN_MEMORY_INSTANCES } from '../../plugins/storage-memory/index.mjs';
 import {
     isBun,
-    isDeno
+    isDeno,
+    runPerformanceTests
 } from '../../plugins/test-utils/index.mjs';
+import { wrappedValidateAjvStorage } from '../../plugins/validate-ajv/index.mjs';
 declare const Deno: any;
 
 describe('last.test.ts (' + config.storage.name + ')', () => {
+
+    it('run a minimal performance test to ensure the performance function works', async function () {
+        this.timeout(120 * 1000);
+        const perfStorage = config.storage.getPerformanceStorage();
+        await runPerformanceTests(
+            wrappedValidateAjvStorage({ storage: perfStorage.storage }),
+            perfStorage.description,
+            {
+                runs: 1,
+                docsAmount: 100,
+                serialDocsAmount: 100,
+                insertBatches: 2,
+                collectionsAmount: 2,
+                parallelQueryAmount: 2,
+                waitBetweenTests: 0,
+                log: false
+            }
+        );
+    });
+
     it('ensure all Memory RxStorage instances are closed', async () => {
         try {
             await waitUntil(() => {
@@ -38,7 +64,7 @@ describe('last.test.ts (' + config.storage.name + ')', () => {
                     version: instance.schema.version
                 });
             });
-            throw new Error('not all memory instances have been closed (' + OPEN_MEMORY_INSTANCES.size + ' still open)');
+            throw new Error('not all memory instances have been closed (' + OPEN_MEMORY_INSTANCES.size + ' still open)', { cause: err });
         }
     });
     it('ensure every db is cleaned up', () => {
@@ -53,7 +79,7 @@ describe('last.test.ts (' + config.storage.name + ')', () => {
             const openCollections = Array.from(OPEN_COLLECTIONS.values()).map(c => ({ c: c.name, db: c.database ? c.database.name : '' }));
             console.log('open collectios:');
             console.dir(openCollections);
-            throw new Error('not all collections have been closed (' + openCollections.length + ')');
+            throw new Error('not all collections have been closed (' + openCollections.length + ')', { cause: err });
         }
     });
     it('ensure all BroadcastChannels are closed', async () => {
@@ -65,7 +91,21 @@ describe('last.test.ts (' + config.storage.name + ')', () => {
             const openChannelKeys = Array.from(BROADCAST_CHANNEL_BY_TOKEN.keys());
             console.log('open broadcast channel tokens:');
             console.log(openChannelKeys.join(', '));
-            throw new Error('not all broadcast channels have been closed (' + openChannelKeys.length + ')');
+            throw new Error('not all broadcast channels have been closed (' + openChannelKeys.length + ')', { cause: err });
+        }
+    });
+    it('ensure all replication states are closed', async () => {
+        try {
+            await waitUntil(() => {
+                return OPEN_REPLICATION_STATES.size === 0;
+            }, 5 * 1000);
+        } catch (err) {
+            const openChannelKeys = await Promise.all(
+                Array.from(OPEN_REPLICATION_STATES.values()).map(s => s.checkpointKey)
+            );
+            console.log('open replication states tokens:');
+            console.log(openChannelKeys.join(', '));
+            throw new Error('not all replication states have been closed (' + openChannelKeys.length + ')', { cause: err });
         }
     });
     it('ensure all RemoteMessageChannels have been closed', async () => {
@@ -86,7 +126,7 @@ describe('last.test.ts (' + config.storage.name + ')', () => {
                 console.dir(cacheItem);
             });
             console.log(stillOpen);
-            throw new Error('not all RemoteMessageChannels have been closed (' + stillOpen.length + ')');
+            throw new Error('not all RemoteMessageChannels have been closed (' + stillOpen.length + ')', { cause: err });
         }
     });
     it('ensure all websockets have been closed', async () => {
@@ -98,7 +138,24 @@ describe('last.test.ts (' + config.storage.name + ')', () => {
             const openSocketUrls = Array.from(GRAPHQL_WEBSOCKET_BY_URL.keys());
             console.log('open graphql websockets:');
             console.log(openSocketUrls.join(', '));
-            throw new Error('not all graphql websockets have been closed (' + openSocketUrls.length + ')');
+            throw new Error('not all graphql websockets have been closed (' + openSocketUrls.length + ')', { cause: err });
+        }
+    });
+
+    it('ensure all leader electors are dead', async () => {
+        try {
+            await waitUntil(() => {
+                return OPEN_LEADER_ELECTORS.size === 0;
+            }, 5 * 1000);
+        } catch (err) {
+            const openElectors = Array.from(OPEN_LEADER_ELECTORS.values());
+            console.log('open leader electors:');
+            openElectors.forEach(elector => {
+                console.dir({
+                    isLeader: elector.isLeader
+                });
+            });
+            throw new Error('not all leader electors have been cleaned up (' + OPEN_LEADER_ELECTORS.size + ' still open)', { cause: err });
         }
     });
 

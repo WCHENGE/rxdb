@@ -1,11 +1,15 @@
 ---
 title: RxDB Server Replication
 slug: replication-server.html
+description: Connect to an RxDB Server replication endpoint and sync data between client and server using the Server Replication Plugin.
+image: /headers/replication-server.jpg
 ---
 
-# RxDB Server Replication
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
 
-The *Server Replication Plugin* connects to the replication endpoint of an [RxDB Server Replication Endpoint](./rx-server.md#replication-endpoint) and replicates data between the client and the server.
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/server.svg" alt="Server" />}>RxDB Server Replication</HeadlineWithIcon>
+
+The *Server Replication Plugin* connects to the [replication](./replication.md) endpoint of an [RxDB Server Replication Endpoint](./rx-server.md#replication-endpoint) and replicates data between the client and the server.
 
 ## Usage
 
@@ -17,7 +21,9 @@ import { replicateServer } from 'rxdb-server/plugins/replication-server';
 const replicationState = await replicateServer({
     collection: usersCollection,
     replicationIdentifier: 'my-server-replication',
-    url: 'http://localhost:80/users/0', // endpoint url with the servers collection schema version at the end
+    // endpoint url with the servers collection
+    // schema version at the end
+    url: 'http://localhost:80/users/0',
     headers: {
         Authorization: 'Bearer S0VLU0UhI...'
     },

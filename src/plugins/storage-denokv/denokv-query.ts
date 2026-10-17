@@ -21,7 +21,12 @@ export async function queryDenoKV<RxDocType>(
     const queryPlan = preparedQuery.queryPlan;
     const query = preparedQuery.query;
     const skip = query.skip ? query.skip : 0;
-    const limit = query.limit ? query.limit : Infinity;
+    /**
+     * Use typeof so an explicit `limit: 0` from the mango query is
+     * honored. The previous truthy check treated `0` as "no limit"
+     * and returned all matching documents.
+     */
+    const limit = typeof query.limit === 'number' ? query.limit : Infinity;
     const skipPlusLimit = skip + limit;
     const queryPlanFields: string[] = queryPlan.index;
     const mustManuallyResort = !queryPlan.sortSatisfiedByIndex;
@@ -33,6 +38,10 @@ export async function queryDenoKV<RxDocType>(
             instance.schema,
             preparedQuery.query
         );
+    }
+
+    if (limit === 0) {
+        return { documents: [] };
     }
 
     const kv = await instance.kvPromise;
@@ -62,6 +71,11 @@ export async function queryDenoKV<RxDocType>(
         upperBoundString = changeIndexableStringByOneQuantum(upperBoundString, +1);
     }
 
+    if (lowerBoundString > upperBoundString) {
+        return {
+            documents: []
+        };
+    }
 
     let result: RxDocumentData<RxDocType>[] = [];
 
@@ -79,8 +93,8 @@ export async function queryDenoKV<RxDocType>(
         if (singleDocResult.value) {
             const docId: string = singleDocResult.value;
             const docDataResult = await kv.get([instance.keySpace, DENOKV_DOCUMENT_ROOT_PATH, docId], instance.kvOptions);
-            const docData = ensureNotFalsy(docDataResult.value);
-            if (!queryMatcher || queryMatcher(docData)) {
+            const docData = docDataResult.value;
+            if (docData && (!queryMatcher || queryMatcher(docData))) {
                 result.push(docData);
             }
         }
@@ -94,14 +108,25 @@ export async function queryDenoKV<RxDocType>(
         end: [instance.keySpace, indexMeta.indexId, upperBoundString]
     }, {
         consistency: instance.settings.consistencyLevel,
-        limit: (!mustManuallyResort && queryPlan.selectorSatisfiedByIndex) ? skipPlusLimit : undefined,
+        /**
+         * Deno.Kv.list() only accepts a positive integer as limit,
+         * an unlimited query must not pass a limit at all.
+         */
+        limit: (
+            !mustManuallyResort &&
+            queryPlan.selectorSatisfiedByIndex &&
+            Number.isFinite(skipPlusLimit)
+        ) ? skipPlusLimit : undefined,
         batchSize: instance.settings.batchSize
     });
 
     for await (const indexDocEntry of range) {
         const docId = indexDocEntry.value;
         const docDataResult = await kv.get([instance.keySpace, DENOKV_DOCUMENT_ROOT_PATH, docId], instance.kvOptions);
-        const docData = ensureNotFalsy(docDataResult.value);
+        const docData = docDataResult.value;
+        if (!docData) {
+            continue;
+        }
         if (!queryMatcher || queryMatcher(docData)) {
             result.push(docData);
         }

@@ -1,6 +1,8 @@
 ---
 title: Remote RxStorage
 slug: rx-storage-remote.html
+description: Use the Remote RxStorage plugin to run RxDB storage on a separate process or host machine and communicate over an asynchronous message channel.
+image: /headers/rx-storage-remote.jpg
 ---
 
 # Remote RxStorage
@@ -56,7 +58,9 @@ This is often used in Node.js to give one microservice access to another service
 ```ts
 // server.js
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
-import { startRxStorageRemoteWebsocketServer } from 'rxdb/plugins/storage-remote-websocket';
+import {
+    startRxStorageRemoteWebsocketServer
+} from 'rxdb/plugins/storage-remote-websocket';
 
 // either you can create the server based on a RxDatabase
 const serverBasedOnDatabase = await startRxStorageRemoteWebsocketServer({
@@ -87,7 +91,7 @@ const myDb = await createRxDatabase({
 
 The remote storage can also be used to send custom messages to and from the remote instance.
 
-One the remote you have to define a `customRequestHandler` like:
+On the remote you have to define a `customRequestHandler` like:
 
 ```ts
 const serverBasedOnDatabase = await startRxStorageRemoteWebsocketServer({

@@ -1,3 +1,5 @@
+import { promiseWait } from '../utils/utils-promise.ts';
+
 export const RX_STORAGE_NAME_DENOKV = 'denokv';
 
 export function getDenoKVIndexName(index: string[]): string {
@@ -21,4 +23,24 @@ export const CLEANUP_INDEX: string[] = ['_deleted', '_meta.lwt'];
  */
 export function getDenoGlobal(): any {
     return (globalThis as any).Deno;
+}
+
+
+export async function commitWithRetry(buildTx: () => any) {
+    let attempt = 0;
+
+    while (true) {
+        const tx = buildTx();
+        try {
+            return await tx.commit();
+        } catch (err) {
+            const locked = err && String((err as any).message).includes('database is locked');
+            if (locked && attempt < 10) {
+                attempt++;
+                await promiseWait(10 * attempt);
+                continue;
+            }
+            throw err;
+        }
+    }
 }

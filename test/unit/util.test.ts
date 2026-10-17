@@ -17,7 +17,6 @@ import {
     clone as rxdbClone,
     createBlob,
     blobToString,
-    getBlobSize,
     blobToBase64String,
     createBlobFromBase64,
     overwritable,
@@ -26,7 +25,12 @@ import {
     arrayBufferToString,
     clone,
     errorToPlainJson,
-    appendToArray
+    trimDots,
+    parseRevision,
+    getHeightOfRevision,
+    createRevision,
+    flattenObject,
+    getFromObjectOrThrow
 } from '../../plugins/core/index.mjs';
 import config from './config.ts';
 
@@ -62,8 +66,90 @@ describe('util.test.js', () => {
             assert.strictEqual(typeof hash, 'string');
             assert.ok(hash.length > 0);
         });
+        it('should work with a Blob input', async () => {
+            const text = 'foobar';
+            const blob = createBlob(text, 'text/plain');
+            const hashFromBlob = await defaultHashSha256(blob);
+            assert.strictEqual(typeof hashFromBlob, 'string');
+            assert.ok(hashFromBlob.length > 0);
+
+            // Hash of Blob should match hash of equivalent ArrayBuffer
+            const ab = await blob.arrayBuffer();
+            const hashFromAb = await defaultHashSha256(ab);
+            assert.strictEqual(hashFromBlob, hashFromAb);
+        });
     });
     describe('.sortObject()', () => {
+    });
+    describe('.trimDots()', () => {
+        it('should return the same string when no boundary dots exist', () => {
+            const str = 'hello.world';
+            const result = trimDots(str);
+            assert.strictEqual(result, str);
+            // should return the exact same reference (zero allocations)
+            assert.ok(result === str);
+        });
+        it('should remove leading dots', () => {
+            assert.strictEqual(trimDots('.hello'), 'hello');
+            assert.strictEqual(trimDots('..hello'), 'hello');
+            assert.strictEqual(trimDots('...hello'), 'hello');
+        });
+        it('should remove trailing dots', () => {
+            assert.strictEqual(trimDots('hello.'), 'hello');
+            assert.strictEqual(trimDots('hello..'), 'hello');
+            assert.strictEqual(trimDots('hello...'), 'hello');
+        });
+        it('should remove both leading and trailing dots', () => {
+            assert.strictEqual(trimDots('.hello.'), 'hello');
+            assert.strictEqual(trimDots('..hello..'), 'hello');
+            assert.strictEqual(trimDots('...hello.world...'), 'hello.world');
+        });
+        it('should return empty string when input is all dots', () => {
+            assert.strictEqual(trimDots('.'), '');
+            assert.strictEqual(trimDots('..'), '');
+            assert.strictEqual(trimDots('...'), '');
+        });
+        it('should return empty string for empty input', () => {
+            assert.strictEqual(trimDots(''), '');
+        });
+        it('should preserve dots in the middle of the string', () => {
+            assert.strictEqual(trimDots('a.b.c'), 'a.b.c');
+            assert.strictEqual(trimDots('.a.b.c.'), 'a.b.c');
+        });
+        it('should handle a single character without dots', () => {
+            const str = 'x';
+            const result = trimDots(str);
+            assert.strictEqual(result, str);
+            assert.ok(result === str);
+        });
+    });
+    describe('.flattenObject()', () => {
+        it('should flatten nested objects', () => {
+            assert.deepStrictEqual(
+                flattenObject({ a: { b: 1 }, c: 2 }),
+                { 'a.b': 1, c: 2 }
+            );
+        });
+        it('should keep keys with null values', () => {
+            assert.deepStrictEqual(
+                flattenObject({ a: null, b: 1 }),
+                { a: null, b: 1 }
+            );
+            assert.deepStrictEqual(
+                flattenObject({ a: { b: null } }),
+                { 'a.b': null }
+            );
+        });
+    });
+    describe('.getFromObjectOrThrow()', () => {
+        it('should return falsy values that exist in the object', () => {
+            assert.strictEqual(getFromObjectOrThrow({ a: 0 }, 'a'), 0);
+            assert.strictEqual(getFromObjectOrThrow({ a: '' }, 'a'), '');
+            assert.strictEqual(getFromObjectOrThrow({ a: false }, 'a'), false);
+        });
+        it('should throw for missing keys', () => {
+            assert.throws(() => getFromObjectOrThrow({ a: 1 }, 'b'));
+        });
     });
     describe('.recursiveDeepCopy()', () => {
         /**
@@ -99,7 +185,6 @@ describe('util.test.js', () => {
                         }
                     }
                 };
-                const start = performance.now();
                 let t = 0;
                 const runs = isFastMode() ? 100 : 2000;
                 while (t < runs) {
@@ -107,8 +192,6 @@ describe('util.test.js', () => {
                     method(obj);
                     obj = Object.assign({}, obj);
                 }
-                const time = performance.now() - start;
-                console.log('time ' + time);
             });
         });
     });
@@ -179,19 +262,79 @@ describe('util.test.js', () => {
             });
 
         });
-    });
-    describe('.appendToArray()', () => {
-        it('should correctly merge the arrays', () => {
-            const base = [1, 2, 3];
-            const add = [4, 5, 6];
-            appendToArray(base, add);
-            assert.deepStrictEqual(base, [1, 2, 3, 4, 5, 6]);
+        it('should always be strictly monotonically increasing', () => {
+            let previous = 0;
+            for (let i = 0; i < (isFastMode() ? 100 : 1000); i++) {
+                const value = now();
+                assert.ok(
+                    value > previous,
+                    'now() value ' + value + ' must be greater than previous ' + previous + ' at iteration ' + i
+                );
+                previous = value;
+            }
         });
-        it('should correctly merge the arrays', () => {
-            const base = [1, 2, 3];
-            const add: number[] = [];
-            appendToArray(base, add);
-            assert.deepStrictEqual(base, [1, 2, 3]);
+        it('should always have maximum two decimal places', () => {
+            for (let i = 0; i < (isFastMode() ? 100 : 1000); i++) {
+                const value = now();
+                const asString = value.toString();
+                const afterDot = asString.split('.')[1];
+                if (afterDot && afterDot.length > 2) {
+                    throw new Error('too many decimals on ' + asString + ' at iteration ' + i);
+                }
+            }
+        });
+        it('should handle the sub-millisecond counter overflow (99 to next ms) correctly', () => {
+            /**
+             * Call now() many times in a tight loop so that
+             * we are guaranteed to exceed 99 calls within a single millisecond,
+             * triggering the counter overflow where _lastNowSub reaches 100
+             * and _lastNowMs is incremented.
+             */
+            const values: number[] = [];
+            for (let i = 0; i < 500; i++) {
+                values.push(now());
+            }
+
+            // All values must be unique
+            const uniqueValues = new Set(values);
+            assert.strictEqual(uniqueValues.size, values.length, 'all values must be unique');
+
+            // All values must be strictly increasing
+            for (let i = 1; i < values.length; i++) {
+                assert.ok(
+                    values[i] > values[i - 1],
+                    'value at index ' + i + ' (' + values[i] + ') must be greater than value at index ' + (i - 1) + ' (' + values[i - 1] + ')'
+                );
+            }
+
+            // All values must have maximum two decimal places
+            for (const val of values) {
+                const afterDot = val.toString().split('.')[1];
+                if (afterDot && afterDot.length > 2) {
+                    throw new Error('too many decimals on ' + val.toString());
+                }
+            }
+
+            /**
+             * Check that the overflow happened by verifying
+             * that consecutive values can cross a millisecond boundary.
+             * Look for a pair where the integer part increases by 1
+             * while the previous value had a non-zero decimal.
+             */
+            let overflowFound = false;
+            for (let i = 1; i < values.length; i++) {
+                const prevMs = Math.floor(values[i - 1]);
+                const currMs = Math.floor(values[i]);
+                const prevSub = Math.round((values[i - 1] - prevMs) * 100);
+                if (currMs > prevMs && prevSub > 1) {
+                    overflowFound = true;
+                    break;
+                }
+            }
+            assert.ok(
+                overflowFound,
+                'should have observed a sub-millisecond counter overflow across 500 rapid calls'
+            );
         });
     });
     describe('base64 helpers', () => {
@@ -235,7 +378,7 @@ describe('util.test.js', () => {
             const amount = 30;
             const str = randomToken(amount);
             const blob = createBlob(str, 'plain/text');
-            const size = getBlobSize(blob);
+            const size = blob.size;
             assert.strictEqual(size, amount);
         });
         it('should do the correct base64 conversion', async () => {
@@ -291,6 +434,29 @@ describe('util.test.js', () => {
                 await blobToString(blobFromb64),
                 plain
             );
+        });
+        it('deepClone should preserve Blob instances by reference', () => {
+            const text = 'some attachment data';
+            const blob = createBlob(text, 'text/plain');
+            const obj = {
+                _attachments: {
+                    'file.txt': {
+                        data: blob,
+                        type: 'text/plain'
+                    }
+                }
+            };
+            const cloned = clone(obj);
+            // Blob should be the exact same reference (not cloned into a plain object)
+            assert.ok(cloned._attachments['file.txt'].data instanceof Blob);
+            assert.strictEqual(cloned._attachments['file.txt'].data, blob);
+        });
+        it('deepClone should preserve Blob in nested arrays', () => {
+            const blob = createBlob('test', 'text/plain');
+            const arr = [{ data: blob }, 'other'];
+            const cloned = clone(arr);
+            assert.ok((cloned[0] as any).data instanceof Blob);
+            assert.strictEqual((cloned[0] as any).data, blob);
         });
     });
     describe('.deepFreezeWhenDevMode()', () => {
@@ -553,6 +719,109 @@ describe('util.test.js', () => {
                     throw new Error('string has wrong length(is: ' + str.length + ', should:' + length + '): "' + str + '"');
                 }
             }
+        });
+        it('should always respect the min and max length boundaries', () => {
+            let t = 0;
+            const minLength = 3;
+            const maxLength = 10;
+            while (t < (isFastMode() ? 10 : 100)) {
+                t++;
+                const str = randomStringWithSpecialChars(minLength, maxLength);
+                if (str.length < minLength || str.length > maxLength) {
+                    throw new Error('string has wrong length(is: ' + str.length + ', min:' + minLength + ', max:' + maxLength + '): "' + str + '"');
+                }
+            }
+        });
+    });
+    describe('.parseRevision()', () => {
+        it('should parse a single-digit height', () => {
+            const result = parseRevision('1-abc');
+            assert.strictEqual(result.height, 1);
+            assert.strictEqual(result.hash, 'abc');
+        });
+        it('should parse a two-digit height', () => {
+            const result = parseRevision('42-foobar');
+            assert.strictEqual(result.height, 42);
+            assert.strictEqual(result.hash, 'foobar');
+        });
+        it('should parse a three-digit height', () => {
+            const result = parseRevision('123-xyz');
+            assert.strictEqual(result.height, 123);
+            assert.strictEqual(result.hash, 'xyz');
+        });
+        it('should parse a four-digit height', () => {
+            const result = parseRevision('1234-hash123');
+            assert.strictEqual(result.height, 1234);
+            assert.strictEqual(result.hash, 'hash123');
+        });
+        it('should parse a large height', () => {
+            const result = parseRevision('999999-longhash');
+            assert.strictEqual(result.height, 999999);
+            assert.strictEqual(result.hash, 'longhash');
+        });
+        it('should parse height 0', () => {
+            const result = parseRevision('0-zerohash');
+            assert.strictEqual(result.height, 0);
+            assert.strictEqual(result.hash, 'zerohash');
+        });
+        it('should throw on malformatted revision without dash', () => {
+            assert.throws(() => parseRevision('nope'));
+        });
+    });
+    describe('.getHeightOfRevision()', () => {
+        it('should get height from a single-digit revision', () => {
+            assert.strictEqual(getHeightOfRevision('1-abc'), 1);
+        });
+        it('should get height from a two-digit revision', () => {
+            assert.strictEqual(getHeightOfRevision('42-foobar'), 42);
+        });
+        it('should get height from a three-digit revision', () => {
+            assert.strictEqual(getHeightOfRevision('123-xyz'), 123);
+        });
+        it('should get height from a four-digit revision', () => {
+            assert.strictEqual(getHeightOfRevision('1234-hash123'), 1234);
+        });
+        it('should get height from a large revision', () => {
+            assert.strictEqual(getHeightOfRevision('999999-longhash'), 999999);
+        });
+        it('should get height 0', () => {
+            assert.strictEqual(getHeightOfRevision('0-zerohash'), 0);
+        });
+        it('should get all single-digit heights correctly', () => {
+            for (let i = 0; i <= 9; i++) {
+                assert.strictEqual(getHeightOfRevision(i + '-hash'), i);
+            }
+        });
+    });
+    describe('.createRevision()', () => {
+        it('should create a revision with height 1 for new documents', () => {
+            const rev = createRevision('mytoken');
+            assert.strictEqual(rev, '1-mytoken');
+            assert.strictEqual(getHeightOfRevision(rev), 1);
+        });
+        it('should increment the height for existing documents', () => {
+            const token = 'mytoken';
+            const previousDocData = {
+                _rev: '5-oldtoken',
+                _attachments: {},
+                _deleted: false,
+                _meta: { lwt: 0 }
+            } as any;
+            const rev = createRevision(token, previousDocData);
+            assert.strictEqual(rev, '6-mytoken');
+            assert.strictEqual(getHeightOfRevision(rev), 6);
+        });
+        it('should increment correctly from a multi-digit height', () => {
+            const token = 'mytoken';
+            const previousDocData = {
+                _rev: '99-oldtoken',
+                _attachments: {},
+                _deleted: false,
+                _meta: { lwt: 0 }
+            } as any;
+            const rev = createRevision(token, previousDocData);
+            assert.strictEqual(rev, '100-mytoken');
+            assert.strictEqual(getHeightOfRevision(rev), 100);
         });
     });
 });

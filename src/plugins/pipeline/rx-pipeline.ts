@@ -7,10 +7,13 @@ import {
     race
 } from 'rxjs';
 import type {
+    EventBulk,
     InternalStoreDocType,
+    RxChangeEventBulk,
     RxCollection,
     RxDocument,
-    RxDocumentData
+    RxDocumentData,
+    RxStorageChangeEvent
 } from '../../types';
 import type {
     CheckpointDocData,
@@ -25,13 +28,12 @@ import {
     lastOfArray,
     nameFunction,
     now,
-    promiseWait,
-    randomToken
+    promiseWait
 } from '../utils/index.ts';
 import { getChangedDocumentsSince } from '../../rx-storage-helper.ts';
 import { mapDocumentsDataToCacheDocs } from '../../doc-cache.ts';
 import { INTERNAL_CONTEXT_PIPELINE_CHECKPOINT, getPrimaryKeyOfInternalDocument } from '../../rx-database-internal-store.ts';
-import { FLAGGED_FUNCTIONS, blockFlaggedFunctionKey, releaseFlaggedFunctionKey } from './flagged-functions.ts';
+import { FLAGGED_FUNCTIONS, PIPELINE_FN_PREFIX, blockFlaggedFunctionKey, releaseFlaggedFunctionKey } from './flagged-functions.ts';
 
 export class RxPipeline<RxDocType> {
     processQueue = PROMISE_RESOLVE_VOID;
@@ -46,12 +48,19 @@ export class RxPipeline<RxDocType> {
     somethingChanged = new Subject();
 
 
-    secretFunctionName = 'tx_fn_' + randomToken(10)
 
     waitBeforeWriteFn = async () => {
+        /**
+         * If the pipeline is in an errored state, do not block reads on the
+         * destination collection. The error is surfaced via pipeline.awaitIdle()
+         * and should not poison unrelated reads on the destination collection.
+         */
+        if (this.error) {
+            return;
+        }
         const stack = new Error().stack;
         if (stack && (
-            stack.includes(this.secretFunctionName)
+            stack.includes(PIPELINE_FN_PREFIX)
         )) {
         } else {
             await this.awaitIdle();
@@ -77,8 +86,8 @@ export class RxPipeline<RxDocType> {
         this.destination.awaitBeforeReads.add(this.waitBeforeWriteFn);
         this.subs.push(
             this.source.eventBulks$.pipe(
-                filter(bulk => !this.stopped && !bulk.isLocal)
-            ).subscribe((bulk) => {
+                filter((bulk: RxChangeEventBulk<RxDocType>) => !this.stopped && !bulk.isLocal)
+            ).subscribe((bulk: RxChangeEventBulk<RxDocType>) => {
                 this.lastSourceDocTime.next(bulk.events[0].documentData._meta.lwt);
                 this.somethingChanged.next({});
             })
@@ -86,7 +95,7 @@ export class RxPipeline<RxDocType> {
         this.subs.push(
             this.destination.database.internalStore
                 .changeStream()
-                .subscribe(eventBulk => {
+                .subscribe((eventBulk: EventBulk<RxStorageChangeEvent<InternalStoreDocType>, any>) => {
                     const events = eventBulk.events;
                     for (let index = 0; index < events.length; index++) {
                         const event = events[index];
@@ -147,7 +156,6 @@ export class RxPipeline<RxDocType> {
                     // await o[this.secretFunctionName](rxDocuments);
 
                     const fnKey = blockFlaggedFunctionKey();
-                    this.secretFunctionName = fnKey;
                     try {
                         await FLAGGED_FUNCTIONS[fnKey](() => _this.handler(rxDocuments));
                     } catch (err: any) {
@@ -169,6 +177,8 @@ export class RxPipeline<RxDocType> {
                     done = true;
                 }
             }
+        }).catch(err => {
+            this.error = err;
         });
     }
 
@@ -202,11 +212,14 @@ export class RxPipeline<RxDocType> {
      * Remove the pipeline and all metadata which it has stored
      */
     async remove() {
+        await this.close();
         const insternalStore = this.destination.database.internalStore;
         const checkpointDoc = await getCheckpointDoc(this);
         if (checkpointDoc) {
             const newDoc: RxDocumentData<InternalStoreDocType> = clone(checkpointDoc);
             newDoc._deleted = true;
+            newDoc._meta.lwt = now();
+            newDoc._rev = createRevision(this.destination.database.token, checkpointDoc);
             const writeResult = await insternalStore.bulkWrite([{
                 previous: checkpointDoc,
                 document: newDoc,
@@ -215,7 +228,6 @@ export class RxPipeline<RxDocType> {
                 throw writeResult.error;
             }
         }
-        return this.close();
     }
 }
 
@@ -286,7 +298,7 @@ export async function addPipeline<RxDocType>(
         pipeline.trigger();
         pipeline.subs.push(
             this.eventBulks$.pipe(
-                filter(bulk => {
+                filter((bulk: RxChangeEventBulk<RxDocType>) => {
                     if (pipeline.stopped) {
                         return false;
                     }

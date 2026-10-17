@@ -6,6 +6,7 @@
  * this checks if typings work as expected
  */
 import * as assert from 'assert';
+import * as React from 'react';
 import {
     HumanCompositePrimaryDocType,
     schemas
@@ -22,9 +23,14 @@ import {
     RxAttachment,
     RxPlugin,
     addRxPlugin,
-    createBlob
+    createBlob,
+    ReactivityLambda,
+    Reactified
 } from '../plugins/core/index.mjs';
 import { getRxStorageMemory } from '../plugins/storage-memory/index.mjs';
+import { RxDatabaseProvider } from '../plugins/react/index.mjs';
+import type { AngularSignalReactivityLambda } from '../plugins/reactivity-angular/index.mjs';
+import type { Signal } from '@angular/core';
 
 type DefaultDocType = {
     passportId: string;
@@ -39,9 +45,8 @@ describe('typings.test.ts', function () {
 
     describe('basic', () => {
         it('should fail on broken code', () => {
-            let x: string = 'foo';
             // @ts-expect-error not a string
-            x = 1337;
+            const x: string = 1337;
             assert.ok(x);
         });
     });
@@ -427,6 +432,219 @@ describe('typings.test.ts', function () {
             // @ts-expect-error should be invalid because MyCustomReactivity is not a number
             const dataWrong: number = db.smth.find().$$;
         });
+        it('should correctly type reactivity with ReactivityLambda HKT pattern', () => {
+            /**
+             * Define a ReactivityLambda that maps T to Set<T>.
+             * This demonstrates the HKT pattern for custom reactivity.
+             */
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+
+            // RxQuery.$$ should return Set<...> not a bare type
+            const querySignal = db.smth.find().$$;
+
+            // @ts-expect-error query.$$ should not be assignable to number
+            const querySignalWrong: number = db.smth.find().$$;
+        });
+        it('should correctly type document property $$ with ReactivityLambda', () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+            const doc: RxDocument<DocType, unknown, SetReactivityLambda> = {} as any;
+
+            // doc.age$$ should be Set<number>
+            const ageSignal: Set<number> = doc.age$$;
+
+            // doc.firstName$$ should be Set<string>
+            const nameSignal: Set<string> = doc.firstName$$;
+
+            // @ts-expect-error age$$ should not be assignable to Set<string>
+            const ageWrong: Set<string> = doc.age$$;
+        });
+        it('should correctly type document.$$ and deleted$$ with ReactivityLambda', () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            const doc: RxDocument<DocType, unknown, SetReactivityLambda> = {} as any;
+
+            // doc.$$ should be Set<RxDocument<DocType>>
+            const docSignal: Set<RxDocument<DocType, unknown, SetReactivityLambda>> = doc.$$;
+
+            // doc.deleted$$ should be Set<boolean>
+            const deletedSignal: Set<boolean> = doc.deleted$$;
+
+            // @ts-expect-error deleted$$ should not be assignable to Set<string>
+            const deletedWrong: Set<string> = doc.deleted$$;
+        });
+        it('Reactified should return the type unchanged for non-lambda reactivity (backwards compat)', () => {
+            // When Reactivity is not a ReactivityLambda, Reactified returns it as-is
+            type Result = Reactified<MyCustomReactivity<unknown>, number>;
+            const data: Result = {} as MyCustomReactivity<unknown>;
+
+            // @ts-expect-error should not be assignable to number
+            const wrong: number = {} as Result;
+        });
+        it('should correctly type get$$ with ReactivityLambda', () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            const doc: RxDocument<DocType, unknown, SetReactivityLambda> = {} as any;
+
+            // doc.get$$() should return Set<any>
+            const signal: Set<any> = doc.get$$('age');
+
+            // @ts-expect-error get$$ should not be assignable to number
+            const wrong: number = doc.get$$('age');
+        });
+
+        /**
+         * @link https://github.com/pubkey/rxdb/issues/8311
+         * Documents returned from find/findOne/findByIds must propagate
+         * the Reactivity generic so that doc.$$ and field$$ are correctly typed.
+         */
+        it('#8311 findOne().exec() should propagate Reactivity to the returned document', async () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+
+            const doc = await db.smth.findOne().exec(true);
+
+            // doc.age$$ should be Set<number>
+            const ageSignal: Set<number> = doc.age$$;
+
+            // doc.$$ should be Set<RxDocument<...>>
+            const docSignal: Set<RxDocument<DocType, unknown, SetReactivityLambda>> = doc.$$;
+
+            // @ts-expect-error age$$ should not be assignable to number
+            const ageWrong: number = doc.age$$;
+        });
+        it('#8311 find().exec() should propagate Reactivity to the returned documents', async () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+
+            const docs = await db.smth.find().exec();
+            const doc = docs[0];
+
+            // doc.age$$ should be Set<number>
+            const ageSignal: Set<number> = doc.age$$;
+
+            // @ts-expect-error age$$ should not be assignable to number
+            const ageWrong: number = doc.age$$;
+        });
+        it('#8311 findByIds().exec() should propagate Reactivity to the returned documents', async () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+
+            const docsMap = await db.smth.findByIds(['id1']).exec();
+            const doc = docsMap.get('id1') as NonNullable<typeof docsMap extends Map<string, infer V> ? V : never>;
+
+            // doc.age$$ should be Set<number>
+            const ageSignal: Set<number> = doc.age$$;
+
+            // @ts-expect-error age$$ should not be assignable to number
+            const ageWrong: number = doc.age$$;
+        });
+        it('#8311 query chaining should preserve Reactivity', () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            type DbCollections = {
+                smth: RxCollection<DocType, unknown, unknown, unknown, SetReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, SetReactivityLambda>;
+            const db: Db = {} as any;
+
+            // Chaining where/sort/skip/limit should still have Set<...> for $$
+            const querySignal: Set<RxDocument<DocType, unknown, SetReactivityLambda>[]> = db.smth.find().where({ age: { $gt: 10 } }).sort({ age: 'asc' }).skip(0).limit(10).$$;
+
+            // @ts-expect-error should not be assignable to number
+            const queryWrong: number = db.smth.find().where({ age: { $gt: 10 } }).$$;
+        });
+        it('RxDocument.collection should propagate Reactivity', () => {
+            interface SetReactivityLambda extends ReactivityLambda {
+                readonly _result: Set<this['_data']>;
+            }
+            const doc: RxDocument<DocType, unknown, SetReactivityLambda> = {} as any;
+
+            // doc.collection.find().$$ should be Set<RxDocument<DocType, unknown, SetReactivityLambda>[]>
+            // because doc.collection must carry the same Reactivity as the document.
+            const querySignal: Set<RxDocument<DocType, unknown, SetReactivityLambda>[]> = doc.collection.find().$$;
+
+            // doc.collection.findOne().$$ should be Set<RxDocument<DocType, unknown, SetReactivityLambda> | null>
+            const findOneSignal: Set<RxDocument<DocType, unknown, SetReactivityLambda> | null> = doc.collection.findOne().$$;
+
+            // @ts-expect-error should not be assignable to number
+            const queryWrong: number = doc.collection.find().$$;
+        });
+        /**
+         * @link https://github.com/pubkey/rxdb/issues/8488
+         * Verify that AngularSignalReactivityLambda produces Signal<T> with the
+         * correct inner type for $$, field$$, deleted$$, count().$$ etc.
+         * This tests the real Angular integration pattern.
+         */
+        it('#8488 AngularSignalReactivityLambda should produce properly typed Signals', async () => {
+            type DbCollections = {
+                hero: RxCollection<DocType, unknown, unknown, unknown, AngularSignalReactivityLambda>;
+            };
+            type Db = RxDatabase<DbCollections, unknown, unknown, AngularSignalReactivityLambda>;
+            const db: Db = {} as any;
+
+            // collection.find().$$ must be Signal<RxDocument<DocType, ...>[]>
+            const heroesSignal: Signal<RxDocument<DocType, unknown, AngularSignalReactivityLambda>[]> = db.hero.find().$$;
+
+            // collection.findOne().$$ must be Signal<RxDocument<DocType, ...> | null>
+            const firstHeroSignal: Signal<RxDocument<DocType, unknown, AngularSignalReactivityLambda> | null> = db.hero.findOne().$$;
+
+            // collection.count().$$ must be Signal<number>
+            const countSignal: Signal<number> = db.hero.count().$$;
+
+            // doc.$$ must be Signal<RxDocument<DocType, ...>>
+            const doc = await db.hero.findOne().exec(true);
+            const docSignal: Signal<RxDocument<DocType, unknown, AngularSignalReactivityLambda>> = doc.$$;
+
+            // doc.deleted$$ must be Signal<boolean>
+            const deletedSignal: Signal<boolean> = doc.deleted$$;
+
+            // doc.age$$ must be Signal<number>
+            const ageSignal: Signal<number> = doc.age$$;
+
+            // doc.firstName$$ must be Signal<string>
+            const nameSignal: Signal<string> = doc.firstName$$;
+
+            // @ts-expect-error age$$ must not be assignable to Signal<string>
+            const ageWrong: Signal<string> = doc.age$$;
+
+            // @ts-expect-error count().$$ must not be assignable to Signal<string>
+            const countWrong: Signal<string> = db.hero.count().$$;
+        });
     });
 });
 describe('local documents', () => {
@@ -568,6 +786,27 @@ describe('other', () => {
                 });
             });
             describe('issues', () => {
+                /**
+                 * @link https://github.com/pubkey/rxdb/issues/8517
+                 */
+                it('#8517 RxDatabaseProvider should accept databases with typed collections that have no string index signature', () => {
+                    type LocalCollections = {
+                        projects: RxCollection;
+                        entities: RxCollection;
+                        connections: RxCollection;
+                        wikiPages: RxCollection;
+                        timelineEvents: RxCollection;
+                        eventEffects: RxCollection;
+                    };
+                    const db: RxDatabase<LocalCollections> = {} as any;
+
+                    const providerElement = React.createElement(RxDatabaseProvider, {
+                        database: db,
+                        children: null
+                    });
+
+                    assert.ok(providerElement);
+                });
                 it('via gitter at 2018 Mai 22 19:20', () => {
                     const db: RxDatabase = {} as RxDatabase;
                     const heroSchema = {

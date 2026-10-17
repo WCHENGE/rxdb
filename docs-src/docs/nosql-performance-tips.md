@@ -2,9 +2,10 @@
 title: RxDB NoSQL Performance Tips
 slug: nosql-performance-tips.html
 description: Skyrocket your NoSQL speed with RxDB tips. Learn about bulk writes, optimized queries, and lean plugin usage for peak performance.
+image: /headers/nosql-performance-tips.jpg
 ---
 
-# Performance tips for RxDB and other NoSQL databases
+# Performance tips for RxDB and other [NoSQL](./articles/in-memory-nosql-database.md) databases
 
 In this guide, you'll find techniques to improve the performance of RxDB operations and queries. Notice that all your performance optimizations should be done with a correct tracking of the metrics, otherwise you might change stuff into the wrong direction.
 
@@ -42,10 +43,10 @@ const orQuery = {
                 time: { $gt: 1234 },
             },
             {
-                time: { $eg: 1234 },
+                time: { $eq: 1234 },
                 user: { $gt: 'foobar' }
             },
-        ]
+        ],
         time: { $gte: 1234 } // <- add restrictive operator
     }
 }
@@ -73,19 +74,24 @@ const regexQuery = {
 const enumQuery = {
     selector: {
         /**
-         * Here lets assume our status field has the enum type ['idle', 'in-progress', 'done']
-         * so our restrictive operator can exclude all documents with 'done' as status.
+         * Here lets assume our status field has
+         * the enum type
+         * ['idle', 'in-progress', 'done']
+         * so our restrictive operator can exclude
+         * all documents with 'done' as status.
          */
         status: {
-            $in: {
+            $in: [
                 'idle',
                 'in-progress',
-            },
+            ],
             $gt: 'done' // <- add restrictive operator on status
         }
     }
 }
 ```
+
+For `$in` queries on an indexed field, the RxDB query planner limits the scanned index space to the range between the smallest and the largest of the given values. Adding a restrictive operator next to an `$in` is only useful when you know a tighter bound than the min/max of the values.
 
 ## Set a specific index
 
@@ -125,8 +131,11 @@ const query = myCollection
       /**
        * Because the developer knows that 50% of the documents are 'male',
        * but only 20% are below age 18,
-       * it makes sense to enforce using the ['gender', 'age'] index to improve performance.
-       * This could not be known by the query planer which might have chosen ['age', 'gender'] instead.
+       * it makes sense to enforce using the
+       * ['gender', 'age'] index to improve
+       * performance. This could not be known
+       * by the query planer which might have
+       * chosen ['age', 'gender'] instead.
        */
       index: ['gender', 'age']
     });
@@ -138,7 +147,7 @@ Notice that RxDB has the [Query Optimizer Plugin](./query-optimizer.md) that can
 
 Having a query where the up-to-date result set is needed more than once, you might want to make the query "hot" by permanently subscribing to it. This ensures that the query result is kept up to date by RxDB ant the [EventReduce algorithm](https://github.com/pubkey/event-reduce) at any time so that at the moment you need the current results, it has them already.
 
-For example when you use RxDB at Node.js for a webserver, you should use an outer "hot" query instead of running the same query again on every request to a route.
+For example when you use RxDB at [Node.js](./nodejs-database.md) for a webserver, you should use an outer "hot" query instead of running the same query again on every request to a route.
 
 
 ```ts

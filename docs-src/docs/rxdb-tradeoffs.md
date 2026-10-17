@@ -2,7 +2,10 @@
 title: RxDB Tradeoffs - Why NoSQL Triumphs on the Client
 slug: rxdb-tradeoffs.html
 description: Uncover RxDB's approach to modern database needs. From JSON-based queries to conflict handling without transactions, learn RxDB's unique tradeoffs.
+image: /headers/rxdb-tradeoffs.jpg
 ---
+
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # RxDB Tradeoffs
 
@@ -15,7 +18,7 @@ Therefore RxDB was optimized for client side applications and had to take comple
 
 When you ask people which database they would want for browsers, the most answer I hear is *something SQL based like SQLite*.
 This makes sense, SQL is a query language that most developers had learned in school/university and it is reusable across various database solutions. 
-But for RxDB (and other client side databases), using SQL is not a good option and instead it operates on document writes and the JSON based **Mango-query** syntax for querying.
+But for RxDB (and other client side databases), using SQL is not a good option and instead it operates on document writes and the JSON based **[Mango-query](https://github.com/cloudant/mango)** syntax for querying.
 
 ```ts
 // A Mango Query
@@ -42,9 +45,7 @@ But RxDB is a client-side database that runs **inside** of the application. Ther
 SQL is `string` based and therefore you need additional IDE tooling to ensure that your written database code is valid.
 Using the Mango Query syntax instead, TypeScript can be used validate the queries and to autocomplete code and knows which fields do exist and which do not. By doing so, the correctness of queries can be ensured at compile-time instead of run-time.
 
-<p align="center">
-  <img src="./files/typescript-query-validation.png" alt="TypeScript Query Validation" />
-</p>
+<CenteredImage src="./files/typescript-query-validation.png" alt="TypeScript Query Validation" />
 
 
 ### Composeable queries
@@ -87,14 +88,14 @@ Because of the document based approach, TypeScript can know the exact type of th
 
 - Does not work with offline-first
 - Does not work with multi-tab
-- Easier conflict handling on document level
+- Easier [conflict handling](./transactions-conflicts-revisions.md) on document level
 
 -- Instead of transactions, rxdb works with revisions
 
 
 ## Why no relations
 
-- Does not work with easy replication
+- Does not work with easy [replication](./replication.md)
 
 ## Why is a schema required
 

@@ -2,25 +2,27 @@
 title: IndexedDB Max Storage Size Limit - Detailed Best Practices
 slug: indexeddb-max-storage-limit.html
 description: Learn how browsers enforce IndexedDB storage size limits, how to test and handle quota exceeded errors, and best practices for storing large amounts of data offline.
+image: /headers/indexeddb-max-storage-limit.jpg
 ---
 
-<!--
+{/*
 SEO Keywords:
 - "indexeddb storage limit" - 590
 - "indexeddb size limit" - 260
 - "indexeddb max size" - 590
 - "indexeddb limits" - 170
--->
+*/}
 
 
 
 import {VideoBox} from '@site/src/components/video-box';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 
 
 # IndexedDB Max Storage Size Limit
 
-IndexedDB is widely known as the primary browser-based storage API for large client-side data, particularly valuable for modern offline-first applications. These apps aim to keep everything functional and interactive even without an internet connection, which naturally demands substantial local storage. However, IndexedDB has various size limits depending on the browser, disk space, and user settings. Being aware of these constraints is crucial so you can avoid quota errors and deliver a seamless user experience without unexpected data loss.
+IndexedDB is widely known as the primary browser-based storage API for large client-side data, particularly valuable for modern [offline-first](../offline-first.md) applications. These apps aim to keep everything functional and interactive even without an internet connection, which naturally demands substantial local storage. However, IndexedDB has various size limits depending on the browser, disk space, and user settings. Being aware of these constraints is crucial so you can avoid quota errors and deliver a seamless user experience without unexpected data loss.
 
 Offline-first apps have grown in popularity because they provide immediate feedback, zero-latency interactions, and resilience in poor network conditions. Storing big data sets, or even entire data models, in IndexedDB has become far more common than in the era of small localStorage or cookie usage. But all this local data is subject to quotas, and that’s exactly what this guide will help you understand and manage.
 
@@ -45,7 +47,7 @@ IndexedDB size quotas differ significantly across browsers and platforms. While 
 | iOS Safari     | Typically 1 GB, can be less on older iOS     | Early iOS versions were known for more aggressive quotas and data eviction on low space.                                     |
 | Android Chrome | Similar to desktop Chrome                    | May exhibit warnings in especially low-storage devices. The same 80% free space logic generally applies.                     |
 
-Historically, these limits have evolved. For instance, older Firefox versions included `dom.indexedDB.warningQuota`, showing a 50 MB prompt on desktop or a 5 MB prompt on mobile—many developers wrote about these notifications on Stack Overflow. Since around 2015, Firefox has changed its quota approach significantly. Likewise, Safari used to limit data more aggressively on older iOS versions. Some older tutorials suggest comparing IndexedDB to localStorage, but modern browsers allow far larger and more flexible storage with IndexedDB than the old localStorage or cookie-based setups.
+Historically, these limits have evolved. For instance, older Firefox versions included `dom.indexedDB.warningQuota`, showing a 50 MB prompt on desktop or a 5 MB prompt on mobile. Many developers wrote about these notifications on Stack Overflow. Since around 2015, Firefox has changed its quota approach significantly. Likewise, Safari used to limit data more aggressively on older iOS versions. Some older tutorials suggest comparing IndexedDB to localStorage, but modern browsers allow far larger and more flexible storage with IndexedDB than the old localStorage or cookie-based setups.
 
 ---
 
@@ -145,13 +147,9 @@ const compressed = {
 };
 ```
 
-Sharding data across multiple subdomains or iframes is another trick, though it complicates communication. When you need truly massive offline data, you might store part of the data under `sub1.yoursite.com` and another chunk under `sub2.yoursite.com`, using `postMessage()` to coordinate. This can circumvent single-origin limitations, but it introduces extra complexity. Another effective method is to let data expire automatically—perhaps older records are removed if they haven’t been accessed for a certain period.
+Sharding data across multiple subdomains or iframes is another trick, though it complicates communication. When you need truly massive offline data, you might store part of the data under `sub1.yoursite.com` and another chunk under `sub2.yoursite.com`, using `postMessage()` to coordinate. This can circumvent single-origin limitations, but it introduces extra complexity. Another effective method is to let data expire automatically, for example, older records can be removed if they haven’t been accessed for a certain period.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Database" />
 
 ## IndexedDB Max Size of a Single Object
 
@@ -162,10 +160,8 @@ There is no explicit cap on how large an individual object or record in IndexedD
 
 IndexedDB data can remain indefinitely as long as the user does not clear the browser’s data or the origin does not run afoul of automated eviction policies (e.g., Safari or Android might remove large caches for sites unused over a long period when space is needed). Typically, there is no “time limit,” but ephemeral modes or incognito sessions have their own rules. If you rely on permanent offline data, request persistent storage and handle the possibility that the user or the OS could still remove your data under extreme conditions. Especially Safari is known to be very fast in deleting local data.
 
-<p align="center">
-  <img src="/files/safari-database.png" alt="safari database" width="200" />
-</p>
+<CenteredImage src="/files/safari-database.png" alt="safari database" width={200} />
 
 ## Follow Up
 
-Learn more by checking the [IndexedDB official docs](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API), which detail store design, error handling, and quota usage. If you need a straightforward way to manage large offline data with compression and conflict resolution, explore the [RxDB Quickstart](../quickstart.md). You can also join the community on [GitHub](/code/) to share tips on overcoming the **IndexedDB max storage size limit** in production environments.
+Learn more by checking the [IndexedDB official docs](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API), which detail store design, error handling, and quota usage. If you need a straightforward way to manage large offline data with compression and [conflict resolution](../transactions-conflicts-revisions.md), explore the [RxDB Quickstart](../quickstart.md). You can also join the community on [GitHub](/code/) to share tips on overcoming the **IndexedDB max storage size limit** in production environments.

@@ -37,6 +37,75 @@ async function run() {
     );
 
 
+    // collect changelog entries from orga/changelog/ files
+    const changelogDir = path.join(rootPath, 'orga', 'changelog');
+    const changelogFiles = (await fs.promises.readdir(changelogDir))
+        .filter(f => f.endsWith('.md') && f !== 'README.md')
+        .sort();
+    const newRows = [];
+    for (const file of changelogFiles) {
+        const content = await fs.promises.readFile(
+            path.join(changelogDir, file),
+            'utf-8'
+        );
+        const lines = content.split('\n').filter(row => row.trim().length > 0);
+        newRows.push(...lines);
+    }
+    newRows.push('');
+
+    /**
+     * Fetches changelog entries from a GitHub repo's orga/changelog/ directory
+     * (one-change-per-file convention) and appends them under a heading.
+     */
+    async function appendExternalChangelog(repo, heading, token) {
+        try {
+            const headers = {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'rxdb-release-script'
+            };
+            if (token) {
+                headers['Authorization'] = `token ${token}`;
+            }
+            const dirUrl = `https://api.github.com/repos/pubkey/${repo}/contents/orga/changelog`;
+            const dirResponse = await fetch(dirUrl, { headers });
+            if (!dirResponse.ok) {
+                console.warn(`Could not fetch ${repo} changelog directory, status: ${dirResponse.status}`);
+                return;
+            }
+            const dirEntries = await dirResponse.json();
+            const files = dirEntries
+                .filter(e => e.type === 'file' && e.name.endsWith('.md') && e.name !== 'README.md')
+                .sort((a, b) => a.name.localeCompare(b.name));
+            const rows = [];
+            for (const entry of files) {
+                const fileResponse = await fetch(entry.download_url, { headers });
+                if (fileResponse.ok) {
+                    const content = await fileResponse.text();
+                    const lines = content.split('\n').filter(l => l.trim().length > 0);
+                    rows.push(...lines);
+                }
+            }
+            if (rows.length > 0) {
+                newRows.push(heading);
+                newRows.push(...rows);
+                newRows.push('');
+            }
+        } catch (e) {
+            console.warn(`Could not fetch ${repo} changelog: ${e.message}`);
+        }
+    }
+
+    const rxdbServerToken = process.env.RXDB_SERVER_TOKEN;
+    if (!rxdbServerToken) {
+        throw new Error('RXDB_SERVER_TOKEN is not set');
+    }
+    await appendExternalChangelog('rxdb-server', '#### RxDB Server', rxdbServerToken);
+    const rxdbPremiumToken = process.env.RXDB_PREMIUM_FETCH_CHANGELOG;
+    if (!rxdbPremiumToken) {
+        throw new Error('RXDB_PREMIUM_FETCH_CHANGELOG is not set');
+    }
+    await appendExternalChangelog('rxdb-premium-dev', '#### RxDB Premium', rxdbPremiumToken);
+
     // update changelog
     const changelogFlagStart = '<!-- CHANGELOG NEWEST -->';
     const changelogFlagEnd = '<!-- /CHANGELOG NEWEST -->';
@@ -48,23 +117,10 @@ async function run() {
     );
     let changelogRows = changelogContent.split('\n');
 
-    if (
-        !changelogRows.includes(changelogFlagStart) ||
-        !changelogRows.includes(changelogFlagEnd) ||
-        !changelogRows.includes(changelogReleaseBelowFlag)
-    ) {
+    if (!changelogRows.includes(changelogReleaseBelowFlag)) {
         throw new Error('changelog flag missing');
     }
     const indexReleaseBelow = changelogRows.indexOf(changelogReleaseBelowFlag);
-
-    const indexStart = changelogRows.indexOf(changelogFlagStart);
-    const indexEnd = changelogRows.indexOf(changelogFlagEnd);
-
-    let newRows = changelogRows.slice(indexStart + 1, indexEnd);
-    newRows = newRows
-        .filter(row => !row.startsWith('<!-- '))
-        .filter(row => !row.startsWith('### '));
-    newRows.push('');
 
 
     /**
@@ -126,7 +182,7 @@ async function run() {
         changelogRows.unshift(newVersionHeader);
         changelogRows.unshift('');
         changelogRows.unshift('');
-        changelogRows.unshift('<!-- ADD new changes here! -->\n');
+        changelogRows.unshift('<!-- ADD new changes to orga/changelog/ as one file per change -->\n');
         changelogRows.unshift('');
         changelogRows.unshift(changelogFlagStart);
         changelogRows.unshift('');
@@ -138,7 +194,7 @@ async function run() {
         changelogRows.unshift('');
         changelogRows.unshift(changelogFlagEnd);
         changelogRows.unshift('');
-        changelogRows.unshift('<!-- ADD new changes here! -->\n');
+        changelogRows.unshift('<!-- ADD new changes to orga/changelog/ as one file per change -->\n');
         changelogRows.unshift('');
         changelogRows.unshift(changelogFlagStart);
     }
@@ -157,6 +213,11 @@ async function run() {
         newChangelogContent,
         'utf-8'
     );
+
+    // delete the changelog entry files after merging
+    for (const file of changelogFiles) {
+        await fs.promises.unlink(path.join(changelogDir, file));
+    }
 }
 
 run();

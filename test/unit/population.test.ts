@@ -1,5 +1,6 @@
 import assert from 'assert';
-import config, { describeParallel } from './config.ts';
+import AsyncTestUtil from 'async-test-util';
+import config from './config.ts';
 
 import {
     createRxDatabase,
@@ -18,7 +19,7 @@ import { RxDBQueryBuilderPlugin } from '../../plugins/query-builder/index.mjs';
 addRxPlugin(RxDBQueryBuilderPlugin);
 
 
-describeParallel('population.test.js', () => {
+describe('population.test.js', () => {
     describe('createRxSchema', () => {
         describe('positive', () => {
             it('should allow to create a schema with a relation', () => {
@@ -271,6 +272,78 @@ describeParallel('population.test.js', () => {
                 db.close();
             });
         });
+        describe('negative', () => {
+            it('throw DOC5 for a path that does not exist in the schema, even when the value is falsy', async () => {
+                const db = await createRxDatabase({
+                    name: randomToken(10),
+                    storage: config.storage.getStorage(),
+                });
+                const cols = await db.addCollections({
+                    human: {
+                        schema: {
+                            version: 0,
+                            primaryKey: 'name',
+                            type: 'object',
+                            properties: {
+                                name: { type: 'string', maxLength: 100 },
+                                bestFriend: {
+                                    ref: 'human',
+                                    type: 'string'
+                                }
+                            },
+                            required: ['name']
+                        }
+                    }
+                });
+                const col = cols.human;
+                await col.insert({ name: 'alice' });
+                const doc = await col.findOne('alice').exec(true);
+
+                // Calling populate with a path that does not exist in the schema
+                // must throw DOC5 so that typos are surfaced as errors instead of
+                // being silently swallowed as a "no ref value" null result.
+                await AsyncTestUtil.assertThrows(
+                    () => doc.populate('nonExistentField'),
+                    'RxError',
+                    'DOC5'
+                );
+                db.close();
+            });
+            it('throw DOC6 when populating a non-ref schema field, even when the value is falsy', async () => {
+                const db = await createRxDatabase({
+                    name: randomToken(10),
+                    storage: config.storage.getStorage(),
+                });
+                const cols = await db.addCollections({
+                    human: {
+                        schema: {
+                            version: 0,
+                            primaryKey: 'name',
+                            type: 'object',
+                            properties: {
+                                name: { type: 'string', maxLength: 100 },
+                                nickname: { type: 'string' }
+                            },
+                            required: ['name']
+                        }
+                    }
+                });
+                const col = cols.human;
+                // insert without `nickname` so that value is undefined
+                await col.insert({ name: 'alice' });
+                const doc = await col.findOne('alice').exec(true);
+
+                // Populating a field that exists in the schema but has no
+                // ref defined must throw DOC6 regardless of whether the value
+                // happens to be unset.
+                await AsyncTestUtil.assertThrows(
+                    () => doc.populate('nickname'),
+                    'RxError',
+                    'DOC6'
+                );
+                db.close();
+            });
+        });
     });
     describe('RxDocument populate via pseudo-proxy', () => {
         describe('positive', () => {
@@ -351,6 +424,127 @@ describeParallel('population.test.js', () => {
 
             assert.ok(isRxDocument(docB));
             assert.strictEqual(docB.somevalue, 'foobar');
+
+            db.close();
+        });
+        it('populate array should preserve the order of ref ids when two documents reference the same set in different order', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                human: {
+                    schema: {
+                        version: 0,
+                        primaryKey: 'name',
+                        type: 'object',
+                        properties: {
+                            name: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            friends: {
+                                type: 'array',
+                                ref: 'human',
+                                items: {
+                                    type: 'string'
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            const col = cols.human;
+
+            const friendNames = ['charlie', 'alice', 'bob', 'eve', 'dave'];
+            await Promise.all(
+                friendNames.map(name => col.insert({ name, friends: [] }))
+            );
+
+            // Two documents reference the same set of friends but in different order.
+            // Because findByIds uses a sorted cache key, the second populate call
+            // would reuse the first cached query and return documents in the wrong order.
+            const orderA = ['eve', 'bob', 'charlie', 'alice', 'dave'];
+            const orderB = ['dave', 'alice', 'charlie', 'bob', 'eve'];
+            await col.insert({ name: 'protagonist-a', friends: orderA });
+            await col.insert({ name: 'protagonist-b', friends: orderB });
+
+            const docA = await col.findOne('protagonist-a').exec(true);
+            const docB = await col.findOne('protagonist-b').exec(true);
+
+            const friendDocsA = await docA.populate('friends');
+            const friendDocsB = await docB.populate('friends');
+
+            const populatedNamesA = friendDocsA.map((d: any) => d.name);
+            const populatedNamesB = friendDocsB.map((d: any) => d.name);
+
+            assert.deepStrictEqual(
+                populatedNamesA,
+                orderA,
+                'populated array order for docA must match its ref id order'
+            );
+            assert.deepStrictEqual(
+                populatedNamesB,
+                orderB,
+                'populated array order for docB must match its ref id order'
+            );
+
+            db.close();
+        });
+        it('populate array when ref is defined on items instead of on the array field', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                human: {
+                    schema: {
+                        version: 0,
+                        primaryKey: 'name',
+                        type: 'object',
+                        properties: {
+                            name: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            friends: {
+                                type: 'array',
+                                items: {
+                                    ref: 'human',
+                                    type: 'string'
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            const col = cols.human;
+
+            const friendNames = ['alice', 'bob', 'charlie'];
+            await Promise.all(
+                friendNames.map(name => col.insert({ name, friends: [] }))
+            );
+            await col.insert({
+                name: 'protagonist',
+                friends: friendNames
+            });
+
+            const doc = await col.findOne('protagonist').exec(true);
+
+            // populate() must work when 'ref' is on items
+            const friendDocs = await doc.populate('friends');
+            assert.ok(Array.isArray(friendDocs));
+            assert.strictEqual(friendDocs.length, 3);
+            friendDocs.forEach((friend: any) => {
+                assert.ok(isRxDocument(friend));
+            });
+            const populatedNames = friendDocs.map((d: any) => d.name);
+            assert.deepStrictEqual(populatedNames, friendNames);
+
+            // pseudo-proxy _ getter must also work
+            const friendDocs2 = await (doc as any).friends_;
+            assert.ok(Array.isArray(friendDocs2));
+            assert.strictEqual(friendDocs2.length, 3);
 
             db.close();
         });

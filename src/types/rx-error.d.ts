@@ -21,11 +21,14 @@ export type {
 export interface RxErrorParameters {
     readonly error?: PlainJsonError;
     readonly errors?: PlainJsonError[];
+    readonly errorText?: string;
     readonly writeError?: RxStorageWriteError<any>;
     readonly schemaPath?: string;
     readonly objPath?: string;
     readonly rootPath?: string;
     readonly childpath?: string;
+    readonly ids?: string[];
+    readonly duplicateIds?: string[];
     readonly obj?: any;
     readonly document?: any;
     readonly schema?: Readonly<RxJsonSchema<any> | RxSchema>;
@@ -36,6 +39,7 @@ export interface RxErrorParameters {
     readonly regex?: string;
     readonly fieldName?: string;
     readonly id?: string;
+    readonly documentId?: string;
     readonly data?: any;
     readonly missingCollections?: string[];
     readonly primaryPath?: string;
@@ -68,6 +72,8 @@ export interface RxErrorParameters {
     readonly passwordHash?: string;
     readonly existingPasswordHash?: string;
     readonly password?: string | any;
+    readonly passwordType?: string;
+    readonly passwordLength?: number;
     readonly minPassLength?: number;
     readonly own?: any;
     readonly source?: any;
@@ -106,6 +112,18 @@ export interface RxErrorParameters {
     readonly pushRows?: RxReplicationWriteToMasterRow<any>[];
     readonly direction?: 'pull' | 'push';
 
+    // google-drive-replication
+    readonly folderPath?: string;
+    readonly folderName?: string;
+    readonly file?: any;
+    readonly parentId?: string;
+
+    // fetch
+    readonly body?: any;
+    readonly status?: number;
+    readonly statusText?: string;
+    readonly headers?: Record<string, any>;
+    readonly code?: string;
 }
 
 /**
@@ -140,13 +158,6 @@ export type PlainJsonError = {
  * RxStorage.bulkWrite() is called
  */
 export type RxStorageWriteErrorBase<RxDocType> = {
-    /**
-     * The content-string that has been passed to
-     * RxStorageInstance.bulkWrite()
-     * TODO add this!
-     */
-    // context: string;
-
     status: number
     | 409 // conflict
     | 422 // schema validation error
@@ -164,6 +175,12 @@ export type RxStorageWriteErrorBase<RxDocType> = {
 
     // the original document data that should have been written.
     writeRow: BulkWriteRow<RxDocType>;
+
+    /**
+     * The context which was given to bulkWrite(),
+     * used for debugging.
+     */
+    context: string;
 };
 
 export type RxStorageWriteErrorConflict<RxDocType> = RxStorageWriteErrorBase<RxDocType> & {

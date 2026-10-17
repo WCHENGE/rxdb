@@ -2,21 +2,22 @@
 title: IndexedDB Database in Vue Apps - The Power of RxDB
 slug: vue-indexeddb.html
 description: Learn how RxDB simplifies IndexedDB in Vue, offering reactive queries, offline-first capabilities, encryption, compression, and effortless integration.
+image: /headers/vue-indexeddb.jpg
 ---
+
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_BROWSER, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # IndexedDB Database in Vue Apps - The Power of RxDB
 
 Building robust, [offline-capable](../offline-first.md) Vue applications often involves leveraging browser storage solutions to manage data. IndexedDB is one such powerful tool, but its raw API can be challenging to work with directly. RxDB abstracts away much of IndexedDB's complexity, providing a more developer-friendly experience. In this article, we'll explore what IndexedDB is, why it's beneficial in Vue applications, the challenges of using plain IndexedDB, and how [RxDB](https://rxdb.info/) can simplify your development process while adding advanced features.
 
-
 ## What is IndexedDB?
 
 [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) is a low-level API for storing significant amounts of structured data in the browser. It provides a transactional database system that can store key-value pairs, complex objects, and more. This storage engine is asynchronous and supports advanced data types, making it suitable for offline storage and complex web applications.
 
-<center>
-  <img src="/files/icons/vuejs.svg" alt="Vue IndexedDB" width="120" />
-</center>
-
+<CenteredImage src="/files/icons/vuejs.svg" alt="Vue IndexedDB" width={120} />
 
 ## Why Use IndexedDB in Vue
 
@@ -26,7 +27,6 @@ When building Vue applications, IndexedDB can play a crucial role in enhancing b
 - **Performance**: Using local data means [zero latency](./zero-latency-local-first.md) and no loading spinners, as data doesn't need to be fetched over a network.
 - **Easier Implementation**: Replicating all data to the client once is often simpler than implementing multiple endpoints for each user interaction.
 - **Scalability**: Local data reduces server load because queries run on the client side, decreasing server bandwidth and processing requirements.
-
 
 ## Why To Not Use Plain IndexedDB
 
@@ -41,12 +41,7 @@ While IndexedDB itself is powerful, its native API comes with several drawbacks 
 - **Missing Advanced Features**: Features like [encryption](../encryption.md) or [compression](../key-compression.md) aren't built into IndexedDB, but they are available via RxDB.
 - **Limited Platform Support**: IndexedDB is browser-only. RxDB offers [swappable storages](../rx-storage.md) so you can reuse the same data layer code in mobile or desktop environments.
 
-
-<center>
-  <a href="https://rxdb.info/">
-    <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-  </a>
-</center>
+<RxdbLogo alt="JavaScript Database" />
 
 ## Set up RxDB in Vue
 
@@ -59,7 +54,6 @@ First, install RxDB (and RxJS) from npm:
 ```bash
 npm install rxdb rxjs --save
 ```
-
 
 ### Create a Database and Collections
 
@@ -120,7 +114,10 @@ Once your database is initialized, you can perform all CRUD operations:
 
 ```ts
 // insert
-await db.heroes.insert({ id: '1', name: 'Iron Man', power: 'Genius-level intellect' });
+await db.heroes.insert({
+    id: '1', name: 'Iron Man',
+    power: 'Genius-level intellect'
+});
 
 // bulk insert
 await db.heroes.bulkInsert([
@@ -145,8 +142,7 @@ await thorDoc.remove();
 
 RxDB excels in providing reactive data capabilities, ideal for [real-time applications](./realtime-database.md). Subscribing to queries automatically updates your Vue components when underlying data changes - even across [browser](./browser-database.md) tabs.
 
-<p align="center"> <img src="../files/animations/realtime.gif" alt="realtime ui updates" width="700" /> </p>
-
+<CenteredImage src="../files/animations/realtime.gif" alt="realtime ui updates" width={700} />
 
 ### Using RxJS Observables with Vue 3 Composition API
 
@@ -185,11 +181,9 @@ onMounted(async () => {
 
 This component subscribes to the collection's changes, [updating the UI](./optimistic-ui.md) automatically whenever the underlying data changes in any browser tab.
 
-
 ### Using Vue Signals
 
 If you're exploring Vue's reactivity transforms or signals, RxDB also offers [custom reactivity factories](../reactivity.md) ([premium plugins](/premium/) are required). This allows queries to emit data as signals instead of traditional Observables.
-
 
 ```ts
 const heroesSignal = db.heroes.find().$$; // $$ indicates a reactive result
@@ -211,7 +205,6 @@ With this, in your Vue template or script, you can directly read from heroesSign
 </template>
 ```
 
-
 ## Vue IndexedDB Example with RxDB
 
 A comprehensive example of using RxDB within a Vue application can be found in the [RxDB GitHub repository](https://github.com/pubkey/rxdb/tree/master/examples/vue). This repository contains sample applications, showcasing best practices and demonstrating how to integrate RxDB for various use cases.
@@ -226,7 +219,6 @@ RxDB offers many advanced features that extend beyond basic data storage:
 - [Encryption](../encryption.md): Secure your data with built-in encryption capabilities.
 
 - [Compression](../key-compression.md): Optimize storage using key compression.
-
 
 ## Limitations of IndexedDB
 
@@ -245,7 +237,7 @@ Depending on your application's requirements, there are [alternative storage sol
 ## Performance Comparison with Other Browser Storages
 Here is a performance overview of the various browser-based storage implementations of RxDB:
 
-<p align="center"> <img src="../files/rx-storage-performance-browser.png" alt="RxStorage performance - browser" width="700" /> </p>
+<PerformanceChart title="Browser Storages" data={PERFORMANCE_DATA_BROWSER} metrics={PERFORMANCE_METRICS} />
 
 ## Follow Up
 - Learn how to use RxDB with the [RxDB Quickstart](../quickstart.md) for a guided introduction.

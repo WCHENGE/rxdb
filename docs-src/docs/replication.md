@@ -1,18 +1,29 @@
 ---
-title: ⚙️ RxDB realtime Sync Engine for Local-First Apps
+title: RxDB realtime Sync Engine for Local-First Apps
 slug: replication.html
 description: Replicate data in real-time with RxDB's offline-first Sync Engine. Learn about efficient syncing, conflict resolution, and advanced multi-tab support.
+image: /headers/replication.jpg
 ---
 
-# RxDB's realtime Sync Engine for Local-First Apps
+import { IconGear } from '@site/src/components/icons/gear';
+import { HeadlineWithIcon } from '@site/src/components/headline-with-icon';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {ReplicationPushPull} from '@site/src/components/animations/replication-push-pull';
+
+# <HeadlineWithIcon h1 icon={<IconGear />}>RxDB's realtime Sync Engine for Local-First Apps</HeadlineWithIcon>
 
 The RxDB Sync Engine provides the ability to sync the database state in **realtime** between the clients and the server.
 
-The backend server does not have to be a RxDB instance; you can build a replication with **any infrastructure**.
-For example you can replicate with a [custom GraphQL endpoint](./replication-graphql.md) or a [HTTP server](./replication-http.md) on top of a PostgreSQL or MongoDB database.
+The backend server does not have to be an RxDB instance; you can build a replication with **any infrastructure**.
+For example you can replicate with a [custom GraphQL endpoint](./replication-graphql.md) or an [HTTP server](./replication-http.md) on top of a PostgreSQL or MongoDB database.
 
 The replication is made to support the [Local-First](./articles/local-first-future.md) paradigm, so that when the client goes [offline](./offline-first.md), the RxDB [database](./rx-database.md) can still read and write [locally](./articles/local-database.md) and will continue the replication when the client goes online again.
 
+
+<DocsAnimation subtitle="Pushing and pulling documents between client and server">
+<ReplicationPushPull />
+</DocsAnimation>
 
 ## Design Decisions of the Sync Engine
 
@@ -20,7 +31,7 @@ In contrast to other (server-side) database replication protocols, the RxDB Sync
 
 - **Easy to Understand**: The sync engine works in a simple "git-like" way that is easy to understand for an average developer. You only have to understand how three simple endpoints work.
 - **Complex Parts are in RxDB, not in the Backend**: The complex parts of the Sync Engine, like [conflict handling](./transactions-conflicts-revisions.md) or offline-online switches, are implemented inside of RxDB itself. This makes creating a compatible backend very easy.
-- **Compatible with any Backend**: Because the complex parts are in RxDB, the backend can be "dump" which makes the protocol compatible to almost every backend. No matter if you use PostgreSQL, MongoDB or anything else.
+- **Compatible with any Backend**: Because the complex parts are in RxDB, the backend can be "dumb" which makes the protocol compatible to almost every backend. No matter if you use PostgreSQL, MongoDB or anything else.
 - **Performance is optimized for Client Devices and Browsers**: By grouping updates and fetches into batches, it is faster to transfer and easier to compress. Client devices and browsers can also process this data faster, for example running `JSON.parse()` on a chunk of data is faster than calling it once per row. Same goes for how client side storage like [IndexedDB](./rx-storage-indexeddb.md) or [OPFS](./rx-storage-opfs.md) works where writing data in bulks is faster.
 - **Offline-First Support**: By incorporating conflict handling at the client side, the protocol fully supports [offline-first apps](./offline-first.md). Users can continue making changes while offline, and those updates will sync seamlessly once a connection is reestablished - all without risking data loss or having undefined behavior.
 - **Multi-Tab Support**: When RxDB is used in a browser and multiple tabs of the same application are opened, only exactly one runs the replication at any given time. This reduces client- and backend resources.
@@ -28,7 +39,7 @@ In contrast to other (server-side) database replication protocols, the RxDB Sync
 
 ## The Sync Engine on the document level
 
-On the RxDocument level, the replication works like git, where the fork/client contains all new writes and must be merged with the master/server before it can push its new state to the master/server.
+On the [RxDocument](./rx-document.md) level, the replication works like git, where the fork/client contains all new writes and must be merged with the master/server before it can push its new state to the master/server.
 
 ```
 A---B-----------D   master/server state
@@ -40,7 +51,7 @@ A---B-----------D   master/server state
 - The client does some changes `C+D`.
 - The client pushes these changes to the master by sending the latest known master state `B` and the new client state `D` of the document.
 - If the master state is equal to the latest master `B` state of the client, the new client state `D` is set as the latest master state.
-- If the master also had changes and so the latest master change is different then the one that the client assumes, we have a conflict that has to be resolved on the client.
+- If the master also had changes and so the latest master change is different than the one that the client assumes, we have a conflict that has to be resolved on the client.
 
 
 
@@ -50,7 +61,7 @@ When document states are transferred, all handlers use batches of documents for 
 The server **must** implement the following methods to be compatible with the replication:
 
 - **pullHandler** Get the last checkpoint (or null) as input. Returns all documents that have been written **after** the given checkpoint. Also returns the checkpoint of the latest written returned document.
-- **pushHandler** a method that can be called by the client to send client side writes to the master. It gets an array with the `assumedMasterState` and the `newForkState` of each document write as input. It must return an array that contains the master document states of all conflicts. If there are no conflicts, it must return an empty array.
+- **pushHandler** a method that can be called by the client to send client-side writes to the master. It gets an array with the `assumedMasterState` and the `newForkState` of each document write as input. It must return an array that contains the master document states of all conflicts. If there are no conflicts, it must return an empty array.
 - **pullStream** an observable that emits batches of all master writes and the latest checkpoint of the write batches.
 
 
@@ -75,7 +86,7 @@ The replication runs in two **different modes**:
 ### Checkpoint iteration
 
 On first initial replication, or when the client comes online again, a checkpoint based iteration is used to catch up with the server state.
-A checkpoint is a subset of the fields of the last pulled document. When the checkpoint is send to the backend via `pullHandler()`, the backend must be able to respond with all documents that have been written **after** the given checkpoint.
+A checkpoint is a subset of the fields of the last pulled document. When the checkpoint is sent to the backend via `pullHandler()`, the backend must be able to respond with all documents that have been written **after** the given checkpoint.
 For example if your documents contain an `id` and an `updatedAt` field, these two can be used as checkpoint.
 
 When the checkpoint iteration reaches the last checkpoint, where the backend returns an empty array because there are no newer documents, the replication will automatically switch to the `event observation` mode.
@@ -91,14 +102,14 @@ When the client goes offline and online again, it might happen that the `pullStr
 ## Data layout on the server
 
 To use the replication you first have to ensure that:
-- **documents are deterministic sortable by their last write time**
+- **documents are deterministically sortable by their last write time**
 
   *deterministic* means that even if two documents have the same *last write time*, they have a predictable sort order.
     This is most often ensured by using the *primaryKey* as second sort parameter as part of the checkpoint.
 
 - **documents are never deleted, instead the `_deleted` field is set to `true`.**
 
-  This is needed so that the deletion state of a document exists in the database and can be replicated with other instances. If your backend uses a different field to mark deleted documents, you have to transform the data in the push/pull handlers or with the modifiers.
+  This is needed so that the deletion state of a document exists in the database and can be replicated to other instances. If your backend uses a different field to mark deleted documents, you have to transform the data in the push/pull handlers or with the modifiers.
 
 
 For example if your documents look like this:
@@ -110,7 +121,7 @@ const docData = {
     "lastName": "Wilson",
     /**
      * Contains the last write timestamp
-     * so all documents writes can be sorted by that value
+     * so all document writes can be sorted by that value
      * when they are fetched from the remote instance.
      */
     "updatedAt": 1564483474,
@@ -138,7 +149,7 @@ A---B1---C1---X    master/server state
 ```
 
 In the case above, the client would tell the master to move the document state from `B1` to `C2` by calling `pushHandler()`. But because the actual master state is `C1` and not `B1`, the master would reject the write by sending back the actual master state `C1`. 
-**RxDB resolves all conflicts on the client** so it would call the conflict handler of the `RxCollection` and create a new document state `D` that can then be written to the master.
+**RxDB resolves all conflicts on the client** so it would call the conflict handler of the [RxCollection](./rx-collection.md) and create a new document state `D` that can then be written to the master.
 
 ```
 A---B1---C1---X---D    master/server state
@@ -188,8 +199,10 @@ const replicationState = await replicateRxCollection({
     /**
      * When multiInstance is true, like when you use RxDB in multiple browser tabs,
      * the replication should always run in only one of the open browser tabs.
-     * If waitForLeadership is true, it will wait until the current instance is leader.
-     * If waitForLeadership is false, it will start replicating, even if it is not leader.
+     * If waitForLeadership is true, it will wait until
+     * the current instance is leader.
+     * If waitForLeadership is false, it will start
+     * replicating, even if it is not leader.
      * [default=true]
      */
     waitForLeadership: true,
@@ -204,12 +217,17 @@ const replicationState = await replicateRxCollection({
     /**
      * Custom deleted field, the boolean property of the document data that
      * marks a document as being deleted.
-     * If your backend uses a different fieldname then '_deleted', set the fieldname here.
-     * RxDB will still store the documents internally with '_deleted', setting this field
+     * If your backend uses a different field name
+     * than '_deleted', set the field name here.
+     * RxDB will still store the documents internally
+     * with '_deleted', setting this field
      * only maps the data on the data layer.
      * 
      * If a custom deleted field contains a non-boolean value, the deleted state
-     * of the documents depends on if the value is truthy or not. So instead of providing a boolean * * deleted value, you could also work with using a 'deletedAt' timestamp instead.
+     * of the documents depends on if the value is
+     * truthy or not. So instead of providing a boolean
+     * deleted value, you could also work with using a
+     * 'deletedAt' timestamp instead.
      * 
      * [default='_deleted']
      */
@@ -249,12 +267,35 @@ const replicationState = await replicateRxCollection({
         batchSize: 5,
         /**
          * Modifies all documents before they are given to the push handler.
-         * Can be used to swap out a custom deleted flag instead of the '_deleted' field.
-         * If the push modifier return null, the document will be skipped and not send to the remote.
-         * Notice that the modifier can be called multiple times and should not contain any side effects.
+         * Can be used to swap out a custom deleted
+         * flag instead of the '_deleted' field.
+         * If the push modifier return null, the
+         * document will be skipped and not sent to
+         * the remote.
+         * Notice that the modifier can be called
+         * multiple times and should not contain
+         * any side effects.
          * (optional)
          */
-        modifier: d => d
+        modifier: d => d,
+        /**
+         * When a local write happens, the
+         * replication will normally start pushing
+         * immediately.
+         * By providing a function here that returns
+         * a promise, the replication waits for that
+         * promise to resolve before starting the
+         * next upstream persist cycle.
+         * This lets you batch writes from multiple
+         * rapid inserts into a single push call,
+         * or defer pushing until the CPU is idle
+         * (e.g. via requestIdleCallback).
+         * NOTE: The longer you wait, the higher
+         * the risk of losing writes if the
+         * replication closes unexpectedly.
+         * (optional)
+         */
+        waitBeforePersist: () => new Promise(resolve => requestIdleCallback(resolve))
     },
     /**
      * Optional,
@@ -270,7 +311,9 @@ const replicationState = await replicateRxCollection({
              * In this example we replicate with a remote REST server
              */
             const response = await fetch(
-                `https://example.com/api/sync/?minUpdatedAt=${minTimestamp}&limit=${batchSize}`
+                `https://example.com/api/sync/` +
+                `?minUpdatedAt=${minTimestamp}` +
+                `&limit=${batchSize}`
             );
             const documentsFromRemote = await response.json();
             return {
@@ -278,7 +321,9 @@ const replicationState = await replicateRxCollection({
                  * Contains the pulled documents from the remote.
                  * Not that if documentsFromRemote.length < batchSize,
                  * then RxDB assumes that there are no more un-replicated documents
-                 * on the backend, so the replication will switch to 'Event observation' mode.
+                 * on the backend, so the replication
+                 * will switch to 'Event observation'
+                 * mode.
                  */
                 documents: documentsFromRemote,
                 /**
@@ -296,7 +341,9 @@ const replicationState = await replicateRxCollection({
         /**
          * Modifies all documents after they have been pulled
          * but before they are used by RxDB.
-         * Notice that the modifier can be called multiple times and should not contain any side effects.
+         * Notice that the modifier can be called
+         * multiple times and should not contain
+         * any side effects.
          * (optional)
          */
         modifier: d => d,
@@ -312,7 +359,8 @@ const replicationState = await replicateRxCollection({
 
 /**
  * Creating the pull stream for realtime replication.
- * Here we use a websocket but any other way of sending data to the client can be used,
+ * Here we use a websocket but any other way of
+ * sending data to the client can be used,
  * like long polling or server-sent events.
  */
 const pullStream$ = new Subject<RxReplicationPullStreamItem<any, any>>();
@@ -377,9 +425,9 @@ When sending a document to the remote fails for any reason, RxDB will send it ag
 This happens for **all** errors. The document write could have already reached the remote instance and be processed, while only the answering fails.
 The remote instance must be designed to handle this properly and to not crash on duplicate data transmissions. 
 Depending on your use case, it might be ok to just write the duplicate document data again.
-But for a more resilient error handling you could compare the last write timestamps or add a unique write id field to the document. This field can then be used to detect duplicates and ignore re-send data.
+But for a more resilient error handling you could compare the last write timestamps or add a unique write id field to the document. This field can then be used to detect duplicates and ignore re-sent data.
 
-Also the replication has an `.error$` stream that emits all `RxError` objects that arise during replication.
+Also the replication has an `.error$` stream that emits all [RxError](./errors.md) objects that arise during replication.
 Notice that these errors contain an inner `.parameters.errors` field that contains the original error. Also they contain a `.parameters.direction` field that indicates if the error was thrown during `pull` or `push`. You can use these to properly handle errors. For example when the client is outdated, the server might respond with a `426 Upgrade Required` error code that can then be used to force a page reload.
 
 
@@ -412,7 +460,7 @@ To observe the replication, the `RxReplicationState` has some `Observable` prope
 // emits each document that was received from the remote
 myRxReplicationState.received$.subscribe(doc => console.dir(doc));
 
-// emits each document that was send to the remote
+// emits each document that was sent to the remote
 myRxReplicationState.sent$.subscribe(doc => console.dir(doc));
 
 // emits all errors that happen when running the push- & pull-handlers.
@@ -423,11 +471,16 @@ myRxReplicationState.canceled$.subscribe(bool => console.dir(bool));
 
 // emits true when a replication cycle is running, false when not.
 myRxReplicationState.active$.subscribe(bool => console.dir(bool));
+
+// emits each conflict that was reported by the remote in the response
+// of the push handler, together with the output of the conflictHandler
+// that resolved it.
+myRxReplicationState.conflict$.subscribe(conflict => console.dir(conflict));
 ```
 
 ### awaitInitialReplication()
 
-With `awaitInitialReplication()` you can await the initial replication that is done when a full replication cycle was successful finished for the first time. The returned promise will never resolve if you cancel the replication before the initial replication can be done.
+With `awaitInitialReplication()` you can await the initial replication that is done when a full replication cycle was successfully finished for the first time. The returned promise will never resolve if you cancel the replication before the initial replication can be done.
 
 
 ```ts
@@ -457,7 +510,7 @@ await myRxReplicationState.awaitInSync();
 A common mistake in RxDB usage is when developers want to block the app usage until the application is in sync.
 Often they just `await` the promise of `awaitInitialReplication()` or `awaitInSync()` and show a loading spinner until they resolve. This is dangerous and should not be done because:
 - When `multiInstance: true` and `waitForLeadership: true (default)` and another tab is already running the replication, `awaitInitialReplication()` will not resolve until the other tab is closed and the replication starts in this tab.
-- Your app can no longer be started when the device is offline because there the `awaitInitialReplication()` will never resolve and the app cannot be used.
+- Your app can no longer be started when the device is offline because there `awaitInitialReplication()` will never resolve and the app cannot be used.
 
 Instead you should store the last in-sync time in a [local document](./rx-local-document.md) and observe its value on all instances.
 
@@ -465,7 +518,10 @@ For example if you want to block clients from using the app if they have not bee
 ```ts
 
 // update last-in-sync-flag each time replication is in sync
-await myCollection.insertLocal('last-in-sync', { time: 0 }).catch(); // ensure flag exists
+// ensure flag exists
+await myCollection.insertLocal(
+    'last-in-sync', { time: 0 }
+).catch();
 myReplicationState.active$.pipe(
     mergeMap(async() => {
         await myReplicationState.awaitInSync();
@@ -487,6 +543,36 @@ await hideLoadingSpinner();
 :::
 
 
+### awaitDocumentPushed()
+
+Returns a `Promise` that resolves when a specific `RxDocument` instance was successfully pushed to the server.
+
+While `awaitInSync()` waits for the whole collection to be in sync, `awaitDocumentPushed()` only waits for a single document. This is useful when you have a sensitive write (like a financial transaction or a value with a uniqueness constraint) and you want to confirm that exactly this write reached the backend, without blocking on every other unrelated change in the collection.
+
+You pass the `RxDocument` instance you got back from a write operation:
+
+```ts
+const doc = await myCollection.insert({ id: 'foobar', value: 10 });
+await myReplicationState.awaitDocumentPushed(doc);
+// here we know that the document state was pushed to the server
+```
+
+A `RxDocument` represents the state of a document at a given point in time, not the document in general. An older or a newer `RxDocument` instance of the same document is not the exact same `RxDocument`, because each instance carries the field values and the internal write time of that specific state. `awaitDocumentPushed()` therefore resolves based on the exact state of the instance you pass in.
+
+It works by comparing the given document state with the last state that was written to the server, which RxDB stores in the replication meta data. Once the given state (or a newer one) was written to the server, the promise resolves.
+
+If the document was overwritten by a newer local write before it could be pushed, the promise resolves as soon as a later state of that document has reached the server.
+
+`awaitDocumentPushed()` does not set a timeout on purpose. If you need one, combine it with `Promise.race()`:
+
+```ts
+const doc = await myCollection.insert({ id: 'foobar', value: 10 });
+await Promise.race([
+    myReplicationState.awaitDocumentPushed(doc),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+]);
+```
+
 ### reSync()
 
 Triggers a `RESYNC` cycle where the replication goes into [checkpoint iteration](#checkpoint-iteration) until the client is in sync with the backend. Used in unit tests or when no proper `pull.stream$` can be implemented so that the client only knows that something has been changed but not what.
@@ -507,7 +593,7 @@ setInterval(() => myRxReplicationState.reSync(), 10 * 1000);
 
 ### cancel()
 
-Cancels the replication. Returns a promise that resolved when everything has been cleaned up.
+Cancels the replication. Returns a promise that resolves when everything has been cleaned up.
 
 ```ts
 await myRxReplicationState.cancel();
@@ -557,7 +643,8 @@ By setting a custom `push.initialCheckpoint`, you can tell the replication to on
 let lastLocalCheckpoint: any;
 myCollection.checkpoint$.subscribe(checkpoint => lastLocalCheckpoint = checkpoint);
 
-// start the replication but only push documents that are newer than the lastLocalCheckpoint
+// start the replication but only push documents
+// that are newer than the lastLocalCheckpoint
 const replicationState = replicateRxCollection({
     collection: myCollection,
     replicationIdentifier: 'my-custom-replication-with-init-checkpoint',
@@ -573,9 +660,12 @@ The same can be done for the other direction by setting a `pull.initialCheckpoin
 
 ```ts
 // get the last pull checkpoint from the server
-const lastRemoteCheckpoint = await (await fetch('http://example.com/pull-checkpoint')).json();
+const lastRemoteCheckpoint = await (
+    await fetch('http://example.com/pull-checkpoint')
+).json();
 
-// start the replication but only pull documents that are newer than the lastRemoteCheckpoint
+// start the replication but only pull documents
+// that are newer than the lastRemoteCheckpoint
 const replicationState = replicateRxCollection({
     collection: myCollection,
     replicationIdentifier: 'my-custom-replication-with-init-checkpoint',
@@ -589,9 +679,11 @@ const replicationState = replicateRxCollection({
 
 ### toggleOnDocumentVisible
 
-`(experimental)`
 
-Set this to true to ensure the replication also runs if the tab is currently `visbile`. This fixes problem in browsers where the replicating leader-elected tab becomes stale or hibernated by the browser to save battery life. If the tab is losing visibility, the replication will be paused automatically and then restarted if either the tab becomes leader or the tab becomes visible again.
+Ensures replication continues running when the document is `visible`. This helps avoid situations where the leader-elected tab becomes stale or is hibernated by the browser to save battery.  
+When the tab becomes hidden, replication is automatically paused; when the tab becomes visible again (or the instance becomes leader), replication resumes.
+
+**Default:** `true`
 
 ```ts
 const replicationState = replicateRxCollection({
@@ -600,10 +692,10 @@ const replicationState = replicateRxCollection({
 });
 ```
 
-## Attachment replication (beta)
+## Attachment replication
 
 Attachment replication is supported in the RxDB Sync Engine itself. However not all replication plugins support it.
-If you start the replication with a collection which has [enabled RxAttachments](./rx-attachment.md) attachments data will be added to all push- and write data.
+If you start the replication with a collection which has [enabled RxAttachments](./rx-attachment.md) attachment data will be added to all push- and write data.
 
 The pushed documents will contain an `_attachments` object which contains:
 
@@ -615,82 +707,23 @@ With this data, the backend can decide onto which attachments must be deleted, a
 
 Accordingly, the pulled document must contain the same data, if the backend has a new document state with updated attachments.
 
+## Pull-Only Replication
+
+With the replication protocol it is possible to do pull only replications where data is pulled from a backend but not pushed from the client. RxDB implements some performance optimizations for these like not storing server metadata on pull only streams.
 
 ## Partial Sync with RxDB
 
-Suppose you're building a Minecraft-like voxel game where the world can expand in every direction. Storing the entire map locally for offline use is impossible because the dataset could be massive. Yet you still want a local-first design so players can edit the game world offline and sync back to the server later.
-
-### Idea: One Collection, Multiple Replications
-
-You might define a single RxDB collection called `db.voxels`, where each document represents a block or "voxel" (with fields like id, chunkId, coordinates, and type). With RxDB you can, instead of setting up _one_ replication that tries to fetch _all_ voxels, you create **separate replication states** for each _chunk_ of the world the player is currently near.
-
-When the player enters a particular chunk (say `chunk-123`), you **start a replication** dedicated to that chunk. On the server side, you have endpoints to **pull** only that chunk's voxels (e.g., GET `/api/voxels/pull?chunkId=123`) and **push** local changes back (e.g., POST `/api/voxels/push?chunkId=123`). RxDB handles them similarly to any other offline-first setup, but each replication is filtered to only that chunk's data.
-
-When the player leaves `chunk-123` and no longer needs it, you **stop** that replication. If the player moves to `chunk-124`, you start a new replication for chunk 124. This ensures the game only downloads and syncs data relevant to the player's immediate location. Meanwhile, all edits made offline remain safely stored in the local database until a network connection is available.
-
-```ts
-const activeReplications = {}; // chunkId -> replicationState
-
-function startChunkReplication(chunkId) {
-  if (activeReplications[chunkId]) return;
-  const replicationId = 'voxels-chunk-' + chunkId;
-
-  const replicationState = replicateRxCollection({
-    collection: db.voxels,
-    replicationIdentifier: replicationId,
-    pull: {
-      async handler(checkpoint, limit) {
-        const res = await fetch(
-          `/api/voxels/pull?chunkId=${chunkId}&cp=${checkpoint}&limit=${limit}`
-        );
-        /* ... */
-      }
-    },
-    push: {
-      async handler(changedDocs) {
-        const res = await fetch(`/api/voxels/push?chunkId=${chunkId}`);
-        /* ... */
-      }
-    }
-  });
-  activeReplications[chunkId] = replicationState;
-}
-
-function stopChunkReplication(chunkId) {
-  const rep = await activeReplications[chunkId];
-  if (rep) {
-    rep.cancel();
-    delete activeReplications[chunkId];
-  }
-}
-
-// Called whenever the player's location changes; 
-// dynamically start/stop replication for nearby chunks.
-function onPlayerMove(neighboringChunkIds) {
-  neighboringChunkIds.forEach(startChunkReplication);
-  Object.keys(activeReplications).forEach(cid => {
-    if (!neighboringChunkIds.includes(cid)) {
-      stopChunkReplication(cid);
-    }
-  });
-}
-```
-
-### Diffy-Sync when Revisiting a Chunk
-An added benefit of this multi-replication-state design is checkpointing. Each replication state has a unique "replication identifier," so the next time the player returns to `chunk-123`, the local database knows what it already has and only fetches the differences without the need to re-download the entire chunk.
-
-### Partial Sync in a Local-First Business Application
-
-Though a voxel world is an intuitive example, the same technique applies in enterprise scenarios where data sets are large but each user only needs a specific subset. You could spin up a new replication for each "permission group" or "region," so users only sync the records they're allowed to see. Or in a CRM, the replication might be filtered by the specific accounts or projects a user is currently handling. As soon as they switch to a different project, you stop the old replication and start one for the new scope.
-
-This **chunk-based** or **scope-based** replication pattern keeps your local storage lean, reduces network overhead, and still gives users the offline, instant-feedback experience that local-first apps are known for. By dynamically creating (and canceling) replication states, you retain tight control over bandwidth usage and make the infinite (or very large) feasible. In a production app you would also "flag" the entities (with a `pull.modifier`) by which replication state they came from, so that you can clean up the parts that you no longer need. -->
+RxDB supports partial sync patterns where you dynamically manage multiple replication states for different data scopes. This keeps local storage lean and reduces network overhead. Learn more on the dedicated [Partial Sync](./partial-sync.md) page.
 
 ## FAQ
 
-<details>
-    <summary>I have infinite loops in my replication, how to debug?</summary>
+<Faq>
+<FaqItem question="I have infinite loops in my replication, how to debug?">
+
     <div>
     When you have infinite loops in your replication or random re-runs of http requests after some time, the reason is likely that your pull-handler
-    is crashing. The debug this, add a log to the error$ handler to debug it. `myRxReplicationState.error$.subscribe(err => console.log('error$', err))`.
+    is crashing. To debug this, add a log to the error$ handler to debug it. `myRxReplicationState.error$.subscribe(err => console.log('error$', err))`.
     </div>
-</details>
+
+</FaqItem>
+</Faq>

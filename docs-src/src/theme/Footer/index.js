@@ -66,6 +66,22 @@ export default function FooterWrapper() {
         label: 'Our Customers',
         href: '/#reviews',
       },
+      {
+        label: 'Become a Partner',
+        href: '/consulting#become-partner',
+      },
+      {
+        label: 'Jobs',
+        href: '/jobs/',
+      },
+      {
+        label: 'Press',
+        href: '/press/',
+      },
+      {
+        label: 'Brand Guidelines',
+        href: '/brand-guidelines/',
+      },
       // {
       //   label: 'About us',
       //   target: '_blank',
@@ -75,6 +91,16 @@ export default function FooterWrapper() {
         label: 'Legal Notice',
         target: '_blank',
         href: '/legal-notice/',
+      },
+      {
+        label: 'Privacy Policy',
+        target: '_blank',
+        href: '/privacy/',
+      },
+      {
+        label: 'llms.txt',
+        target: '_blank',
+        href: '/llms.txt',
       },
     ],
   };
@@ -97,7 +123,7 @@ export default function FooterWrapper() {
                   href="/"
                   className="footer-logo-button"
                 >
-                  <img src="/files/logo/logo_text_white.svg" alt="RxDB" loading="lazy" className='width-140-120' />
+                  <img src="/files/logo/logo_text_white.svg" alt="RxDB" loading="lazy" width="140" height="50" className='width-140-120' />
                 </a>
                 <div className="footer-community-links">
                   {footerConfig.communityLinks.map((link, index) => (
@@ -112,6 +138,8 @@ export default function FooterWrapper() {
                         <img
                           src={link.logo}
                           alt={link.label}
+                          width="24"
+                          height="22"
                           loading="lazy"
                         />
                       ) : (

@@ -2,18 +2,20 @@
 title: Local JavaScript Vector Database that works offline
 slug: javascript-vector-database.html
 description: Create a blazing-fast vector database in JavaScript. Leverage RxDB and transformers.js for instant, offline semantic search - no servers required!
+image: /headers/javascript-vector-database.jpg
 ---
+
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {VectorDatabase} from '@site/src/components/animations/vector-database';
 
 
 # Local Vector Database with RxDB and transformers.js in JavaScript
 
 The [local-first](../offline-first.md) revolution is here, changing the way we build apps! Imagine a world where your app's data lives right on the user's device, always available, even when there's no internet. That's the magic of local-first apps. Not only do they bring faster performance and limitless scalability, but they also empower users to work offline without missing a beat. And leading the charge in this space are local database solutions, like [RxDB](https://rxdb.info/).
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-    </a>
-</center>
+<DocsAnimation subtitle="Similarity search by cosine distance between vectors">
+<VectorDatabase />
+</DocsAnimation>
 
 But here's where things get even more exciting: when building [local-first](./local-first-future.md) apps, traditional databases often fall short. They're great at searching for exact matches, like `numbers` or `strings`, but what if you want to search by **meaning**, like sifting through emails to find a specific topic? Sure, you could use **RegExp**, but to truly unlock the power of semantic search and similarity-based queries, you need something more cutting-edge. Something that really understands the content of the data.
 
@@ -22,11 +24,11 @@ But here's where things get even more exciting: when building [local-first](./lo
 
 Enter **vector databases**, the game-changers for searching data by meaning! They have unlocked these new possibilities for storing and querying data, especially in tasks requiring **semantic search** and **similarity-based** queries. With the help of a **machine learning model**, data is transformed into a vector representation that can be stored, queried and compared in a database.
 
-But unfortunately, most vector databases are designed for server-side use, typically running in large cloud clusters, not to run on a users device. To fix that, in this article, we will combine **RxDB** and **transformers.js** to create a local vector database running in the **browser** with **JavaScript**. It stores data in **IndexedDB**, and uses a machine learning model with **WebAssembly** locally, without the need for external servers.
+But unfortunately, most vector databases are designed for server-side use, typically running in large cloud clusters, not to run on a users device. To fix that, in this article, we will combine **RxDB** and **transformers.js** to create a local vector database running in the **browser** with **JavaScript**. It stores data in **[IndexedDB](../rx-storage-indexeddb.md)**, and uses a machine learning model with **WebAssembly** locally, without the need for external servers.
 
 - [transformers.js](https://github.com/xenova/transformers.js) is a powerful framework that allows machine learning models to run directly within JavaScript using WebAssembly or WebGPU.
 
-- [RxDB](https://rxdb.info/) is a NoSQL, local-first database with a flexible storage layer that can run on any JavaScript runtime, including browsers and mobile environments. (You are reading this article on the RxDB docs).
+- [RxDB](https://rxdb.info/) is a [NoSQL](./in-memory-nosql-database.md), local-first database with a flexible storage layer that can run on any JavaScript runtime, including browsers and mobile environments. (You are reading this article on the RxDB docs).
 
 A local vector database offers several key benefits:
 
@@ -283,7 +285,9 @@ const withDistance = candidates.map(doc => ({
     doc,
     distance: euclideanDistance(queryVector, doc.embedding)
 }));
-const queryResult = withDistance.sort(sortByObjectNumberProperty('distance')).reverse();
+const queryResult = withDistance
+    .sort(sortByObjectNumberProperty('distance'))
+    .reverse();
 console.dir(queryResult);
 ```
 
@@ -380,7 +384,8 @@ const pipeline = await itemsCollection.addPipeline({
         await Promise.all(docs.map(async(doc) => {
             const embedding = await getEmbedding(doc.text);
             const docData = { id: doc.primary, embedding };
-            // calculate the distance to all samples and store them in the index fields
+            // calculate distance to all samples
+            // and store them in the index fields
             new Array(5).fill(0).map((_, idx) => {
                 const indexValue = euclideanDistance(sampleVectors[idx], embedding);
                 docData['idx' + idx] = indexNrToString(indexValue);
@@ -405,7 +410,9 @@ async function vectorSearchIndexSimilarity(searchEmbedding: number[]) {
     const candidates = new Set<RxDocument>();
     await Promise.all(
         new Array(5).fill(0).map(async (_, i) => {
-            const distanceToIndex = euclideanDistance(sampleVectors[i], searchEmbedding);
+            const distanceToIndex = euclideanDistance(
+                sampleVectors[i], searchEmbedding
+            );
             const [docsBefore, docsAfter] = await Promise.all([
                 vectorCollection.find({
                     selector: {
@@ -437,7 +444,9 @@ async function vectorSearchIndexSimilarity(searchEmbedding: number[]) {
             doc
         };
     });
-    const sorted = docsWithDistance.sort(sortByObjectNumberProperty('distance')).reverse();
+    const sorted = docsWithDistance
+        .sort(sortByObjectNumberProperty('distance'))
+        .reverse();
     return {
         result: sorted.slice(0, 10),
         docReads
@@ -455,7 +464,9 @@ async function vectorSearchIndexRange(searchEmbedding: number[]) {
     let docReads = 0;
     await Promise.all(
         new Array(5).fill(0).map(async (_, i) => {
-            const distanceToIndex = euclideanDistance(sampleVectors[i], searchEmbedding);
+            const distanceToIndex = euclideanDistance(
+                sampleVectors[i], searchEmbedding
+            );
             const range = distanceToIndex * indexDistance;
             const docs = await vectorCollection.find({
                 selector: {
@@ -478,7 +489,9 @@ async function vectorSearchIndexRange(searchEmbedding: number[]) {
             doc
         };
     });
-    const sorted = docsWithDistance.sort(sortByObjectNumberProperty('distance')).reverse();
+    const sorted = docsWithDistance
+        .sort(sortByObjectNumberProperty('distance'))
+        .reverse();
     return {
         result: sorted.slice(0, 10),
         docReads
@@ -545,11 +558,7 @@ There are multiple other techniques to improve the performance of your local vec
 
 - **Different RxDB Plugins**: RxDB has different storages and plugins that can improve the performance like the [IndexedDB RxStorage](../rx-storage-indexeddb.md), the [OPFS RxStorage](../rx-storage-opfs.md), the [sharding](../rx-storage-sharding.md) plugin and the [Worker](../rx-storage-worker.md) and [SharedWorker](../rx-storage-shared-worker.md) storages.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Database" />
 
 
 ## Migrating Data on Model/Index Changes
@@ -592,7 +601,7 @@ await myDatabase.addCollections({
 
 For now our vector database works and we are good to go. However there are some things to consider for the future:
 
-- **WebGPU** is [not fully supported](https://caniuse.com/webgpu) yet. When this changes, creating embeddings in the browser have the potential to become faster. You can check if your current chrome supports WebGPU by opening `chrome://gpu/`. Notice that WebGPU has been reported to sometimes be [even slower](https://github.com/xenova/transformers.js/issues/894#issuecomment-2323897485) compared to WASM but likely it will be faster in the long term.
+- **WebGPU** is [not fully supported](https://caniuse.com/webgpu) yet. When this changes, creating embeddings in the browser have the potential to become faster. You can check if your current chrome supports WebGPU by opening `chrome://gpu/`. Notice that WebGPU has been reported to sometimes be [even slower](https://github.com/huggingface/transformers.js/issues/894) compared to WASM but likely it will be faster in the long term.
 - **Cross-Modal AI Models**: While progress is being made, AI models that can understand and integrate multiple modalities are still in development. For example you could query for an **image** together with a **text** prompt to get a more detailed output.
 - **Multi-Step queries**: In this article we only talked about having a single query as input and an ordered list of outputs. But there is big potential in chaining models or queries together where you take the results of one query and input them into a different model with different embeddings or outputs.
 

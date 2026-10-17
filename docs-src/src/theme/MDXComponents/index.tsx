@@ -1,0 +1,25 @@
+import React from 'react';
+import MDXComponents from '@theme-original/MDXComponents';
+import CodeInline from '@theme/CodeInline';
+import { Pre } from '@site/src/theme/CodeBlock';
+import { RxdbLogo } from '@site/src/components/rxdb-logo';
+import { TimeSince } from '@site/src/components/time-since';
+import { ArticleByline } from '@site/src/components/article-byline';
+
+function Code(props: React.ComponentProps<'code'>) {
+    const isInline =
+        typeof props.children !== 'undefined' &&
+        React.Children.toArray(props.children).every(
+            (el) => typeof el === 'string' && !el.includes('\n')
+        );
+    return isInline ? <CodeInline {...props} /> : <code {...props} />;
+}
+
+export default {
+    ...MDXComponents,
+    code: Code,
+    pre: Pre,
+    RxdbLogo,
+    TimeSince,
+    ArticleByline,
+};

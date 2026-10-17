@@ -1,6 +1,6 @@
 import assert from 'assert';
 import clone from 'clone';
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import AsyncTestUtil, {
     randomBoolean,
     randomNumber,
@@ -76,7 +76,7 @@ describe('rx-collection.test.ts', () => {
                 db.close();
             });
         });
-        describeParallel('.create()', () => {
+        describe('.create()', () => {
             describe('positive', () => {
                 it('human', async () => {
                     const db = await createRxDatabase({
@@ -110,15 +110,22 @@ describe('rx-collection.test.ts', () => {
                 });
             });
             describe('negative', () => {
-                it('if not premium, it should limit the collections amount', async () => {
+                it('if not premium, it should limit the collections amount', async function () {
+                    this.timeout(10 * 1000);
+                    if (isFastMode()) {
+                        return;
+                    }
                     if ((await hasPremiumFlag())) {
+                        return;
+                    }
+                    if (isFastMode()) {
                         return;
                     }
                     const db = await createRxDatabase({
                         name: randomToken(10),
                         storage: config.storage.getStorage(),
                     });
-                    let t = NON_PREMIUM_COLLECTION_LIMIT + 1;
+                    let t = NON_PREMIUM_COLLECTION_LIMIT + 2;
                     await assertThrows(
                         async () => {
                             while (t > 0) {
@@ -141,7 +148,7 @@ describe('rx-collection.test.ts', () => {
                 });
             });
         });
-        describeParallel('.checkCollectionName()', () => {
+        describe('.checkCollectionName()', () => {
             describe('positive', () => {
                 it('allow not allow lodash', async () => {
                     const db = await createRxDatabase({
@@ -220,7 +227,7 @@ describe('rx-collection.test.ts', () => {
         });
     });
     describe('instance', () => {
-        describeParallel('.insert()', () => {
+        describe('.insert()', () => {
             describe('positive', () => {
                 it('should insert a human', async () => {
                     const db = await createRxDatabase({
@@ -279,7 +286,7 @@ describe('rx-collection.test.ts', () => {
                             schema: schemas.nestedHuman
                         }
                     });
-                    for (let i = 0; i < 10; i++) {
+                    for (let i = 0; i < (isFastMode() ? 5 : 10); i++) {
                         await collections.nestedhuman.insert(schemaObjects.nestedHumanData());
                     }
                     db.close();
@@ -301,6 +308,61 @@ describe('rx-collection.test.ts', () => {
                     await collections.nestedhuman.insert(data);
                     const doc = await collections.nestedhuman.findOne().exec(true);
                     assert.strictEqual((doc as any).age, 20);
+
+                    db.close();
+                });
+                it('should have independent non-primitive default values across multiple inserts', async () => {
+                    const mySchema: RxJsonSchema<{ id: string; tags: string[]; }> = {
+                        version: 0,
+                        primaryKey: 'id',
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            tags: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                default: []
+                            }
+                        },
+                        required: ['id']
+                    };
+                    const db = await createRxDatabase({
+                        name: randomToken(10),
+                        storage: config.storage.getStorage(),
+                    });
+                    const collections = await db.addCollections({
+                        items: {
+                            schema: mySchema
+                        }
+                    });
+
+                    // Insert two documents without specifying the 'tags' field
+                    await collections.items.insert({ id: 'doc1' });
+                    await collections.items.insert({ id: 'doc2' });
+
+                    const doc1 = await collections.items.findOne({ selector: { id: 'doc1' } }).exec(true);
+                    const doc2 = await collections.items.findOne({ selector: { id: 'doc2' } }).exec(true);
+
+                    // Both documents should have the default empty array
+                    assert.deepStrictEqual(doc1.tags, []);
+                    assert.deepStrictEqual(doc2.tags, []);
+
+                    // Update doc1's tags array
+                    await doc1.incrementalPatch({ tags: ['updated-tag'] });
+                    const doc1After = await collections.items.findOne({ selector: { id: 'doc1' } }).exec(true);
+                    assert.deepStrictEqual(doc1After.tags, ['updated-tag']);
+
+                    // doc2's tags must remain unchanged
+                    const doc2After = await collections.items.findOne({ selector: { id: 'doc2' } }).exec(true);
+                    assert.deepStrictEqual(doc2After.tags, []);
+
+                    // Insert a third document and verify it still gets a fresh default
+                    await collections.items.insert({ id: 'doc3' });
+                    const doc3 = await collections.items.findOne({ selector: { id: 'doc3' } }).exec(true);
+                    assert.deepStrictEqual(doc3.tags, []);
 
                     db.close();
                 });
@@ -396,7 +458,7 @@ describe('rx-collection.test.ts', () => {
                 });
             });
         });
-        describeParallel('.insertIfNotExists()', () => {
+        describe('.insertIfNotExists()', () => {
             it('should insert the document when not exists', async () => {
                 const db = await createRxDatabase({
                     name: randomToken(10),
@@ -429,7 +491,7 @@ describe('rx-collection.test.ts', () => {
                 db.close();
             });
         });
-        describeParallel('.bulkInsert()', () => {
+        describe('.bulkInsert()', () => {
             describe('positive', () => {
                 it('should insert some humans', async () => {
                     const db = await createRxDatabase({
@@ -480,6 +542,81 @@ describe('rx-collection.test.ts', () => {
                     await col.bulkInsert([]);
                     col.database.close();
                 });
+                /**
+                 * @link https://github.com/pubkey/rxdb/issues/7984
+                 */
+                it('should revive all soft-deleted documents, not just 199', async () => {
+                    const db = await createRxDatabase({
+                        name: randomToken(10),
+                        storage: config.storage.getStorage(),
+                    });
+                    const collections = await db.addCollections({
+                        human: {
+                            schema: schemas.human
+                        }
+                    });
+                    const collection = collections.human;
+
+                    // Use 300 documents, well above the 199 limit described in the bug
+                    const DOCUMENT_COUNT = 300;
+                    const myDocuments = new Array(DOCUMENT_COUNT).fill(0).map((_, i) => schemaObjects.humanData(
+                        'doc-' + String(i).padStart(4, '0'),
+                        i % 150,
+                        'First' + i
+                    ));
+
+                    // Step 1: Insert all N documents
+                    const firstInsertResult = await collection.bulkInsert(myDocuments);
+                    assert.strictEqual(
+                        firstInsertResult.success.length,
+                        DOCUMENT_COUNT,
+                        'First bulkInsert should succeed for all documents'
+                    );
+                    const countAfterFirstInsert = await collection.count().exec();
+                    assert.strictEqual(
+                        countAfterFirstInsert,
+                        DOCUMENT_COUNT,
+                        'After first bulkInsert, collection should contain all documents'
+                    );
+
+                    // Step 2: Delete all N documents
+                    const bulkDeleteResult = await collection.bulkRemove(myDocuments.map(d => d.passportId));
+                    assert.strictEqual(
+                        bulkDeleteResult.success.length,
+                        DOCUMENT_COUNT,
+                        'bulkRemove should succeed for all documents'
+                    );
+                    const countAfterDelete = await collection.count().exec();
+                    assert.strictEqual(
+                        countAfterDelete,
+                        0,
+                        'After bulkRemove, collection should be empty'
+                    );
+
+                    // Step 3: Re-insert the same N documents (reviving soft-deleted entries)
+                    const secondInsertResult = await collection.bulkInsert(myDocuments);
+                    assert.strictEqual(
+                        secondInsertResult.success.length,
+                        DOCUMENT_COUNT,
+                        'Second bulkInsert should succeed for all documents'
+                    );
+                    assert.strictEqual(
+                        secondInsertResult.error.length,
+                        0,
+                        'Second bulkInsert should have no errors'
+                    );
+
+                    // Step 4: Verify all documents are present (this is where the bug manifests)
+                    const countAfterSecondInsert = await collection.count().exec();
+                    assert.strictEqual(
+                        countAfterSecondInsert,
+                        DOCUMENT_COUNT,
+                        'After second bulkInsert (reviving soft-deleted docs), collection should contain all ' +
+                        DOCUMENT_COUNT + ' documents, not just 199'
+                    );
+
+                    await db.close();
+                });
             });
             describe('negative', () => {
                 it('should throw if one already exists', async () => {
@@ -519,11 +656,13 @@ describe('rx-collection.test.ts', () => {
                     const human1 = schemaObjects.humanData('same-id');
                     const human2 = schemaObjects.humanData('same-id');
 
-                    await assertThrows(
+                    const err: RxError = await assertThrows(
                         () => collections.human.bulkInsert([human1, human2]),
                         'RxError',
                         'COL22'
-                    );
+                    ) as any;
+                    assert.ok(err.parameters.duplicateIds);
+                    assert.deepStrictEqual(err.parameters.duplicateIds, ['same-id']);
 
                     db.close();
                 });
@@ -628,7 +767,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('$eq', () => {
+            describe('$eq', () => {
                 describe('positive', () => {
                     it('find first by passportId', async () => {
                         const c = await humansCollection.create();
@@ -678,7 +817,7 @@ describe('rx-collection.test.ts', () => {
                 });
                 describe('negative', () => { });
             });
-            describeParallel('.or()', () => {
+            describe('.or()', () => {
                 it('should find the 2 documents with the or-method', async () => {
                     const c = await humansCollection.create(10);
                     // add 2 docs to be found
@@ -726,7 +865,7 @@ describe('rx-collection.test.ts', () => {
                     c.database.close();
                 });
             });
-            describeParallel('.sort()', () => {
+            describe('.sort()', () => {
                 describe('positive', () => {
                     it('sort by age desc (with own index-search)', async () => {
                         const c = await humansCollection.createAgeIndex();
@@ -881,7 +1020,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('.limit()', () => {
+            describe('.limit()', () => {
                 describe('positive', () => {
                     it('get first', async () => {
                         const c = await humansCollection.create();
@@ -919,7 +1058,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('.skip()', () => {
+            describe('.skip()', () => {
                 describe('positive', () => {
                     it('skip first', async () => {
                         const c = await humansCollection.create(
@@ -999,7 +1138,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('.regex()', () => {
+            describe('.regex()', () => {
                 describe('positive', () => {
                     it('find the one where the regex matches', async () => {
                         const c = await humansCollection.create(10);
@@ -1085,7 +1224,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('.remove()', () => {
+            describe('.remove()', () => {
                 it('should remove one document', async () => {
                     const c = await humansCollection.create(1);
                     const query = c.find();
@@ -1269,7 +1408,7 @@ describe('rx-collection.test.ts', () => {
                     db2.close();
                 });
             });
-            describeParallel('.bulkRemove()', () => {
+            describe('.bulkRemove()', () => {
                 describe('positive', () => {
                     it('should remove some humans', async () => {
                         const amount = 5;
@@ -1294,7 +1433,7 @@ describe('rx-collection.test.ts', () => {
                     });
                 });
             });
-            describeParallel('.update()', () => {
+            describe('.update()', () => {
                 it('sets a field in all documents', async () => {
                     const c = await humansCollection.create(2);
                     const query = c.find();
@@ -1326,7 +1465,7 @@ describe('rx-collection.test.ts', () => {
                 });
             });
         });
-        describeParallel('.findOne()', () => {
+        describe('.findOne()', () => {
             describe('positive', () => {
                 it('find a single document', async () => {
                     const c = await humansCollection.create();
@@ -1433,7 +1572,7 @@ describe('rx-collection.test.ts', () => {
                 });
             });
         });
-        describeParallel('.count()', () => {
+        describe('.count()', () => {
             describe('basics', () => {
                 it('should count one document', async () => {
                     const c = await humansCollection.create(1);
@@ -1487,6 +1626,12 @@ describe('rx-collection.test.ts', () => {
                     );
                     c.database.close();
                 });
+                /**
+                 * Count queries must not use limit or skip.
+                 * The storage.count() returns the total number of matching documents
+                 * and is designed to ignore limit/skip by contract.
+                 * @intentional This is correct behavior, not a bug.
+                 */
                 it('must throw on limit and skip', async () => {
                     const c = await humansCollection.create(0);
                     const query = c.count();
@@ -1576,7 +1721,7 @@ describe('rx-collection.test.ts', () => {
                 db.close();
             });
         });
-        describeParallel('.bulkUpsert()', () => {
+        describe('.bulkUpsert()', () => {
             it('insert and update', async () => {
                 const c = await humansCollection.create(0);
                 const amount = 5;
@@ -1665,7 +1810,7 @@ describe('rx-collection.test.ts', () => {
                 db.close();
             });
         });
-        describeParallel('.upsert()', () => {
+        describe('.upsert()', () => {
             describe('positive', () => {
                 it('insert when not exists', async () => {
                     const db = await createRxDatabase({
@@ -1785,7 +1930,7 @@ describe('rx-collection.test.ts', () => {
             });
         });
         describe('.incrementalUpsert()', () => {
-            describeParallel('positive', () => {
+            describe('positive', () => {
                 it('should work in serial', async () => {
                     const c = await humansCollection.createPrimary(0);
                     const docData = schemaObjects.simpleHumanData();
@@ -1991,9 +2136,80 @@ describe('rx-collection.test.ts', () => {
 
                     db.close();
                 });
+                it('should not throw when concurrent upsert creates the same document', async () => {
+                    /**
+                     * When incrementalUpsert races with a concurrent upsert/insert
+                     * for the same primary key on a document that does not yet exist,
+                     * _incrementalUpsertEnsureRxDocumentExists can fail because
+                     * findOne returns null but then insert gets a 409 conflict
+                     * because the other operation already created the document.
+                     * incrementalUpsert must handle this gracefully instead of throwing.
+                     */
+                    const db = await createRxDatabase({
+                        name: randomToken(10),
+                        storage: config.storage.getStorage(),
+                    });
+                    const collections = await db.addCollections({
+                        human: {
+                            schema: schemas.primaryHuman
+                        }
+                    });
+                    const c = collections.human;
+
+                    // Run multiple iterations to increase race likelihood
+                    const iterations = isFastMode() ? 30 : 60;
+                    for (let i = 0; i < iterations; i++) {
+                        const docData = schemaObjects.simpleHumanData();
+                        const primary = docData.passportId;
+                        // Both try to create the same document concurrently
+                        const [r1, r2] = await Promise.all([
+                            c.incrementalUpsert(docData),
+                            c.upsert(docData),
+                        ]);
+                        assert.ok(isRxDocument(r1));
+                        assert.ok(isRxDocument(r2));
+                        // The document must exist afterwards
+                        const found = await c.findOne(primary).exec(true);
+                        assert.strictEqual(found.primary, primary);
+                    }
+
+                    db.close();
+                });
+                it('#9026 issue: a rejected bulkWrite permanently wedges the incremental-write queue', async () => {
+                    const collection = await humansCollection.create(1);
+                    const myDocument = await collection.findOne().exec(true);
+
+                    const storageInstance = collection.storageInstance;
+                    const realBulkWrite = storageInstance.bulkWrite.bind(storageInstance);
+                    storageInstance.bulkWrite = (rows: any, context: string) => {
+                        if (context === 'incremental-write' && rows.some((row: any) => row.document.age === 57)) {
+                            return Promise.reject(new Error('simulated transient storage failure'));
+                        }
+                        return realBulkWrite(rows, context);
+                    };
+
+                    let firstError: any;
+                    const first = myDocument.incrementalPatch({ age: 57 }).then(
+                        () => 'settled 0',
+                        (err) => {
+                            firstError = err;
+                        }
+                    );
+                    const second = myDocument.incrementalPatch({ age: 58 }).then(
+                        () => 'settled 1',
+                        () => { }
+                    );
+                    const outcome = await Promise.race([
+                        Promise.all([first, second]).then(() => 'settled'),
+                        AsyncTestUtil.wait(2000).then(() => 'still pending after 2 seconds')
+                    ]);
+                    assert.strictEqual(outcome, 'settled');
+                    assert.strictEqual(firstError.message, 'simulated transient storage failure');
+                    collection.database.close();
+                });
             });
         });
-        describeParallel('.remove()', () => {
+        describe('.remove()', () => {
             describe('positive', () => {
                 it('should not crash', async () => {
                     const c = await humansCollection.createPrimary(0);
@@ -2148,7 +2364,7 @@ describe('rx-collection.test.ts', () => {
                 });
             });
         });
-        describeParallel('.findByIds()', () => {
+        describe('.findByIds()', () => {
             it('should not crash', async () => {
                 const c = await humansCollection.create();
                 const res = await c.findByIds([
@@ -2211,6 +2427,63 @@ describe('rx-collection.test.ts', () => {
                 assert.strictEqual(res, 5);
                 c.database.close();
             });
+            it('findByIds().modify() should return a Map, not an Array', async () => {
+                const c = await humansCollection.create(5);
+                const docs = await c.find().exec();
+                const ids = docs.map((d) => d.primary);
+
+                const result = await c.findByIds(ids).modify((doc) => {
+                    doc.firstName = 'modified-map-test';
+                    return doc;
+                });
+
+                // The return value must be a Map (matching RxQueryResult for findByIds)
+                assert.ok(result instanceof Map, 'findByIds().modify() should return a Map but got ' + typeof result);
+                assert.strictEqual(result.size, 5);
+
+                // Each entry in the map should be keyed by primary and be a valid RxDocument
+                for (const [key, doc] of result) {
+                    assert.strictEqual(typeof key, 'string');
+                    assert.strictEqual(doc.firstName, 'modified-map-test');
+                }
+
+                c.database.close();
+            });
+            it('findByIds().incrementalPatch() should return a Map, not an Array', async () => {
+                const c = await humansCollection.create(5);
+                const docs = await c.find().exec();
+                const ids = docs.map((d) => d.primary);
+
+                const result = await c.findByIds(ids).incrementalPatch({ firstName: 'patched-map-test' });
+
+                // The return value must be a Map (matching RxQueryResult for findByIds)
+                assert.ok(result instanceof Map, 'findByIds().incrementalPatch() should return a Map but got ' + typeof result);
+                assert.strictEqual(result.size, 5);
+
+                for (const [key, doc] of result) {
+                    assert.strictEqual(typeof key, 'string');
+                    assert.strictEqual(doc.firstName, 'patched-map-test');
+                }
+
+                c.database.close();
+            });
+            it('findByIds().remove() should return a Map, not crash', async () => {
+                const c = await humansCollection.create(5);
+                const docs = await c.find().exec();
+                const ids = docs.map((d) => d.primary);
+
+                const result = await c.findByIds(ids).remove();
+
+                // The return value must be a Map (matching RxQueryResult for findByIds)
+                assert.ok(result instanceof Map, 'findByIds().remove() should return a Map but got ' + typeof result);
+                assert.strictEqual(result.size, 5);
+
+                // All documents should now be deleted
+                const remaining = await c.count().exec();
+                assert.strictEqual(remaining, 0);
+
+                c.database.close();
+            });
             /**
              * @link https://github.com/pubkey/rxdb/issues/6148
              */
@@ -2234,9 +2507,34 @@ describe('rx-collection.test.ts', () => {
 
                 c.database.close();
             });
+            it('should not be affected by mutating the input ids array', async () => {
+                const c = await humansCollection.create(5);
+                const docs = await c.find().exec();
+                const ids = docs.map(d => d.primary);
+                const query = c.findByIds(ids);
+
+                // mutate the input array after creating the query
+                const originalLength = ids.length;
+                ids.push('non-existent-id');
+                ids.splice(0, 1);
+
+                // update a document to invalidate any cached results
+                const docToUpdate = docs[0];
+                await docToUpdate.incrementalPatch({ firstName: 'mutation-test' });
+
+                const res = await query.exec();
+                assert.strictEqual(res.size, originalLength);
+
+                // verify the updated document is returned with fresh data
+                const updatedDoc = res.get(docToUpdate.primary);
+                assert.ok(updatedDoc);
+                assert.strictEqual(updatedDoc.firstName, 'mutation-test');
+
+                c.database.close();
+            });
         });
     });
-    describeParallel('.findByIds.$()', () => {
+    describe('.findByIds.$()', () => {
         it('should not crash and emit a map', async () => {
             const c = await humansCollection.create(5);
             const docs = await c.find().exec();

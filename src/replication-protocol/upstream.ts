@@ -18,7 +18,6 @@ import type {
     WithDeleted
 } from '../types/index.d.ts';
 import {
-    appendToArray,
     batchArray,
     clone,
     ensureNotFalsy,
@@ -94,7 +93,7 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
     };
 
     const sub = state.input.forkInstance.changeStream()
-        .subscribe((eventBulk) => {
+        .subscribe((eventBulk: EventBulk<RxStorageChangeEvent<RxDocType>, any>) => {
             if (state.events.paused.getValue()) {
                 return;
             }
@@ -118,7 +117,7 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
     const subResync = replicationHandler
         .masterChangeStream$
         .pipe(
-            filter(ev => ev === 'RESYNC')
+            filter((ev: any) => ev === 'RESYNC')
         )
         .subscribe(() => {
             openTasks.push({
@@ -131,7 +130,7 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
     // unsubscribe when replication is canceled
     firstValueFrom(
         state.events.canceled.pipe(
-            filter(canceled => !!canceled)
+            filter((canceled: boolean) => !!canceled)
         )
     ).then(() => {
         sub.unsubscribe();
@@ -162,6 +161,15 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
              */
             if (promises.size > 3) {
                 await Promise.race(Array.from(promises));
+                /**
+                 * The replication might have been canceled while we waited
+                 * for the master, for example when a schema migration is interrupted.
+                 * The forkInstance can already be closed at this point,
+                 * so we must not read from it anymore.
+                 */
+                if (state.events.canceled.getValue()) {
+                    break;
+                }
             }
             const upResult = await getChangedDocumentsSince(
                 state.input.forkInstance,
@@ -217,7 +225,7 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
             /**
              * Merge/filter all open tasks
              */
-            const docs: RxDocumentData<RxDocType>[] = [];
+            let docs: RxDocumentData<RxDocType>[] = [];
             let checkpoint: CheckpointType | undefined;
             while (openTasks.length > 0) {
                 const taskWithTime = ensureNotFalsy(openTasks.shift());
@@ -243,12 +251,9 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
                  * to have the correct checkpoint set.
                  */
                 if (taskWithTime.task.context !== await state.downstreamBulkWriteFlag) {
-                    appendToArray(
-                        docs,
-                        taskWithTime.task.events.map(r => {
-                            return r.documentData as any;
-                        })
-                    );
+                    docs = docs.concat(taskWithTime.task.events.map(r => {
+                        return r.documentData as any;
+                    }));
                 }
                 checkpoint = stackCheckpoints([checkpoint, taskWithTime.task.checkpoint]);
             }
@@ -424,20 +429,38 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
                 })
             );
 
+            /**
+             * Check for canceled or paused state before marking documents
+             * as successfully pushed. When the replication is paused during
+             * a push retry, masterWrite() returns [] even though no documents
+             * were actually sent. Without this check the meta instance would
+             * be updated, causing the documents to never be retried on resume.
+             */
+            if (state.events.canceled.getValue() || state.events.paused.getValue()) {
+                return false;
+            }
+
             const useWriteRowsToMeta: BulkWriteRow<RxStorageReplicationMeta<RxDocType, any>>[] = [];
 
             writeRowsToMasterIds.forEach(docId => {
                 if (!conflictIds.has(docId)) {
-                    state.events.processed.up.next(writeRowsToMaster[docId]);
+                    /**
+                     * Skip the processed.up emission for rows that were
+                     * filtered out by the replicationHandler.masterWrite()
+                     * wrapper (e.g. via a push modifier returning null).
+                     * Such rows have their newDocumentState set to null to
+                     * signal they were not actually sent to the master.
+                     * We still persist their meta state so that the upstream
+                     * does not keep retrying them.
+                     */
+                    if (writeRowsToMaster[docId].newDocumentState !== null) {
+                        state.events.processed.up.next(writeRowsToMaster[docId]);
+                    }
                     useWriteRowsToMeta.push(writeRowsToMeta[docId]);
                 }
             });
 
-            if (state.events.canceled.getValue()) {
-                return false;
-            }
-
-            if (useWriteRowsToMeta.length > 0) {
+            if (!state.skipStoringPullMeta && useWriteRowsToMeta.length > 0) {
                 await state.input.metaInstance.bulkWrite(
                     stripAttachmentsDataFromMetaWriteRows(state, useWriteRowsToMeta),
                     'replication-up-write-meta'
@@ -492,6 +515,14 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
                         })
                 );
 
+                /**
+                 * The replication might have been canceled while the conflicts
+                 * were resolved. Then the storage instances might already be closed.
+                 */
+                if (state.events.canceled.getValue()) {
+                    return false;
+                }
+
                 if (conflictWriteFork.length > 0) {
                     hadConflictWrites = true;
 
@@ -536,7 +567,7 @@ export async function startReplicationUpstream<RxDocType, CheckpointType>(
                                 conflictWriteMeta[docId]
                             );
                         });
-                    if (useMetaWrites.length > 0) {
+                    if (useMetaWrites.length > 0 && !state.events.canceled.getValue()) {
                         await state.input.metaInstance.bulkWrite(
                             stripAttachmentsDataFromMetaWriteRows(state, useMetaWrites),
                             'replication-up-write-conflict-meta'

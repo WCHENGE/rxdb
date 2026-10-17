@@ -2,6 +2,7 @@
 title: RxDB In-Memory NoSQL - Supercharge Real-Time Apps
 slug: in-memory-nosql-database.html
 description: Discover how RxDB's in-memory NoSQL engine delivers blazing speed for real-time apps, ensuring responsive experiences and seamless data sync.
+image: /headers/in-memory-nosql-database.jpg
 ---
 
 # RxDB as In-memory NoSQL Database: Empowering Real-Time Applications
@@ -9,11 +10,7 @@ description: Discover how RxDB's in-memory NoSQL engine delivers blazing speed f
 Real-time applications have become increasingly popular in today's digital landscape. From instant messaging to collaborative editing tools, the demand for responsive and interactive software is on the rise. To meet these requirements, developers need powerful and efficient database solutions that can handle large amounts of data in real-time. [RxDB](https://rxdb.info/), an javascript NoSQL database, is revolutionizing the way developers build and scale their applications by offering exceptional speed, flexibility, and scalability.
 
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="RxDB Flutter Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="RxDB Flutter Database" />
 
 
 
@@ -26,7 +23,7 @@ Additionally, RxDB eliminates disk I/O bottlenecks that are typically associated
 
 
 ## Persistence Options
-While RxDB offers an [in-memory](../rx-storage-memory.md) storage adapter, it also offers [persistence storages](../rx-storage.md). Adapters such as [IndexedDB](../rx-storage-indexeddb.md), [SQLite](../rx-storage-sqlite.md), and [OPFS](../rx-storage-opfs.md) enable developers to persist data locally in the browser, making applications accessible even when offline. This hybrid approach combines the benefits of in-memory performance with data durability, providing the best of both worlds. Developers can choose the adapter that best suits their needs, balancing the speed of in-memory storage with the long-term data persistence required for certain applications.
+While RxDB offers an [in-memory](../rx-storage-memory.md) storage adapter, it also offers [persistence storages](../rx-storage.md). Adapters such as [IndexedDB](../rx-storage-indexeddb.md), [SQLite](../rx-storage-sqlite.md), and [OPFS](../rx-storage-opfs.md) enable developers to persist data locally in the browser, making applications accessible even when [offline](../offline-first.md). This hybrid approach combines the benefits of in-memory performance with data durability, providing the best of both worlds. Developers can choose the adapter that best suits their needs, balancing the speed of in-memory storage with the long-term data persistence required for certain applications.
 
 ```javascript
 import {

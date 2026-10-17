@@ -2,11 +2,21 @@
 title: RxDB Server - Deploy Your Data
 slug: rx-server.html
 description: Launch a secure, high-performance server on top of your RxDB database. Enable REST, replication endpoints, and seamless data syncing with RxServer.
+image: /headers/rx-server.jpg
 ---
 
-# RxDB Server
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {RxServerRack} from '@site/src/components/animations/rx-server-rack';
+
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/server.svg" alt="Server" />}>RxDB Server</HeadlineWithIcon>
 
 The RxDB Server Plugin makes it possible to spawn a server on top of a RxDB database that offers multiple types of endpoints for various usages. It can spawn basic CRUD REST endpoints or even realtime replication endpoints that can be used by the client devices to replicate data. The RxServer plugin is designed to be used in Node.js but you can also use it in Deno, Bun or the [Electron](./electron-database.md) "main" process. You can use it either as a **standalone server** or add it on top of an **existing http server** (like express) in nodejs.
+
+<DocsAnimation subtitle="Clients replicating and querying through RxServer endpoints">
+<RxServerRack />
+</DocsAnimation>
 
 ## Starting a RxServer
 
@@ -148,7 +158,10 @@ There is also the `client-rest` plugin that provides type-save interactions with
 ```ts
 // using the client (optional)
 import { createRestClient } from 'rxdb-server/plugins/client-rest';
-const client = createRestClient('http://localhost:80/' + endpoint.urlPath, {/* headers */});
+const client = createRestClient(
+    'http://localhost:80/' + endpoint.urlPath,
+    {/* headers */}
+);
 const response = await client.query({ selector: {} });
 ```
 
@@ -301,7 +314,10 @@ When you have fields that should only be modified by the server, but not by the 
 ```ts
 
 const myChangeValidator = function(authData, change){
-    if(change.newDocumentState.myReadonlyField !== change.assumedMasterState.myReadonlyField){
+    if(
+        change.newDocumentState.myReadonlyField !==
+        change.assumedMasterState.myReadonlyField
+    ){
         throw new Error('myReadonlyField is readonly');
     }
 }
@@ -318,8 +334,9 @@ To [detect and handle conflicts](./replication.md#conflict-handling), the confli
 
 ## FAQ
 
-<details>
-    <summary>Why are the server plugins in a different github repo and npm package?</summary>
+<Faq>
+<FaqItem question="Why are the server plugins in a different github repo and npm package?">
+
     <div>
     The RxServer and its other plugins are in a different github repository because:
     <ul>
@@ -331,12 +348,14 @@ To [detect and handle conflicts](./replication.md#conflict-handling), the confli
         </li>
     </ul>
     </div>
-</details>
 
-<details>
-    <summary>Why can't endpoints be added dynamically?</summary>
+</FaqItem>
+<FaqItem question="Why can't endpoints be added dynamically?">
+
     <div>
     After `RxServer.start()` is called, you can no longer add endpoints. This is because many of the supported
     server libraries do <a href="https://github.com/fastify/fastify/issues/1771">not allow dynamic routing</a> for performance and security reasons. 
     </div>
-</details>
+
+</FaqItem>
+</Faq>

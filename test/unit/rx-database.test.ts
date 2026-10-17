@@ -1,4 +1,4 @@
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import assert from 'assert';
 
 import {
@@ -9,15 +9,18 @@ import {
     RxDatabase,
     isRxDatabaseFirstTimeInstantiated,
     defaultHashSha256,
-    prepareQuery
+    prepareQuery,
+    RxCollectionEvent,
+    dbCount
 } from '../../plugins/core/index.mjs';
 
-import AsyncTestUtil from 'async-test-util';
+import AsyncTestUtil, { waitUntil } from 'async-test-util';
 import {
     schemaObjects,
     schemas,
     humansCollection,
-    getPassword
+    getPassword,
+    isFastMode
 } from '../../plugins/test-utils/index.mjs';
 import {
     getRxStorageMemory
@@ -26,7 +29,7 @@ import {
     wrappedValidateAjvStorage
 } from '../../plugins/validate-ajv/index.mjs';
 
-describeParallel('rx-database.test.ts', () => {
+describe('rx-database.test.ts', () => {
     describe('createRxDatabase()', () => {
         describe('positive', () => {
             it('normal', async () => {
@@ -167,7 +170,7 @@ describeParallel('rx-database.test.ts', () => {
                 const db = await createRxDatabase({
                     name: randomToken(10),
                     storage: config.storage.getStorage(),
-                    async hashFunction(i: string) {
+                    async hashFunction(i: string | ArrayBuffer | Blob) {
                         const hash = await defaultHashSha256(i);
                         return hash + 'xxx';
                     }
@@ -531,6 +534,67 @@ describeParallel('rx-database.test.ts', () => {
             });
         });
     });
+    describe('schema hash depending on the device locale', () => {
+        /**
+         * @link https://github.com/pubkey/rxdb/issues/9128
+         */
+        it('should open a collection whose stored schema hash was created with a different locale', async () => {
+            if (!config.storage.hasPersistence) {
+                return;
+            }
+            const name = randomToken(10);
+            const storage = config.storage.getStorage();
+            const schema = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    hint: { type: 'string' },
+                    chunk_id: { type: 'number' }
+                },
+                required: ['id']
+            } as const;
+
+            const originalLocaleCompare = String.prototype.localeCompare;
+            String.prototype.localeCompare = function (this: string, that: string) {
+                return originalLocaleCompare.call(this, that, 'cs');
+            } as any;
+            let db1;
+            try {
+                db1 = await createRxDatabase({ name, storage });
+                await db1.addCollections({ items: { schema } });
+            } finally {
+                String.prototype.localeCompare = originalLocaleCompare;
+            }
+            await db1.items.insert({ id: 'a', hint: 'h', chunk_id: 1 });
+            await db1.close();
+
+            const db2 = await createRxDatabase({ name, storage });
+            await db2.addCollections({ items: { schema } });
+            const doc = await db2.items.findOne('a').exec(true);
+            assert.strictEqual(doc.hint, 'h');
+            await db2.remove();
+        });
+        it('should still throw DB6 when the stored schema has a different content', async () => {
+            if (!config.storage.hasPersistence) {
+                return;
+            }
+            const name = randomToken(10);
+            const storage = config.storage.getStorage();
+            const db1 = await createRxDatabase({ name, storage });
+            await db1.addCollections({ items: { schema: schemas.human } });
+            await db1.close();
+
+            const db2 = await createRxDatabase({ name, storage });
+            await AsyncTestUtil.assertThrows(
+                () => db2.addCollections({ items: { schema: { ...schemas.human, description: 'changed' } } }),
+                'RxError',
+                'DB6'
+            );
+            await db2.close();
+        });
+    });
     describe('.close()', () => {
         describe('positive', () => {
             it('should not crash on close', async () => {
@@ -561,6 +625,69 @@ describeParallel('rx-database.test.ts', () => {
                 await db.close();
                 assert.strictEqual(db.closed, true);
             });
+            it('close promise should reject if an onClose handler throws', async () => {
+                const db = await createRxDatabase({
+                    name: randomToken(10),
+                    storage: config.storage.getStorage()
+                });
+                await db.addCollections({
+                    foobar: {
+                        schema: schemas.human
+                    }
+                });
+
+                const closeError = new Error('onClose error');
+                db.onClose.push(() => {
+                    throw closeError;
+                });
+
+                await AsyncTestUtil.assertThrows(
+                    () => db.close(),
+                    Error,
+                    'onClose error'
+                );
+                assert.strictEqual(db.closed, true);
+            });
+        });
+    });
+    describe('.collections$', () => {
+        it('should emit when adding collections', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            const emitted: RxCollectionEvent[] = [];
+            db.collections$.subscribe(ev => emitted.push(ev));
+
+            await db.addCollections({
+                foobar: {
+                    schema: schemas.human
+                }
+            });
+            assert.strictEqual(emitted.length, 1);
+            assert.strictEqual(emitted[0].collection.name, 'foobar');
+            assert.strictEqual(emitted[0].type, 'ADDED');
+            await db.close();
+        });
+        it('should emit when closing collections', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            await db.addCollections({
+                foobar: {
+                    schema: schemas.human
+                }
+            });
+
+            const emitted: RxCollectionEvent[] = [];
+            db.collections$.subscribe(ev => emitted.push(ev));
+            await db.foobar.close();
+
+            assert.strictEqual(emitted.length, 1);
+            assert.strictEqual(emitted[0].collection.name, 'foobar');
+            assert.strictEqual(emitted[0].type, 'CLOSED');
+            await db.close();
         });
     });
     describe('.remove()', () => {
@@ -583,6 +710,27 @@ describeParallel('rx-database.test.ts', () => {
                 password: await getPassword()
             });
             await db2.remove();
+        });
+        it('should call collection onRemove handlers when database is removed', async () => {
+            const name = randomToken(10);
+            const db = await createRxDatabase({
+                name,
+                storage: config.storage.getStorage()
+            });
+            await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+
+            let onRemoveCalled = false;
+            db.humans.onRemove.push(() => {
+                onRemoveCalled = true;
+            });
+
+            await db.remove();
+
+            assert.strictEqual(onRemoveCalled, true, 'collection onRemove handler should have been called when database.remove() is called');
         });
         it('should have deleted the local documents', async () => {
             const name = randomToken(10);
@@ -607,6 +755,31 @@ describeParallel('rx-database.test.ts', () => {
             assert.strictEqual(hasLocal, null);
 
             await db2.remove();
+        });
+    });
+    describe('using', () => {
+        if (isFastMode()) {
+            /**
+             * Do not run this on fast-mode
+             * because test cannot be run parallel
+             */
+            return;
+        }
+        it('should automatically cleanup after scope when "using" is used', async () => {
+            const dbName = randomToken();
+            (async () => {
+                await using db = await createRxDatabase({
+                    name: dbName,
+                    storage: config.storage.getStorage()
+                });
+
+                await db.addCollections({
+                    human0: { schema: schemas.human }
+                });
+            })();
+
+
+            await waitUntil(() => dbCount() === 0);
         });
     });
 });

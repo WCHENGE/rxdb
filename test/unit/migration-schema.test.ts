@@ -1,5 +1,5 @@
 import assert from 'assert';
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import AsyncTestUtil, { assertThrows, wait, waitUntil } from 'async-test-util';
 
 import {
@@ -7,7 +7,9 @@ import {
     humansCollection,
     isFastMode,
     schemaObjects,
-    schemas
+    schemas,
+    isDeno,
+    EXAMPLE_REVISION_1
 } from '../../plugins/test-utils/index.mjs';
 
 import {
@@ -25,14 +27,24 @@ import {
     STORAGE_TOKEN_DOCUMENT_ID,
     RxDocumentData,
     InternalStoreStorageTokenDocType,
-    rxStorageInstanceToReplicationHandler
+    rxStorageInstanceToReplicationHandler,
+    getPrimaryKeyOfInternalDocument,
+    INTERNAL_CONTEXT_COLLECTION,
+    RxStorage,
+    now
 } from '../../plugins/core/index.mjs';
 
 import {
     RxMigrationState,
     RxMigrationStatus,
-    getOldCollectionMeta
+    getOldCollectionMeta,
+    MIGRATION_LEADER_TIMING,
+    setMigrationLeaderTiming
 } from '../../plugins/migration-schema/index.mjs';
+import {
+    BroadcastChannel,
+    createLeaderElection
+} from 'broadcast-channel';
 
 import { RxDBMigrationPlugin } from '../../plugins/migration-schema/index.mjs';
 import { RxDBAttachmentsPlugin } from '../../plugins/attachments/index.mjs';
@@ -59,7 +71,7 @@ describe('migration-schema.test.ts', function () {
         addRxPlugin(RxDBAttachmentsPlugin);
     }
 
-    describeParallel('.create() with migrationStrategies', () => {
+    describe('.create() with migrationStrategies', () => {
         describe('positive', () => {
             it('ok to create with strategies', async () => {
                 const db = await createRxDatabase({
@@ -189,6 +201,32 @@ describe('migration-schema.test.ts', function () {
                 );
                 db.close();
             });
+            it('should report the type of the non-function strategy value', async () => {
+                const db = await createRxDatabase({
+                    name: randomToken(10),
+                    storage: config.storage.getStorage(),
+                });
+                let thrown: any;
+                try {
+                    await db.addCollections({
+                        foobar: {
+                            schema: schemas.simpleHumanV3,
+                            autoMigrate: false,
+                            migrationStrategies: {
+                                1: () => { },
+                                2: 'notAFunction',
+                                3: () => { }
+                            }
+                        }
+                    } as any);
+                } catch (err) {
+                    thrown = err;
+                }
+                assert.ok(thrown);
+                assert.strictEqual(thrown.code, 'COL13');
+                assert.strictEqual(thrown.parameters.type, 'string');
+                db.close();
+            });
             it('throw when strategy missing', async () => {
                 const db = await createRxDatabase({
                     name: randomToken(10),
@@ -211,7 +249,7 @@ describe('migration-schema.test.ts', function () {
             });
         });
     });
-    describeParallel('getOldCollectionMeta()', () => {
+    describe('getOldCollectionMeta()', () => {
         it('should NOT get an older version', async () => {
             const colName = 'human';
             const db = await createRxDatabase({
@@ -276,7 +314,7 @@ describe('migration-schema.test.ts', function () {
             db2.close();
         });
     });
-    describeParallel('migration basics', () => {
+    describe('migration basics', () => {
         describe('.remove()', () => {
             it('should delete the old storage instance with all its content', async () => {
                 if (!config.storage.hasMultiInstance) {
@@ -310,7 +348,7 @@ describe('migration-schema.test.ts', function () {
                 await col.database.close();
             });
             it('should resolve finished when some docs are in the collection', async () => {
-                const col = await humansCollection.createMigrationCollection(10, {
+                const col = await humansCollection.createMigrationCollection(isFastMode() ? 3 : 10, {
                     3: (doc: any) => {
                         doc.age = parseInt(doc.age, 10);
                         return doc;
@@ -320,11 +358,11 @@ describe('migration-schema.test.ts', function () {
 
                 // check if in new collection
                 const docs = await col.find().exec();
-                assert.strictEqual(docs.length, 10);
+                assert.strictEqual(docs.length, isFastMode() ? 3 : 10);
                 await col.database.close();
             });
             it('should emit status updates', async () => {
-                const docsAmount = 10;
+                const docsAmount = isFastMode() ? 3 : 10;
 
                 const col = await humansCollection.createMigrationCollection(
                     docsAmount,
@@ -353,7 +391,7 @@ describe('migration-schema.test.ts', function () {
             });
 
             it('should remove the document when migration-strategy returns null', async () => {
-                const col = await humansCollection.createMigrationCollection(10, {
+                const col = await humansCollection.createMigrationCollection(isFastMode() ? 3 : 10, {
                     3: () => {
                         return null;
                     }
@@ -366,7 +404,7 @@ describe('migration-schema.test.ts', function () {
                 col.database.close();
             });
             it('should throw when document cannot be migrated', async () => {
-                const col = await humansCollection.createMigrationCollection(10, {
+                const col = await humansCollection.createMigrationCollection(isFastMode() ? 3 : 10, {
                     3: () => {
                         throw new Error('foobarInStrategy');
                     }
@@ -415,8 +453,136 @@ describe('migration-schema.test.ts', function () {
                 });
             });
         });
+        describe('writes during migration', () => {
+            it('should block writes while a migration is running and allow them again after it finishes', async () => {
+                const col = await humansCollection.createMigrationCollection(
+                    isFastMode() ? 3 : 10,
+                    {
+                        3: async (doc: any) => {
+                            await promiseWait(20);
+                            doc.age = parseInt(doc.age, 10);
+                            return doc;
+                        }
+                    }
+                );
+
+                const migrationDone = col.migratePromise(1);
+                // wait until the migration flag is actually set
+                await waitUntil(() => (col as any).migrationInProgress === true);
+
+                await assertThrows(
+                    () => col.insert(schemaObjects.simpleHumanAge() as any),
+                    'RxError',
+                    'COL25'
+                );
+                await assertThrows(
+                    () => col.bulkInsert([schemaObjects.simpleHumanAge() as any]),
+                    'RxError',
+                    'COL25'
+                );
+                await assertThrows(
+                    () => col.upsert(schemaObjects.simpleHumanAge() as any),
+                    'RxError',
+                    'COL25'
+                );
+                await assertThrows(
+                    () => col.bulkUpsert([schemaObjects.simpleHumanAge() as any]),
+                    'RxError',
+                    'COL25'
+                );
+                await assertThrows(
+                    () => col.incrementalUpsert(schemaObjects.simpleHumanAge() as any),
+                    'RxError',
+                    'COL25'
+                );
+                await assertThrows(
+                    () => col.bulkRemove(['nonexistent']),
+                    'RxError',
+                    'COL25'
+                );
+
+                // reads must still work
+                await col.find().exec();
+
+                await migrationDone;
+                assert.strictEqual((col as any).migrationInProgress, false);
+
+                // now writes work again (use V3 data since migration converted age to number)
+                await col.insert(schemaObjects.simpleHumanV3Data());
+
+                await col.database.close();
+            });
+
+            // Previously a bulkInsert called directly after migratePromise
+            // could race with the migration replication and surface as a
+            // confusing RC_PUSH error. Now the write must fail fast with COL25.
+            it('should block bulkInsert that races with a starting migration (no waitUntil)', async () => {
+                const col = await humansCollection.createMigrationCollection(
+                    isFastMode() ? 3 : 10,
+                    {
+                        3: async (doc: any) => {
+                            await promiseWait(20);
+                            doc.age = parseInt(doc.age, 10);
+                            return doc;
+                        }
+                    }
+                );
+
+                const migrationDone = col.migratePromise(1);
+
+                await assertThrows(
+                    () => col.bulkInsert([schemaObjects.simpleHumanAge() as any]),
+                    'RxError',
+                    'COL25'
+                );
+
+                await migrationDone;
+                await col.database.close();
+            });
+
+            it('should block writes when a migration is needed but not yet started', async () => {
+                // collection is created with autoMigrate=false and old data is present,
+                // so the migration is required but startMigration() has not been called.
+                const col = await humansCollection.createMigrationCollection(
+                    isFastMode() ? 3 : 5,
+                    {
+                        3: (doc: any) => {
+                            doc.age = parseInt(doc.age, 10);
+                            return doc;
+                        }
+                    }
+                );
+
+                await assertThrows(
+                    () => col.insert(schemaObjects.simpleHumanAge() as any),
+                    'RxError',
+                    'COL25'
+                );
+
+                await col.migratePromise();
+                assert.strictEqual((col as any).migrationInProgress, false);
+
+                // writes are allowed after the migration completes (use V3 data since age is now a number)
+                await col.insert(schemaObjects.simpleHumanV3Data());
+
+                await col.database.close();
+            });
+
+            it('should reset migrationInProgress on migration error', async () => {
+                const col = await humansCollection.createMigrationCollection(3, {
+                    3: () => {
+                        throw new Error('migration-failed-on-purpose');
+                    }
+                });
+                let failed = false;
+                await col.migratePromise().catch(() => failed = true);
+                assert.ok(failed);
+                assert.strictEqual((col as any).migrationInProgress, false);
+                await col.database.close();
+            });
+        });
     });
-    describeParallel('integration into collection', () => {
+    describe('integration into collection', () => {
         describe('run', () => {
             it('should auto-run on creation', async () => {
                 const col = await humansCollection.createMigrationCollection(
@@ -604,7 +770,7 @@ describe('migration-schema.test.ts', function () {
             });
         });
     });
-    describeParallel('RxDatabase.migrationStates()', () => {
+    describe('RxDatabase.migrationStates()', () => {
         it('should emit the ongoing migration state', async () => {
             const db = await createRxDatabase({
                 name: randomToken(10),
@@ -653,7 +819,7 @@ describe('migration-schema.test.ts', function () {
             db.close();
         });
     });
-    describeParallel('migration and replication', () => {
+    describe('migration and replication', () => {
         it('should have migrated the replication state', async () => {
             const remoteDb = await createRxDatabase({
                 name: 'remote' + randomToken(10),
@@ -917,7 +1083,7 @@ describe('migration-schema.test.ts', function () {
 
 
 
-    describeParallel('issues', () => {
+    describe('issues', () => {
         it('#7226 db.addCollections fails after it failed for a missing migration strategy', async () => {
             // create a schema
             const mySchema = {
@@ -1130,6 +1296,435 @@ describe('migration-schema.test.ts', function () {
             await db3.close();
             await db2.close();
         });
+        /**
+         * Old collection meta doc not deleted after migration when its _rev
+         * changes between the cached fetch and the deletion attempt.
+         * Without the retry loop fix, the _rev conflict causes the deletion
+         * to fail silently and mustMigrate() returns true on every restart.
+         * @link https://github.com/pubkey/rxdb/issues/7791
+         */
+        it('#7791 should delete old collection meta doc even when _rev has changed', async () => {
+            const dbName = randomToken(10);
+
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' }
+                },
+                required: ['id', 'name']
+            };
+
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' },
+                    migrated: { type: 'boolean' }
+                },
+                required: ['id', 'name', 'migrated']
+            };
+
+            // Create v0 database and insert documents
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                ignoreDuplicate: true
+            });
+            await db.addCollections({
+                items: { schema: schema0 }
+            });
+            await db.items.bulkInsert([
+                { id: 'doc1', name: 'Document 1' },
+                { id: 'doc2', name: 'Document 2' },
+                { id: 'doc3', name: 'Document 3' }
+            ]);
+            await db.close();
+
+            // Reopen with v1 schema (autoMigrate: false)
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                ignoreDuplicate: true
+            });
+            await db2.addCollections({
+                items: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            oldDoc.migrated = true;
+                            return oldDoc;
+                        }
+                    }
+                }
+            });
+
+            const migrationState = db2.items.getMigrationState();
+            assert.strictEqual(await migrationState.mustMigrate, true, 'Migration should be needed initially');
+
+            /**
+             * Simulate a _rev change on the old collection meta doc.
+             * In production, this happens when concurrent processes or storage
+             * internals modify the doc between the cached fetch and the deletion.
+             * We bump the _rev by doing a no-op write to the old meta doc.
+             */
+            const oldMetaDocId = getPrimaryKeyOfInternalDocument(
+                'items-0',
+                INTERNAL_CONTEXT_COLLECTION
+            );
+            const oldMetaDoc = (await db2.internalStore.findDocumentsById([oldMetaDocId], false))[0];
+            assert.ok(oldMetaDoc, 'Old meta doc should exist before migration');
+            const updatedDoc = clone(oldMetaDoc);
+            await db2.internalStore.bulkWrite([{
+                previous: oldMetaDoc,
+                document: updatedDoc
+            }], 'simulate-rev-bump');
+
+            // Now the cached oldCollectionMeta in migrationState has a stale _rev.
+            // Without the retry loop fix, the deletion will fail with a conflict.
+            await migrationState.migratePromise();
+
+            // Verify migration completed
+            const docs = await db2.items.find().exec();
+            assert.strictEqual(docs.length, 3);
+
+            // Verify old collection meta doc was deleted despite the _rev conflict
+            const oldMeta = await getOldCollectionMeta(migrationState);
+            assert.strictEqual(oldMeta, undefined, 'Old collection meta doc should be deleted after migration');
+
+            await db2.close();
+
+            // Reopen again (simulating app restart)
+            const db3 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                ignoreDuplicate: true
+            });
+            await db3.addCollections({
+                items: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            oldDoc.migrated = true;
+                            return oldDoc;
+                        }
+                    }
+                }
+            });
+
+            const migrationState3 = db3.items.getMigrationState();
+            assert.strictEqual(
+                await migrationState3.mustMigrate,
+                false,
+                'Migration should NOT be needed after restart because old meta doc was deleted'
+            );
+
+            await db3.close();
+        });
+
+        /**
+         * Memory leak: migratePromise() doesn't clean up internal replication
+         * The replicationState local variable is never assigned to this.replicationState,
+         * so cancel() cannot properly clean up subscriptions after migration.
+         * @link https://github.com/pubkey/rxdb/issues/7786
+         */
+        it('#7786 should properly cancel internal replication after migratePromise completes', async () => {
+            const dbName = randomToken(10);
+
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' }
+                },
+                required: ['id', 'name']
+            };
+
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' },
+                    migrated: { type: 'boolean' }
+                },
+                required: ['id', 'name', 'migrated']
+            };
+
+            // Create v0 database and insert documents
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                ignoreDuplicate: true
+            });
+            await db.addCollections({
+                items: { schema: schema0 }
+            });
+            await db.items.bulkInsert([
+                { id: 'doc1', name: 'Document 1' },
+                { id: 'doc2', name: 'Document 2' },
+                { id: 'doc3', name: 'Document 3' }
+            ]);
+            await db.close();
+
+            // Reopen with v1 schema and migrate
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                ignoreDuplicate: true
+            });
+            await db2.addCollections({
+                items: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            oldDoc.migrated = true;
+                            return oldDoc;
+                        }
+                    }
+                }
+            });
+
+            const migrationState = db2.items.getMigrationState();
+            const migrationNeeded = await migrationState.mustMigrate;
+            assert.strictEqual(migrationNeeded, true, 'Migration should be needed');
+
+            // Perform migration
+            const migrationPromise = migrationState.migratePromise();
+            await migrationPromise;
+            const firstState = ensureNotFalsy(Array.from(migrationState.replicationStates.values())[0]);
+
+
+            assert.ok(migrationState.replicationStates.size > 0, 'must have a replicationState');
+
+            // Verify documents migrated
+            const docs = await db2.items.find().exec();
+            assert.strictEqual(docs.length, 3);
+
+
+            // Verify replication states are properly canceled
+            assert.strictEqual(
+                ensureNotFalsy(firstState).events.canceled.getValue(),
+                true,
+                'replicationState should be canceled after migration to prevent memory leaks'
+            );
+            Array.from(migrationState.replicationStates.values()).forEach(state => {
+                assert.strictEqual(
+                    state.events.canceled.getValue(),
+                    true,
+                    'replicationState should be canceled after migration to prevent memory leaks'
+                );
+            });
+
+            await db2.close();
+        });
+
+        /**
+         * The broadcastChannel that is used for the per-collection
+         * leader-election of the migration must be closed on every code path.
+         * Previously, when the migration threw (for example because a
+         * migrationStrategy failed), the broadcastChannel stayed open and the
+         * tab remained leader forever, blocking other tabs from ever running
+         * the migration.
+         * @link https://github.com/pubkey/rxdb/pull/7827
+         */
+        it('#7827 should close the broadcastChannel/leader-election when the migration errors', async () => {
+            if (!config.storage.hasMultiInstance) {
+                return;
+            }
+            const dbName = randomToken(10);
+
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' }
+                },
+                required: ['id', 'name']
+            };
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' },
+                    migrated: { type: 'boolean' }
+                },
+                required: ['id', 'name', 'migrated']
+            };
+
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                multiInstance: true,
+                ignoreDuplicate: true
+            });
+            await db.addCollections({
+                items: { schema: schema0 }
+            });
+            await db.items.bulkInsert([
+                { id: 'doc1', name: 'Document 1' },
+                { id: 'doc2', name: 'Document 2' }
+            ]);
+            await db.close();
+
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                multiInstance: true,
+                ignoreDuplicate: true
+            });
+            await db2.addCollections({
+                items: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: () => {
+                            // force the migration to fail
+                            throw new Error('migrationStrategy failed on purpose');
+                        }
+                    }
+                }
+            });
+
+            const migrationState = db2.items.getMigrationState();
+
+            // The migration must reject because the migrationStrategy throws.
+            // Attach the catch synchronously so the rejection is never treated
+            // as an unhandledRejection by the test harness.
+            let failed = false;
+            await migrationState.migratePromise().catch(() => {
+                failed = true;
+            });
+            assert.strictEqual(failed, true, 'the migration must have failed');
+
+            // Even though the migration errored, the broadcastChannel (and thus
+            // the leader-election) must have been closed and released. The fix
+            // only sets broadcastChannel back to undefined after close() ran, so
+            // observing undefined proves the channel was closed.
+            // A bounded timeout is used so that a regression fails fast with a
+            // clear error instead of polling forever.
+            await waitUntil(
+                () => typeof migrationState.broadcastChannel === 'undefined',
+                5 * 1000
+            );
+
+            await db2.close();
+        });
+
+
+        /**
+         * When the tab that won the leader election of the migration
+         * is frozen, throttled or discarded by the browser, it never finishes
+         * the migration. The other tabs must not wait forever for it,
+         * otherwise addCollections() never resolves in any tab.
+         * @link https://github.com/pubkey/rxdb/issues/9191
+         */
+        it('#9191 must not block addCollections() forever when the migration leader is frozen', async () => {
+            if (!config.storage.hasMultiInstance) {
+                return;
+            }
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 100 },
+                    name: { type: 'string' }
+                },
+                required: ['id', 'name']
+            };
+            const schema1 = clone(schema0);
+            schema1.version = 1;
+
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                multiInstance: true,
+                ignoreDuplicate: true
+            });
+            await db.addCollections({
+                items: { schema: schema0 }
+            });
+            await db.items.bulkInsert([
+                { id: 'doc1', name: 'Document 1' },
+                { id: 'doc2', name: 'Document 2' }
+            ]);
+            await db.close();
+
+            /**
+             * Simulate a frozen tab that has won the leader election
+             * of the migration but never does any work.
+             */
+            const frozenChannel = new BroadcastChannel([
+                'rx-migration-state',
+                dbName,
+                'items',
+                1
+            ].join('|'));
+            const frozenLeader = createLeaderElection(frozenChannel);
+            await frozenLeader.awaitLeadership();
+
+            const timingBefore = Object.assign({}, MIGRATION_LEADER_TIMING);
+            setMigrationLeaderTiming(500, 100);
+            try {
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    storage: config.storage.getStorage(),
+                    multiInstance: true,
+                    ignoreDuplicate: true
+                });
+                let timeoutRef: ReturnType<typeof setTimeout> | undefined;
+                await Promise.race([
+                    db2.addCollections({
+                        items: {
+                            schema: schema1,
+                            migrationStrategies: {
+                                1: (doc: any) => {
+                                    doc.name = doc.name + '-migrated';
+                                    return doc;
+                                }
+                            }
+                        }
+                    }),
+                    new Promise((_res, rej) => {
+                        timeoutRef = setTimeout(
+                            () => rej(new Error('addCollections() is blocked by the frozen migration leader')),
+                            10 * 1000
+                        );
+                    })
+                ]);
+                clearTimeout(timeoutRef);
+
+                const docs = await db2.items.find({ sort: [{ id: 'asc' }] }).exec();
+                assert.deepStrictEqual(
+                    docs.map((d: any) => d.name),
+                    ['Document 1-migrated', 'Document 2-migrated']
+                );
+                const status = await db2.items.getMigrationState().getStatus();
+                assert.strictEqual(status.status, 'DONE');
+
+                await db2.close();
+            } finally {
+                setMigrationLeaderTiming(timingBefore.timeout, timingBefore.heartbeatInterval);
+                await frozenChannel.close();
+            }
+        });
+
         it('#7008 migrate schema with multiple connected storages', async () => {
             // create a schema
             const mySchema = {
@@ -1227,6 +1822,7 @@ describe('migration-schema.test.ts', function () {
                 replicationState.awaitInitialReplication(),
                 replicationState2.awaitInitialReplication()
             ]);
+
 
             // insert a document
             await collections.mycollection.insert({
@@ -1346,6 +1942,15 @@ describe('migration-schema.test.ts', function () {
             if (!config.storage.hasAttachments) {
                 return;
             }
+
+            // Deno's structuredClone() silently destroys Blob data, returning {}. https://github.com/denoland/deno/issues/12067#issuecomment-1975001079
+            // fake-indexeddb (used by dexie in non-browser envs) relies on
+            // structuredClone, so Blob attachment roundtrips are broken in Deno+dexie.
+            // These tests pass fine on Node and Bun, which is sufficient coverage.
+            if (isDeno && config.storage.name === 'dexie') {
+                return;
+            }
+
             const attachmentData = AsyncTestUtil.randomString(20);
             const dataBlob = createBlob(
                 attachmentData,
@@ -1428,18 +2033,19 @@ describe('migration-schema.test.ts', function () {
             );
             await newDb.close();
         });
-        it('version 15 data should be compatible with version 16 code', async () => {
+        it('version data should be compatible with next version code', async () => {
             const dbName = randomToken(10);
             const db = await createRxDatabase({
                 name: dbName,
                 storage: config.storage.getStorage(),
             });
+
             await db.storageTokenDocument;
 
             // fake an older database state by changing the internal version.
             const tokenDoc: RxDocumentData<InternalStoreStorageTokenDocType> = (await db.internalStore.findDocumentsById([STORAGE_TOKEN_DOCUMENT_ID], false))[0];
             const newTokenDoc = clone(tokenDoc);
-            newTokenDoc.data.rxdbVersion = '15.x.x';
+            newTokenDoc.data.rxdbVersion = '16.x.x';
 
             const writeResponse = await db.internalStore.bulkWrite([{
                 previous: tokenDoc,
@@ -1470,6 +2076,989 @@ describe('migration-schema.test.ts', function () {
                 }
             });
             await newDb.close();
+        });
+
+        it('migratePromise() should return 100 percent when collection has 0 documents', async () => {
+            const col = await humansCollection.createMigrationCollection(0);
+            const result = await col.migratePromise();
+
+            /**
+             * When total documents is 0, the migration is effectively complete
+             * so percent should be 100, not NaN from dividing 0/0.
+             */
+            assert.strictEqual(result.count.percent, 100);
+            assert.strictEqual(result.status, 'DONE');
+            await col.database.close();
+        });
+        it('should not resurrect deleted documents when migration strategy returns a new object', async () => {
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    }
+                },
+                required: ['id', 'name']
+            } as const;
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    },
+                    migrated: {
+                        type: 'boolean'
+                    }
+                },
+                required: ['id', 'name']
+            } as const;
+
+            // Create v0 database, insert docs, delete some
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: { schema: schema0 }
+            });
+            const col = cols.heroes;
+
+            await col.bulkInsert([
+                { id: 'alice', name: 'Alice' },
+                { id: 'bob', name: 'Bob' },
+                { id: 'charlie', name: 'Charlie' }
+            ]);
+
+            // Delete bob
+            const bobDoc = await col.findOne('bob').exec(true);
+            await bobDoc.remove();
+
+            // Verify bob is deleted
+            const docsBeforeMigration = await col.find().exec();
+            assert.strictEqual(docsBeforeMigration.length, 2);
+            assert.ok(docsBeforeMigration.every(d => d.id !== 'bob'));
+
+            await db.close();
+
+            // Reopen with v1 schema and a migration strategy that returns a NEW object
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema1,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            /**
+                             * Return a completely new object instead of mutating.
+                             * This is a common and valid pattern.
+                             */
+                            return {
+                                id: oldDoc.id,
+                                name: oldDoc.name,
+                                migrated: true,
+                                _attachments: oldDoc._attachments
+                            };
+                        }
+                    }
+                }
+            });
+
+            const col2 = cols2.heroes;
+
+            // After migration, only alice and charlie should exist.
+            // Bob was deleted and must NOT reappear.
+            const docsAfterMigration = await col2.find().exec();
+            const ids = docsAfterMigration.map(d => d.id).sort();
+            assert.strictEqual(docsAfterMigration.length, 2, 'deleted document was resurrected during migration');
+            assert.deepStrictEqual(ids, ['alice', 'charlie']);
+
+            // Verify migrated field was applied
+            assert.ok(docsAfterMigration.every(d => (d as any).migrated === true));
+
+            await db2.close();
+        });
+        it('migratePromise() should return percent 100 when status is DONE', async () => {
+            /**
+             * When migratePromise() is called and no migration is needed,
+             * the returned RxMigrationStatus has status 'DONE' but percent 0.
+             * This is inconsistent: the updateStatus() method correctly uses
+             * percent=100 when total=0, but migratePromise() hardcodes percent=0.
+             * The RxMigrationStatus type documents percent as "Total percentage [0-100]",
+             * so a DONE status must have percent=100.
+             */
+            const dbName = randomToken(10);
+
+            // Schema v0
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    }
+                },
+                required: ['id', 'name'] as const
+            };
+
+            // Schema v1 with a migration strategy
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    }
+                },
+                required: ['id', 'name'] as const
+            };
+
+            // Create v0 collection, insert documents, close
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: {
+                    schema: schema0
+                }
+            });
+            await cols.heroes.bulkInsert([
+                { id: 'alice', name: 'Alice' },
+                { id: 'bob', name: 'Bob' }
+            ]);
+            await db.close();
+
+            // Reopen with v1, autoMigrate: false, run migration manually
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => oldDoc
+                    }
+                }
+            });
+
+            // Run the migration
+            const result: RxMigrationStatus = await cols2.heroes.getMigrationState().migratePromise();
+
+            // The migration is done, percent must be 100
+            assert.strictEqual(result.status, 'DONE');
+            assert.strictEqual(result.count.percent, 100, 'percent must be 100 when status is DONE');
+            assert.ok(result.count.handled > 0, 'documents were migrated');
+            assert.strictEqual(result.count.handled, result.count.total, 'all documents were handled');
+
+            // Now call migratePromise() again; no migration needed this time.
+            // A second RxMigrationState is needed because the first one has
+            // this.started === true and would throw DM1 inside startMigration().
+            // Instead, open a fresh database so a new RxMigrationState is created.
+            await db2.close();
+
+            const db3 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols3 = await db3.addCollections({
+                heroes: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => oldDoc
+                    }
+                }
+            });
+
+            // No migration needed (already migrated).
+            const needed = await cols3.heroes.migrationNeeded();
+            assert.strictEqual(needed, false, 'migration must not be needed');
+
+            const result2: RxMigrationStatus = await cols3.heroes.getMigrationState().migratePromise();
+
+            // Even when no migration was needed, DONE status must have percent=100
+            assert.strictEqual(result2.status, 'DONE');
+            assert.strictEqual(
+                result2.count.percent,
+                100,
+                'percent must be 100 when status is DONE (no migration needed)'
+            );
+
+            await db3.close();
+        });
+        it('should NOT auto-apply schema default values during migration', async () => {
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    }
+                },
+                required: ['id', 'name'] as const
+            };
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    },
+                    nickname: {
+                        type: 'string' as const,
+                        default: 'anonymous'
+                    }
+                },
+                required: ['id', 'name'] as const
+            };
+
+            // create v0 collection and insert documents
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: {
+                    schema: schema0
+                }
+            });
+            await cols.heroes.bulkInsert([
+                { id: 'alice', name: 'Alice' },
+                { id: 'bob', name: 'Bob' },
+                { id: 'charlie', name: 'Charlie' }
+            ]);
+            await db.close();
+
+            /**
+             * Migration strategies must have full explicit control
+             * over the document data. Schema default values are NOT
+             * auto-applied so the strategy can decide exactly
+             * what each field should contain.
+             */
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema1,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            return oldDoc;
+                        }
+                    }
+                }
+            });
+
+            const docs = await cols2.heroes.find().exec();
+            assert.strictEqual(docs.length, 3);
+
+            // Default values must NOT be auto-applied during migration.
+            // The migration strategy has full control over the document data.
+            for (const doc of docs) {
+                assert.strictEqual(
+                    (doc as any).nickname,
+                    undefined,
+                    'migrated document must not have auto-applied default values'
+                );
+            }
+
+            await db2.close();
+        });
+        /**
+         * Regression test for migration losing attachments when the migration
+         * strategy returns a new object instead of mutating the old one.
+         *
+         * `migrateDocumentData()` preserves `_meta` and `_deleted` across
+         * strategies that return new objects, but never restores `_attachments`.
+         * Returning a fresh object from a strategy is a perfectly valid pattern
+         * (the TypeScript type only requires the user document fields plus
+         * `_attachments`), so attachments must not silently disappear.
+         */
+        it('should keep attachments when migration strategy returns a new object', async () => {
+            if (!config.storage.hasAttachments) {
+                return;
+            }
+            // fake-indexeddb (used by dexie in non-browser envs) and Deno
+            // structuredClone do not roundtrip Blobs correctly; the #3460 test
+            // skips the same combination.
+            if (isDeno && config.storage.name === 'dexie') {
+                return;
+            }
+
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    }
+                },
+                required: ['id', 'name'] as const,
+                attachments: {}
+            };
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    },
+                    migrated: {
+                        type: 'boolean' as const
+                    }
+                },
+                required: ['id', 'name'] as const,
+                attachments: {}
+            };
+
+            // create v0 database, insert a document with an attachment
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: { schema: schema0 }
+            });
+            const doc = await cols.heroes.insert({ id: 'alice', name: 'Alice' });
+            const attachmentData = AsyncTestUtil.randomString(20);
+            await doc.putAttachment({
+                id: 'note.txt',
+                data: createBlob(attachmentData, 'text/plain'),
+                type: 'text/plain'
+            });
+            await db.close();
+
+            // reopen with v1 schema using a strategy that returns a NEW object
+            // without spreading `_attachments`. This is a valid public-API
+            // usage: the MigrationStrategy type is
+            //   `(doc, collection) => doc | null`, so returning any
+            //   WithAttachments<DocData> shape is allowed.
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema1,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            return {
+                                id: oldDoc.id,
+                                name: oldDoc.name,
+                                migrated: true
+                            };
+                        }
+                    }
+                }
+            });
+
+            const migratedDoc = await cols2.heroes.findOne('alice').exec(true);
+            const attachment = migratedDoc.getAttachment('note.txt');
+            assert.ok(
+                attachment,
+                'attachment must be preserved after migration when the strategy returns a new object'
+            );
+            assert.strictEqual(attachment.type, 'text/plain');
+            assert.strictEqual(attachment.length, attachmentData.length);
+            const fetchedData = await attachment.getStringData();
+            assert.strictEqual(fetchedData, attachmentData);
+
+            await db2.close();
+        });
+        /**
+         * Regression test for multi-step migrations where an intermediate
+         * migration strategy returns a new object without forwarding
+         * `_attachments`. Subsequent strategies still receive the document
+         * typed as `WithAttachments<DocData>`, so `_attachments` must stay
+         * visible across chained strategies. Without forwarding
+         * `_attachments` between steps, later strategies see it as
+         * `undefined` and can no longer read or mutate attachment metadata,
+         * even though the public-API docs explicitly describe mutating
+         * `oldDoc._attachments` inside a strategy.
+         */
+        it('should preserve _attachments across chained migration strategies', async () => {
+            if (!config.storage.hasAttachments) {
+                return;
+            }
+            if (isDeno && config.storage.name === 'dexie') {
+                return;
+            }
+
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    }
+                },
+                required: ['id', 'name'] as const,
+                attachments: {}
+            };
+            const schema2 = {
+                version: 2,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string' as const,
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string' as const
+                    },
+                    hadAttachmentInStepTwo: {
+                        type: 'boolean' as const
+                    }
+                },
+                required: ['id', 'name'] as const,
+                attachments: {}
+            };
+
+            // create v0 database and insert a doc with an attachment
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: { schema: schema0 }
+            });
+            const doc = await cols.heroes.insert({ id: 'alice', name: 'Alice' });
+            const attachmentData = AsyncTestUtil.randomString(20);
+            await doc.putAttachment({
+                id: 'note.txt',
+                data: createBlob(attachmentData, 'text/plain'),
+                type: 'text/plain'
+            });
+            await db.close();
+
+            // reopen with v2 schema using two strategies.
+            // Strategy 1 returns a NEW object without forwarding
+            // `_attachments` (a valid public-API usage: the
+            // MigrationStrategy type is
+            //   `(doc, collection) => WithAttachments<DocData> | null`
+            // and `_attachments` is optional on that type).
+            // Strategy 2 must still receive `_attachments` to comply
+            // with the same contract and the docs that show
+            // mutating `oldDoc._attachments` inside a strategy.
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema2,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            return {
+                                id: oldDoc.id,
+                                name: oldDoc.name
+                            };
+                        },
+                        2: (oldDoc: any) => {
+                            const hadAttachment = !!oldDoc._attachments
+                                && Object.keys(oldDoc._attachments).length > 0;
+                            return {
+                                id: oldDoc.id,
+                                name: oldDoc.name,
+                                hadAttachmentInStepTwo: hadAttachment
+                            };
+                        }
+                    }
+                }
+            });
+
+            const migratedDoc = await cols2.heroes.findOne('alice').exec(true);
+            assert.strictEqual(
+                (migratedDoc as any).hadAttachmentInStepTwo,
+                true,
+                'strategy 2 must see _attachments even when strategy 1 returned a new object'
+            );
+
+            const attachment = migratedDoc.getAttachment('note.txt');
+            assert.ok(attachment, 'attachment must still be present after migration');
+            assert.strictEqual(attachment.type, 'text/plain');
+            assert.strictEqual(attachment.length, attachmentData.length);
+            const fetchedData = await attachment.getStringData();
+            assert.strictEqual(fetchedData, attachmentData);
+
+            await db2.close();
+        });
+        it('#8607 should throw/reject when migration produces a document that does not match the schema', async () => {
+            const dbName = randomToken(10);
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    }
+                },
+                required: ['id', 'name']
+            };
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    },
+                    age: {
+                        type: 'number',
+                        minimum: 0
+                    }
+                },
+                required: ['id', 'name', 'age']
+            };
+
+            // create v0 database and insert a document
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols = await db.addCollections({
+                heroes: { schema: schema0 }
+            });
+            await cols.heroes.insert({ id: 'alice', name: 'Alice' });
+            await db.close();
+
+            // reopen with v1 schema but use a migration strategy that returns a document that does not match the schema (e.g. missing age or age is negative)
+            const db2 = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+            });
+            const cols2 = await db2.addCollections({
+                heroes: {
+                    schema: schema1,
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (oldDoc: any) => {
+                            // Returns document missing required 'age' field
+                            return {
+                                id: oldDoc.id,
+                                name: oldDoc.name
+                            };
+                        }
+                    }
+                }
+            });
+
+            // The migration should fail because the produced document violates the schema
+            let caughtError: any = null;
+            try {
+                await cols2.heroes.getMigrationState().migratePromise();
+            } catch (err: any) {
+                caughtError = err;
+            }
+            assert.ok(caughtError);
+
+            // The error should be DM4 (migration error) wrapping a COL20 (schema validation),
+            assert.strictEqual(caughtError.code, 'DM4');
+            const innerError = caughtError.parameters?.error;
+            assert.ok(innerError, 'inner error should exist');
+            // The inner error must be a schema validation error (COL20), not SNH
+            assert.ok(
+                innerError.code === 'COL20' || (innerError.parameters?.writeError?.status === 422),
+                'inner error must be a schema validation error, not SNH. Got: ' + JSON.stringify(innerError?.code)
+            );
+
+            await db2.close();
+        });
+        /**
+         * The migration pushes multiple batches in parallel into the new storage.
+         * With multiInstance: false, the premium IndexedDB storage lost
+         * whole batches when three or more batches were needed.
+         * @link https://github.com/pubkey/rxdb/issues/9145
+         */
+        it('#9145 must keep all documents when the migration needs multiple batches with multiInstance: false', async () => {
+            const name = randomToken(10);
+            const docsAmount = 90;
+            const batchSize = 20;
+            const getSchema = (version: number) => ({
+                version,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    n: {
+                        type: 'number'
+                    }
+                },
+                required: ['id', 'n']
+            });
+
+            const db = await createRxDatabase({
+                name,
+                storage: config.storage.getStorage(),
+                multiInstance: false
+            });
+            await db.addCollections({
+                docs: {
+                    schema: getSchema(0)
+                }
+            });
+            await db.docs.bulkInsert(
+                new Array(docsAmount).fill(0).map((_v, i) => ({
+                    id: 'd' + (i + '').padStart(5, '0'),
+                    n: i
+                }))
+            );
+            await db.close();
+
+            const db2 = await createRxDatabase({
+                name,
+                storage: config.storage.getStorage(),
+                multiInstance: false
+            });
+            await db2.addCollections({
+                docs: {
+                    schema: getSchema(1),
+                    autoMigrate: false,
+                    migrationStrategies: {
+                        1: (doc: any) => doc
+                    }
+                }
+            });
+            await db2.docs.getMigrationState().migratePromise(batchSize);
+            const count = await db2.docs.count().exec();
+            assert.strictEqual(count, docsAmount);
+
+            await db2.remove();
+        });
+        /**
+         * An interrupted schema migration could never complete.
+         * As soon as a document was already stored in the new storage,
+         * the migration ran in an endless cycle:
+         * The migration pushes documents with `assumedMasterState: undefined`
+         * which the replication protocol handles as an insert, so each document
+         * that already exists in the new storage is reported as a conflict.
+         * The upstream resolves these conflicts by writing the master state back
+         * into the old storage, that write emits on the fork change stream,
+         * the same documents are read again and the cycle starts over.
+         * The result was that `addCollections()` never resolved and the migration
+         * spun conflict cycles until the tab ran out of memory.
+         * @link https://rxdb.pipedrive.com/mail/inbox/thread/4958
+         */
+        describe('interrupted migration', () => {
+            /**
+             * The conflict cycle runs in pure promise-chains so it starves the
+             * JavaScript event loop. Not even the mocha timeout can fire while it runs,
+             * therefore we have to detect the loop inside of the storage
+             * and break out of it by throwing.
+             */
+            const CONFLICT_WRITE_LIMIT = 20;
+            function wrapStorageWithLoopDetection(
+                storage: RxStorage<any, any>
+            ): {
+                storage: RxStorage<any, any>;
+                getConflictWrites: () => number;
+            } {
+                let conflictWrites = 0;
+                const wrappedStorage: RxStorage<any, any> = Object.assign({}, storage, {
+                    async createStorageInstance(params: any) {
+                        const instance = await storage.createStorageInstance(params);
+                        const bulkWriteBefore = instance.bulkWrite.bind(instance);
+                        instance.bulkWrite = (rows: any, context: string) => {
+                            if (context === 'replication-up-write-conflict') {
+                                conflictWrites = conflictWrites + 1;
+                                if (conflictWrites > CONFLICT_WRITE_LIMIT) {
+                                    throw new Error(
+                                        'endless migration conflict loop detected after ' +
+                                        conflictWrites + ' conflict writes'
+                                    );
+                                }
+                            }
+                            return bulkWriteBefore(rows, context);
+                        };
+                        return instance;
+                    }
+                });
+                return {
+                    storage: wrappedStorage,
+                    getConflictWrites: () => conflictWrites
+                };
+            }
+
+            const schema0 = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    }
+                },
+                required: ['id', 'name']
+            };
+            const schema1 = {
+                version: 1,
+                primaryKey: 'id',
+                type: 'object' as const,
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    name: {
+                        type: 'string'
+                    },
+                    migrated: {
+                        type: 'boolean'
+                    }
+                },
+                required: ['id', 'name', 'migrated']
+            };
+            const migrationStrategies: MigrationStrategies = {
+                1: (docData: any) => {
+                    docData.migrated = true;
+                    return docData;
+                }
+            };
+
+            it('must migrate when a document already exists in the new storage', async () => {
+                const dbName = randomToken(10);
+                const docsAmount = 3;
+
+                const db = await createRxDatabase({
+                    name: dbName,
+                    storage: config.storage.getStorage()
+                });
+                await db.addCollections({
+                    items: { schema: schema0 }
+                });
+                await db.items.bulkInsert(
+                    new Array(docsAmount)
+                        .fill(0)
+                        .map((_v, idx) => ({ id: 'doc-' + idx, name: 'Document ' + idx }))
+                );
+                await db.close();
+
+                const loopDetection = wrapStorageWithLoopDetection(config.storage.getStorage());
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    storage: loopDetection.storage
+                });
+                await db2.addCollections({
+                    items: {
+                        schema: schema1,
+                        autoMigrate: false,
+                        migrationStrategies
+                    }
+                });
+
+                /**
+                 * Simulate the state that an interrupted migration leaves behind:
+                 * The document is already stored in the new storage
+                 * but the migration has not stored the assumed master state for it.
+                 */
+                const writeResult = await db2.items.storageInstance.bulkWrite([{
+                    document: {
+                        id: 'doc-0',
+                        name: 'Document 0',
+                        migrated: true,
+                        _deleted: false,
+                        _attachments: {},
+                        _rev: EXAMPLE_REVISION_1,
+                        _meta: { lwt: now() }
+                    }
+                }], 'test-interrupted-migration');
+                assert.strictEqual(writeResult.error.length, 0);
+
+                let migrationError: any;
+                await db2.items.getMigrationState()
+                    .migratePromise()
+                    .catch((err: any) => migrationError = err);
+
+                assert.ok(
+                    loopDetection.getConflictWrites() <= CONFLICT_WRITE_LIMIT,
+                    'the migration ran into an endless conflict loop'
+                );
+                if (migrationError) {
+                    throw migrationError;
+                }
+
+                const docs = await db2.items.find().exec();
+                assert.strictEqual(docs.length, docsAmount);
+                assert.ok(docs.every(d => d.migrated === true));
+
+                await db2.close();
+            });
+            it('must finish a migration that was interrupted while pushing a batch', async () => {
+                if (isFastMode()) {
+                    return;
+                }
+                const dbName = randomToken(10);
+                const docsAmount = 200;
+                const batchSize = 10;
+                /**
+                 * Interrupt in the middle of a batch, not between two batches.
+                 * A batch that is interrupted after the documents have been written
+                 * to the new storage but before the assumed master state was stored,
+                 * is exactly what a page reload during a migration leaves behind.
+                 */
+                const interruptAfter = 15;
+
+                const db = await createRxDatabase({
+                    name: dbName,
+                    storage: config.storage.getStorage()
+                });
+                await db.addCollections({
+                    items: { schema: schema0 }
+                });
+                await db.items.bulkInsert(
+                    new Array(docsAmount)
+                        .fill(0)
+                        .map((_v, idx) => ({ id: 'doc-' + idx, name: 'Document ' + idx }))
+                );
+                await db.close();
+
+                // start the migration and interrupt it
+                const db2 = await createRxDatabase({
+                    name: dbName,
+                    storage: config.storage.getStorage()
+                });
+                const interrupted: { state?: RxMigrationState; } = {};
+                let migratedDocs = 0;
+                let didInterrupt = false;
+                const interruptingStrategy: MigrationStrategy = (docData: any) => {
+                    docData.migrated = true;
+                    migratedDocs = migratedDocs + 1;
+                    if (migratedDocs >= interruptAfter && !didInterrupt) {
+                        didInterrupt = true;
+                        ensureNotFalsy(interrupted.state).cancel();
+                    }
+                    return docData;
+                };
+                await db2.addCollections({
+                    items: {
+                        schema: schema1,
+                        autoMigrate: false,
+                        migrationStrategies: {
+                            1: interruptingStrategy
+                        }
+                    }
+                });
+                interrupted.state = db2.items.getMigrationState();
+                interrupted.state.startMigration(batchSize).catch(() => { });
+                await waitUntil(() => didInterrupt, 15000);
+                await wait(100);
+
+                // ensure the interrupt left documents behind in the new storage
+                const migratedBeforeInterrupt = await db2.items.find().exec();
+                assert.ok(
+                    migratedBeforeInterrupt.length > 0,
+                    'the interrupt must happen after some documents were written to the new storage'
+                );
+                assert.ok(
+                    migratedBeforeInterrupt.length < docsAmount,
+                    'the interrupt must happen before the migration is done'
+                );
+                await db2.close();
+
+                // the next run must be able to finish the migration
+                const loopDetection = wrapStorageWithLoopDetection(config.storage.getStorage());
+                const db3 = await createRxDatabase({
+                    name: dbName,
+                    storage: loopDetection.storage
+                });
+                let addCollectionsError: any;
+                const collections = await db3.addCollections({
+                    items: {
+                        schema: schema1,
+                        migrationStrategies
+                    }
+                }).catch((err: any) => {
+                    addCollectionsError = err;
+                    return undefined;
+                });
+
+                assert.ok(
+                    loopDetection.getConflictWrites() <= CONFLICT_WRITE_LIMIT,
+                    'the migration ran into an endless conflict loop'
+                );
+                if (addCollectionsError) {
+                    throw addCollectionsError;
+                }
+
+                const docs = await ensureNotFalsy(collections).items.find().exec();
+                assert.strictEqual(docs.length, docsAmount);
+                assert.ok(docs.every(d => d.migrated === true));
+
+                await db3.close();
+            });
         });
     });
 });

@@ -2,6 +2,7 @@
 title: Development Mode
 slug: dev-mode.html
 description: Enable checks & validations with RxDB Dev Mode. Ensure proper API use, readable errors, and schema validation during development. Avoid in production.
+image: /headers/dev-mode.jpg
 ---
 
 import {Steps} from '@site/src/components/steps';
@@ -46,12 +47,12 @@ async function createDb() {
             module => addRxPlugin(module.RxDBDevModePlugin)
         );
     }
-    const db = createRxDatabase( /* ... */ );
+    const db = await createRxDatabase( /* ... */ );
 }
 ```
 
 
-## Usage with Angular
+## Usage with [Angular](./articles/angular-database.md)
 
 ```ts
 import { isDevMode } from '@angular/core';
@@ -63,7 +64,7 @@ async function createDb() {
         );
     }
 
-    const db = createRxDatabase( /* ... */ );
+    const db = await createRxDatabase( /* ... */ );
     // ...
 }
 ```
@@ -96,7 +97,7 @@ async function createDb() {
             module => addRxPlugin(module.RxDBDevModePlugin)
         );
     }
-    const db = createRxDatabase( /* ... */ );
+    const db = await createRxDatabase( /* ... */ );
     // ...
 }
 ```

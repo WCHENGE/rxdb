@@ -16,7 +16,7 @@ export const INDEX_MAX = String.fromCharCode(65535);
 /**
  * Do not use -Infinity here because it would be
  * transformed to null on JSON.stringify() which can break things
- * when the query plan is send to the storage as json.
+ * when the query plan is sent to the storage as json.
  * @link https://stackoverflow.com/a/16644751
  * Notice that for IndexedDB IDBKeyRange we have
  * to transform the value back to -Infinity
@@ -51,18 +51,37 @@ export function getQueryPlan<RxDocType>(
      * Some fields can be part of the selector while not being relevant for sorting
      * because their selector operators specify that in all cases all matching docs
      * would have the same value.
-     * For example the boolean field _deleted.
-     * TODO similar thing could be done for enums.
+     * For example the boolean field _deleted or enum fields.
+     * Same goes for string and number fields that are matched with $eq
+     * to a string or number value.
+     * @performance Not having these fields in the compare strings
+     * makes it possible to use the index order as sort order
+     * so that the storage does not have to re-sort the results.
      */
     const sortIrrelevevantFields = new Set();
     Object.keys(selector).forEach(fieldName => {
         const schemaPart = getSchemaByObjectPath(schema, fieldName);
+        const fieldSelector = (selector as any)[fieldName];
         if (
-            schemaPart &&
-            schemaPart.type === 'boolean' &&
-            Object.prototype.hasOwnProperty.call((selector as any)[fieldName], '$eq')
+            !schemaPart ||
+            !Object.prototype.hasOwnProperty.call(fieldSelector, '$eq')
+        ) {
+            return;
+        }
+        if (
+            schemaPart.type === 'boolean' ||
+            schemaPart.enum
         ) {
             sortIrrelevevantFields.add(fieldName);
+        } else if (
+            schemaPart.type === 'string' ||
+            schemaPart.type === 'number' ||
+            schemaPart.type === 'integer'
+        ) {
+            const eqValueType = typeof fieldSelector.$eq;
+            if (eqValueType === 'string' || eqValueType === 'number') {
+                sortIrrelevevantFields.add(fieldName);
+            }
         }
     });
 
@@ -104,6 +123,11 @@ export function getQueryPlan<RxDocType>(
                         const operatorValue = matcher[operator];
                         const partialOpts = getMatcherQueryOpts(operator, operatorValue);
                         matcherOpts = Object.assign(matcherOpts, partialOpts);
+                    } else if (operator === '$in') {
+                        const partialOpts = getInQueryRangeOpts(matcher[operator]);
+                        if (partialOpts) {
+                            matcherOpts = Object.assign(matcherOpts, partialOpts);
+                        }
                     }
                 });
             }
@@ -122,6 +146,33 @@ export function getQueryPlan<RxDocType>(
                 matcherOpts.inclusiveEnd = true;
             }
 
+            /**
+             * When a numeric bound falls outside the schema minimum/maximum,
+             * getNumberIndexString() clamps it to the boundary value.
+             * An exclusive bound clamped to the same string as a boundary
+             * document would incorrectly exclude that document, so we
+             * promote it to inclusive here.
+             */
+            const schemaPart = getSchemaByObjectPath(schema, indexField);
+            if (schemaPart && (schemaPart.type === 'number' || schemaPart.type === 'integer')) {
+                if (
+                    !matcherOpts.inclusiveStart &&
+                    typeof matcherOpts.startKey === 'number' &&
+                    typeof schemaPart.minimum === 'number' &&
+                    matcherOpts.startKey < schemaPart.minimum
+                ) {
+                    matcherOpts.inclusiveStart = true;
+                }
+                if (
+                    !matcherOpts.inclusiveEnd &&
+                    typeof matcherOpts.endKey === 'number' &&
+                    typeof schemaPart.maximum === 'number' &&
+                    matcherOpts.endKey > schemaPart.maximum
+                ) {
+                    matcherOpts.inclusiveEnd = true;
+                }
+            }
+
             if (inclusiveStart && !matcherOpts.inclusiveStart) {
                 inclusiveStart = false;
             }
@@ -135,13 +186,26 @@ export function getQueryPlan<RxDocType>(
 
         const startKeys = opts.map(opt => opt.startKey);
         const endKeys = opts.map(opt => opt.endKey);
+
+        /**
+         * Compute the index compare string once per index,
+         * not inside the queryPlan object literal, to avoid
+         * creating a filtered array and joining on every iteration.
+         */
+        let indexCompareString: string;
+        if (sortIrrelevevantFields.size === 0) {
+            indexCompareString = index.join(',');
+        } else {
+            indexCompareString = index.filter(f => !sortIrrelevevantFields.has(f)).join(',');
+        }
+
         const queryPlan: RxQueryPlan = {
             index,
             startKeys,
             endKeys,
             inclusiveEnd,
             inclusiveStart,
-            sortSatisfiedByIndex: !hasDescSorting && optimalSortIndexCompareString === index.filter(f => !sortIrrelevevantFields.has(f)).join(','),
+            sortSatisfiedByIndex: !hasDescSorting && optimalSortIndexCompareString === indexCompareString,
             selectorSatisfiedByIndex: isSelectorSatisfiedByIndex(index, query.selector, startKeys, endKeys)
         };
         const quality = rateQueryPlan(
@@ -184,26 +248,6 @@ export function isSelectorSatisfiedByIndex(
     endKeys: RxQueryPlanKey[]
 ): boolean {
 
-
-    /**
-     * Not satisfied if one or more operators are non-logical
-     * operators that can never be satisfied by an index.
-     */
-    const selectorEntries = Object.entries(selector);
-    const hasNonMatchingOperator = selectorEntries
-        .find(([fieldName, operation]) => {
-            if (!index.includes(fieldName)) {
-                return true;
-            }
-            const hasNonLogicOperator = Object.entries(operation as any)
-                .find(([op, _value]) => !LOGICAL_OPERATORS.has(op));
-            return hasNonLogicOperator;
-        });
-
-    if (hasNonMatchingOperator) {
-        return false;
-    }
-
     /**
      * Not satisfied if contains $and or $or operations.
      */
@@ -211,59 +255,67 @@ export function isSelectorSatisfiedByIndex(
         return false;
     }
 
-
-
-    // ensure all lower bound in index
-    const satisfieldLowerBound: string[] = [];
+    /**
+     * Check all selector entries in a single pass:
+     * - Ensure all fields are in the index
+     * - Ensure all operators are logical
+     * - Track lower/upper bound operators
+     */
+    const selectorEntries = Object.entries(selector);
     const lowerOperatorFieldNames = new Set<string>();
-    for (const [fieldName, operation] of Object.entries(selector)) {
+    const upperOperatorFieldNames = new Set<string>();
+    let hasNonEqLowerBound = false;
+    let hasNonEqUpperBound = false;
+
+    for (const [fieldName, operation] of selectorEntries) {
         if (!index.includes(fieldName)) {
             return false;
         }
 
-        // If more then one logic op on the same field, we have to selector-match.
-        const lowerLogicOps = Object.keys(operation as any).filter(key => LOWER_BOUND_LOGICAL_OPERATORS.has(key));
-        if (lowerLogicOps.length > 1) {
+        const operationKeys = Object.keys(operation as any);
+
+        let lowerLogicOpCount = 0;
+        let lastLowerLogicOp: string | undefined;
+        let upperLogicOpCount = 0;
+        let lastUpperLogicOp: string | undefined;
+
+        for (const op of operationKeys) {
+            if (!LOGICAL_OPERATORS.has(op)) {
+                return false;
+            }
+            if (LOWER_BOUND_LOGICAL_OPERATORS.has(op)) {
+                lowerLogicOpCount++;
+                lastLowerLogicOp = op;
+            }
+            if (UPPER_BOUND_LOGICAL_OPERATORS.has(op)) {
+                upperLogicOpCount++;
+                lastUpperLogicOp = op;
+            }
+        }
+
+        // If more than one logic op on the same field per bound direction, we have to selector-match.
+        if (lowerLogicOpCount > 1 || upperLogicOpCount > 1) {
             return false;
         }
 
-        const hasLowerLogicOp = lowerLogicOps[0];
-        if (hasLowerLogicOp) {
+        if (lastLowerLogicOp) {
             lowerOperatorFieldNames.add(fieldName);
         }
-        if (hasLowerLogicOp !== '$eq') {
-            if (satisfieldLowerBound.length > 0) {
+        if (lastLowerLogicOp !== '$eq') {
+            if (hasNonEqLowerBound) {
                 return false;
-            } else {
-                satisfieldLowerBound.push(hasLowerLogicOp);
             }
-        }
-    }
-
-    // ensure all upper bound in index
-    const satisfieldUpperBound: string[] = [];
-    const upperOperatorFieldNames = new Set<string>();
-    for (const [fieldName, operation] of Object.entries(selector)) {
-        if (!index.includes(fieldName)) {
-            return false;
+            hasNonEqLowerBound = true;
         }
 
-        // If more then one logic op on the same field, we have to selector-match.
-        const upperLogicOps = Object.keys(operation as any).filter(key => UPPER_BOUND_LOGICAL_OPERATORS.has(key));
-        if (upperLogicOps.length > 1) {
-            return false;
-        }
-
-        const hasUperLogicOp = upperLogicOps[0];
-        if (hasUperLogicOp) {
+        if (lastUpperLogicOp) {
             upperOperatorFieldNames.add(fieldName);
         }
-        if (hasUperLogicOp !== '$eq') {
-            if (satisfieldUpperBound.length > 0) {
+        if (lastUpperLogicOp !== '$eq') {
+            if (hasNonEqUpperBound) {
                 return false;
-            } else {
-                satisfieldUpperBound.push(hasUperLogicOp);
             }
+            hasNonEqUpperBound = true;
         }
     }
 
@@ -305,6 +357,54 @@ export function isSelectorSatisfiedByIndex(
     return true;
 }
 
+/**
+ * $in can use an index by scanning the range between the
+ * smallest and the largest of the given values.
+ * That range can contain non-matching documents, so the
+ * selector is never satisfied by the index alone and the
+ * query matcher must still filter the results.
+ * Only homogeneous arrays of strings or finite numbers are
+ * used because min/max is not defined across mixed types.
+ * @link https://github.com/pubkey/rxdb/issues/8631
+ */
+export function getInQueryRangeOpts(
+    operatorValue: any
+): Partial<RxQueryPlanerOpts> | undefined {
+    if (
+        !Array.isArray(operatorValue) ||
+        operatorValue.length === 0
+    ) {
+        return undefined;
+    }
+    const valueType = typeof operatorValue[0];
+    if (valueType !== 'string' && valueType !== 'number') {
+        return undefined;
+    }
+    let min = operatorValue[0];
+    let max = operatorValue[0];
+    for (let i = 0; i < operatorValue.length; i++) {
+        const value = operatorValue[i];
+        if (
+            typeof value !== valueType ||
+            (valueType === 'number' && !isFinite(value))
+        ) {
+            return undefined;
+        }
+        if (value < min) {
+            min = value;
+        }
+        if (value > max) {
+            max = value;
+        }
+    }
+    return {
+        startKey: min,
+        endKey: max,
+        inclusiveStart: true,
+        inclusiveEnd: true
+    };
+}
+
 export function getMatcherQueryOpts(
     operator: string,
     operatorValue: any
@@ -338,7 +438,7 @@ export function getMatcherQueryOpts(
                 inclusiveStart: false
             };
         default:
-            throw new Error('SNH');
+            throw newRxError('SNH');
     }
 }
 
@@ -364,7 +464,7 @@ export function rateQueryPlan<RxDocType>(
     const nonMinKeyCount = countUntilNotMatching(queryPlan.startKeys, keyValue => keyValue !== INDEX_MIN && keyValue !== INDEX_MAX);
     addQuality(nonMinKeyCount * pointsPerMatchingKey);
 
-    const nonMaxKeyCount = countUntilNotMatching(queryPlan.startKeys, keyValue => keyValue !== INDEX_MAX && keyValue !== INDEX_MIN);
+    const nonMaxKeyCount = countUntilNotMatching(queryPlan.endKeys, keyValue => keyValue !== INDEX_MAX && keyValue !== INDEX_MIN);
     addQuality(nonMaxKeyCount * pointsPerMatchingKey);
 
     const equalKeyCount = countUntilNotMatching(queryPlan.startKeys, (keyValue, idx) => {

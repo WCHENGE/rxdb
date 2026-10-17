@@ -2,8 +2,10 @@
 title: Seamless Electron Storage with RxDB
 slug: electron.html
 description: Use the RxDB Electron Plugin to share data between main and renderer processes. Enjoy quick queries, real-time sync, and robust offline support.
+image: /headers/electron.jpg
 ---
 
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 
 # Electron Plugin
@@ -12,7 +14,7 @@ description: Use the RxDB Electron Plugin to share data between main and rendere
 ## RxStorage Electron IpcRenderer & IpcMain
 
 
-To use RxDB in [electron](./electron-database.md), it is recommended to run the RxStorage in the main process and the RxDatabase in the renderer processes. With the rxdb electron plugin you can create a remote RxStorage and consume it from the renderer process.
+To use RxDB in [electron](./electron-database.md), it is recommended to run the RxStorage in the main process and the RxDatabase in the renderer processes. With the rxdb electron plugin you can create a [remote RxStorage](./rx-storage-remote.md) and consume it from the renderer process.
 
 To do this in a convenient way, the RxDB electron plugin provides the helper functions `exposeIpcMainRxStorage` and `getRxStorageIpcRenderer`.
 Similar to the [Worker RxStorage](./rx-storage-worker.md), these wrap any other [RxStorage](./rx-storage.md) once in the main process and once in each renderer process. In the renderer you can then use the storage to create a [RxDatabase](./rx-database.md) which communicates with the storage of the main process to store and query data.
@@ -50,6 +52,16 @@ const db = await createRxDatabase({
 /* ... */
 ```
 
+
+## FAQ
+
+<Faq>
+<FaqItem question="How to securely create an offline-first desktop app with Electron.js?">
+
+You securely create an offline-first Electron application by maintaining strict process isolation: the primary database connection runs securely within the hidden Node.js `main` process, while the vulnerable DOM execution runs in the heavily-restricted `renderer` process. **[RxDB](https://rxdb.info)** automates this architecture precisely via its dedicated Electron IPC plugin (`exposeIpcMainRxStorage`), enabling seamless, non-blocking data synchronization across the IPC boundary while mitigating direct local filesystem exposure to malicious client payloads.
+
+</FaqItem>
+</Faq>
 
 ## Related
 

@@ -18,7 +18,8 @@ import {
     RxStorageCountResult,
     promiseWait,
     getQueryMatcher,
-    PreparedQuery
+    PreparedQuery,
+    hasPremiumFlag
 } from '../../index.ts';
 import { BehaviorSubject, Observable, Subject, filter, firstValueFrom } from 'rxjs';
 import type { RxStorageSQLiteTrial } from './index.ts';
@@ -42,8 +43,24 @@ import type {
 } from './sqlite-types.ts';
 import { getSortComparator } from '../../rx-query-helper.ts';
 import { newRxError } from '../../rx-error.ts';
-
+let shownNonPremiumLog = false;
 let instanceId = 0;
+
+/**
+ * Limits of the free trial SQLite storage.
+ * Reaching them throws an error, see the error codes SQL2 and SQL3.
+ * Deleted documents are kept as tombstones for the replication but do
+ * NOT count towards the document limit.
+ * Use the premium SQLite storage to remove these limits:
+ * @link https://rxdb.info/premium/
+ */
+export const TRIAL_SQLITE_DOCUMENT_LIMIT = 500;
+export const TRIAL_SQLITE_OPERATION_LIMIT = 500;
+/**
+ * Ratio of the limits at which a loud warning is logged on each write.
+ */
+const TRIAL_SQLITE_WARN_RATIO = 0.8;
+
 export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
     RxDocType,
     SQLiteInternals,
@@ -96,7 +113,7 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
         }
 
         this.opCount = this.opCount + 1;
-        if (this.opCount > 110) {
+        if (this.opCount > TRIAL_SQLITE_OPERATION_LIMIT) {
             throw newRxError('SQL3');
         }
 
@@ -117,6 +134,27 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
         };
         const writePromises: Promise<any>[] = [];
         let categorized: CategorizeBulkWriteRowsOutput<RxDocType> = {} as any;
+
+        const isPremium = await hasPremiumFlag();
+        if (
+            !shownNonPremiumLog &&
+            !isPremium
+        ) {
+            console.warn(
+                [
+                    '-------------- RxDB SQLite Trial Storage ---------------------------------',
+                    'You are using the free *trial* SQLite-based RxStorage implementation: https://rxdb.info/rx-storage-sqlite.html?console=sqlite-trial',
+                    'This storage is intended only for evaluation purposes and comes with strict limitations (no indexes, no attachments, and a ~500-document cap).',
+                    'For production use and optimal performance, we strongly recommend upgrading to the premium SQLite storage.',
+                    'Premium version: https://rxdb.info/premium/?console=sqlite',
+                    'If you already have premium access, you can disable this message by calling setPremiumFlag() from rxdb-premium/plugins/shared.',
+                    '----------------------------------------------------------------------------'
+                ].join('\n')
+            );
+            shownNonPremiumLog = true;
+        } else {
+            shownNonPremiumLog = true;
+        }
 
         await sqliteTransaction(
             database,
@@ -153,7 +191,55 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
                 );
                 ret.error = categorized.errors;
 
-                if ((result.length + categorized.bulkInsertDocs.length) > 300) {
+                /**
+                 * Deleted documents are kept as tombstones for the replication
+                 * but must NOT count towards the trial document limit.
+                 * Therefore we count the resulting amount of non-deleted documents.
+                 */
+                let liveDocCount = 0;
+                docsInDb.forEach(doc => {
+                    if (!doc._deleted) {
+                        liveDocCount = liveDocCount + 1;
+                    }
+                });
+                categorized.bulkInsertDocs.forEach(row => {
+                    if (!row.document._deleted) {
+                        liveDocCount = liveDocCount + 1;
+                    }
+                });
+                categorized.bulkUpdateDocs.forEach(row => {
+                    const previous = docsInDb.get(row.document[this.primaryPath]);
+                    const wasLive = !!previous && !previous._deleted;
+                    const isLive = !row.document._deleted;
+                    if (wasLive && !isLive) {
+                        liveDocCount = liveDocCount - 1;
+                    } else if (!wasLive && isLive) {
+                        liveDocCount = liveDocCount + 1;
+                    }
+                });
+
+                if (
+                    !isPremium &&
+                    (
+                        liveDocCount >= Math.floor(TRIAL_SQLITE_DOCUMENT_LIMIT * TRIAL_SQLITE_WARN_RATIO) ||
+                        this.opCount >= Math.floor(TRIAL_SQLITE_OPERATION_LIMIT * TRIAL_SQLITE_WARN_RATIO)
+                    )
+                ) {
+                    console.warn(
+                        [
+                            '-------------- RxDB SQLite Trial Storage - Limit Almost Reached ----------------',
+                            'You are close to the limits of the free *trial* SQLite RxStorage.',
+                            'Current usage: ' + liveDocCount + ' / ' + TRIAL_SQLITE_DOCUMENT_LIMIT + ' documents and ' +
+                            this.opCount + ' / ' + TRIAL_SQLITE_OPERATION_LIMIT + ' operations.',
+                            'When a limit is reached, your read and write operations will start to throw errors.',
+                            'Upgrade to the premium SQLite storage to remove these limits and get full performance:',
+                            'https://rxdb.info/premium/?console=sqlite-trial-limit',
+                            '--------------------------------------------------------------------------------'
+                        ].join('\n')
+                    );
+                }
+
+                if (liveDocCount > TRIAL_SQLITE_DOCUMENT_LIMIT) {
                     throw newRxError('SQL2');
                 }
 
@@ -233,7 +319,12 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
         let result: RxDocumentData<RxDocType>[] = [];
         const query = originalPreparedQuery.query;
         const skip = query.skip ? query.skip : 0;
-        const limit = query.limit ? query.limit : Infinity;
+        /**
+         * Use typeof so an explicit `limit: 0` from the mango query is
+         * honored. The previous truthy check treated `0` as "no limit"
+         * and returned all matching documents.
+         */
+        const limit = typeof query.limit === 'number' ? query.limit : Infinity;
         const skipPlusLimit = skip + limit;
         const queryMatcher = getQueryMatcher(
             this.schema,
@@ -281,7 +372,7 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
         const database = await this.internals.databasePromise;
 
         if (this.closed) {
-            throw new Error('SQLite.findDocumentsById() already closed ' + this.tableName + ' context: ' + context);
+            throw new Error('SQLite.findDocumentsById() already closed ' + this.tableName);
         }
 
         const result = await this.all(
@@ -347,7 +438,7 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
         return true;
     }
 
-    async getAttachmentData(_documentId: string, _attachmentId: string): Promise<string> {
+    async getAttachmentData(_documentId: string, _attachmentId: string): Promise<Blob> {
         throw newRxError('SQL1');
     }
 
@@ -356,20 +447,34 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
             throw new Error('closed already');
         }
         const database = await this.internals.databasePromise;
-        const promises = [
-            this.run(
-                database,
-                {
-                    query: `DROP TABLE IF EXISTS "${this.tableName}"`,
-                    params: [],
-                    context: {
-                        method: 'remove',
-                        data: this.tableName
+        /**
+         * The DROP TABLE must run inside of a transaction so that it
+         * goes through TX_QUEUE_BY_DATABASE. All storage instances of one
+         * database share a single connection and adapters like expo-sqlite
+         * throw SQLITE_LOCKED when two statements run on it at the same time.
+         */
+        await sqliteTransaction(
+            database,
+            this.sqliteBasics,
+            async () => {
+                await this.run(
+                    database,
+                    {
+                        query: `DROP TABLE IF EXISTS "${this.tableName}"`,
+                        params: [],
+                        context: {
+                            method: 'remove',
+                            data: this.tableName
+                        }
                     }
-                }
-            )
-        ];
-        await Promise.all(promises);
+                );
+                return 'COMMIT';
+            },
+            {
+                databaseName: this.databaseName,
+                collectionName: this.collectionName
+            }
+        );
         return this.close();
     }
 
@@ -383,7 +488,7 @@ export class RxStorageInstanceSQLite<RxDocType> implements RxStorageInstance<
             return this.closed;
         }
         this.closed = (async () => {
-            await firstValueFrom(this.openWriteCount$.pipe(filter(v => v === 0)));
+            await firstValueFrom(this.openWriteCount$.pipe(filter((v: number) => v === 0)));
             const database = await this.internals.databasePromise;
 
             /**

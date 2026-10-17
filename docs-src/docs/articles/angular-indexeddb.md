@@ -2,10 +2,16 @@
 title: Build Smarter Offline-First Angular Apps - How RxDB Beats IndexedDB Alone
 slug: angular-indexeddb.html
 description: Discover how to harness IndexedDB in Angular with RxDB for robust offline apps. Learn reactive queries, advanced features, and more.
+image: /headers/angular-indexeddb.jpg
 ---
+
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_BROWSER, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
 
 import {Tabs} from '@site/src/components/tabs';
 import {Steps} from '@site/src/components/steps';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Build Smarter Offline-First Angular Apps: How RxDB Beats IndexedDB Alone
 
@@ -14,9 +20,7 @@ In modern web applications, offline capabilities and fast interactions are cruci
 ## What Is IndexedDB?
 [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) is a low-level JavaScript API for client-side storage of large amounts of structured data. It allows you to create key-value or object store-based data storage right in the user's browser. IndexedDB supports transactions and indexing but lacks a robust query API and can be complex to use due to its callback-based nature.
 
-<center>
-        <img src="../files/icons/angular.svg" alt="Angular IndexedDB" width="120" />
-</center>
+<CenteredImage src="../files/icons/angular.svg" alt="Angular IndexedDB" width={120} />
 
 ## Why Use IndexedDB in Angular
 
@@ -44,17 +48,15 @@ Despite the advantages, directly working with IndexedDB has several drawbacks:
 
 - **Cross-Tab Synchronization**: Handling concurrent data changes across multiple browser tabs is difficult in IndexedDB. RxDB has built-in multi-tab support that keeps all tabs in sync.
 
-- **Advanced Features Missing**: IndexedDB lacks built-in support for encryption, compression, or other advanced data management features.
+- **Advanced Features Missing**: IndexedDB lacks built-in support for [encryption](../encryption.md), compression, or other advanced data management features.
 
-- **Browser-Only**: IndexedDB works in the browser but not in environments like React Native or Electron. RxDB offers storage adapters to seamlessly reuse the same code on different platforms.
+- **Browser-Only**: IndexedDB works in the browser but not in environments like [React Native](../react-native-database.md) or [Electron](../electron-database.md). RxDB offers storage adapters to seamlessly reuse the same code on different platforms.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Database" />
 
 ## Set Up RxDB in Angular
+
+<Steps>
 
 ### Installing RxDB
 
@@ -73,13 +75,14 @@ RxDB creates RxJS observables outside of Angular's zone, meaning Angular won't a
 /**
  * IMPORTANT: RxDB creates rxjs observables outside of Angular's zone
  * So you have to import the rxjs patch to ensure change detection works correctly.
- * @link https://www.bennadel.com/blog/3448-binding-rxjs-observable-sources-outside-of-the-ngzone-in-angular-6-0-2.htm
+ * @link https://www.bennadel.com/blog/
+ * 3448-binding-rxjs-observable-sources-
+ * outside-of-the-ngzone-in-angular-6-0-2.htm
  */
 import 'zone.js/plugins/zone-patch-rxjs';
 ```
 
 ### Create a Database and Collections
-
 
 RxDB supports multiple storage options. The free and simple approach is using the [localstorage-based](../rx-storage-localstorage.md) storage. For higher performance, there's a premium plain [IndexedDB storage](../rx-storage-indexeddb.md).
 
@@ -108,7 +111,6 @@ const heroSchema = {
   required: ['id', 'name']
 };
 ```
-
 
 <Tabs>
 
@@ -156,9 +158,7 @@ export async function initDB() {
 }
 ```
 
-
 </Tabs>
-
 
 It's recommended to encapsulate database creation logic in an Angular service, such as in a DatabaseService. A full example is available in [RxDB's Angular example](https://github.com/pubkey/rxdb/blob/master/examples/angular/src/app/services/database.service.ts).
 
@@ -189,13 +189,13 @@ const doc = await db.heroes.findOne({ selector: { name: 'Thor' } }).exec();
 await doc.remove();
 ```
 
+</Steps>
+
 ## Reactive Queries and Live Updates
 
 A key benefit of RxDB is reactivity. You can subscribe to changes and have your UI automatically reflect updates in [real time](./realtime-database.md) even across browser tabs.
 
-<p align="center">
-  <img src="../files/animations/realtime.gif" alt="realtime ui updates" width="700" />
-</p>
+<CenteredImage src="../files/animations/realtime.gif" alt="realtime ui updates" width={700} />
 
 ### With RxJS Observables and Async Pipes
 
@@ -222,13 +222,14 @@ constructor(private dbService: DatabaseService) {
 
 Angular Signals are a newer approach for reactivity. RxDB supports them via a [custom reactivity](../reactivity.md) factory. You can convert RxJS Observables to Signals using Angular's `toSignal`:
 
-
 ```ts
 import { RxReactivityFactory } from 'rxdb/plugins/core';
 import { Signal, untracked, Injector } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 
-export function createReactivityFactory(injector: Injector): RxReactivityFactory<Signal<any>> {
+export function createReactivityFactory(
+  injector: Injector
+): RxReactivityFactory<Signal<any>> {
   return {
     fromObservable(observable$, initialValue) {
       return untracked(() =>
@@ -275,19 +276,17 @@ const heroesSignal = database.heroes.find().$$;
 
 A comprehensive example of RxDB in an Angular application is available in the [RxDB GitHub repository](https://github.com/pubkey/rxdb/tree/master/examples/angular). It demonstrates [database](./angular-database.md) creation, queries, and Angular integration using best practices.
 
-
 ## Advanced RxDB Features
 
 Beyond simple CRUD and local data storage, RxDB supports:
 
-- **Replication**: Sync your local data with a remote database. Learn more at [RxDB Replication](https://rxdb.info/replication.html).
+- **[Replication](../replication.md)**: Sync your local data with a remote database. Learn more at [RxDB Replication](https://rxdb.info/replication.html).
 
 - **Data Migration on Schema Changes**: RxDB supports automatic or manual schema migrations to manage backward-compatibility and evolve your data structure. See [RxDB Migration](https://rxdb.info/migration-schema.html).
 
 - **Encryption**: Easily encrypt sensitive data at rest. See [RxDB Encryption](https://rxdb.info/encryption.html).
 
-- **Compression**: Reduce storage and bandwidth usage using key compression. Learn more at [RxDB Key Compression](https://rxdb.info/key-compression.html).
-
+- **Compression**: Reduce storage and bandwidth usage using [key compression](../key-compression.md). Learn more at [RxDB Key Compression](https://rxdb.info/key-compression.html).
 
 ## Limitations of IndexedDB
 
@@ -297,8 +296,6 @@ While IndexedDB works well for many use cases, it does have a few constraints:
 
 - **Storage Limits**: Browsers may cap the amount of data you can store in IndexedDB. For more info, see [Local Storage Limits of IndexedDB](./indexeddb-max-storage-limit.md).
 
-
-
 ## Alternatives to IndexedDB
 
 Depending on your needs, you might explore:
@@ -307,14 +304,20 @@ Depending on your needs, you might explore:
 
 - **SQLite**: When building a mobile or hybrid app (e.g., with [Capacitor](../capacitor-database.md) or [Ionic](./ionic-database.md)), you can use SQLite locally. See [RxDB with SQLite](../rx-storage-sqlite.md).
 
-
 ## Performance comparison with other browser storages
 Here is a [performance overview](../rx-storage-performance.md) of the various browser based storage implementation of RxDB:
 
-<p align="center">
-  <img src="../files/rx-storage-performance-browser.png" alt="RxStorage performance - browser" width="700" />
-</p>
+<PerformanceChart title="Browser Storages" data={PERFORMANCE_DATA_BROWSER} metrics={PERFORMANCE_METRICS} />
 
+## FAQ
+
+<Faq>
+<FaqItem question="How do I properly use IndexedDB in an Angular application?">
+
+You should avoid interacting with the raw IndexedDB callback API inside Angular components. Instead, you wrap IndexedDB in a reactive abstraction like **[RxDB](https://rxdb.info)**. RxDB seamlessly translates IndexedDB data changes into standard RxJS Observables. By configuring a custom reactivity factory with `toSignal` from `@angular/core/rxjs-interop`, you can extract pure Angular Signals straight from local IndexedDB queries, guaranteeing extremely fast and fully reactive UI renders.
+
+</FaqItem>
+</Faq>
 
 ## Follow Up
 

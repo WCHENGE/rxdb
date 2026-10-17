@@ -2,53 +2,51 @@
 
 This list contains things that have to be done but will create breaking changes.
 
-## Limit the maximum length of indexed strings
+## sortObject() performance improvements
 
-Some people set a really big value like `10000000` for convenience. But this will break on some storages or cause really bad performance. Indexed strings should have a limit of like 500 chars because otherwise it makes no sense to index them anyways. Add this check in dev-mode.
+https://github.com/pubkey/rxdb/pull/9153
 
+## Schema normalization must not depend on the device locale
 
-## Do not require WeakRef types
+`sortObject()` sorts the keys with `localeCompare()` without a fixed locale. The order, and with it the schema hash, depends on the device locale. For example in Czech and Slovak "ch" sorts after "h", so a schema with the keys `chunk_id` and `hint` gets a different hash when the device or app language changes. See https://github.com/pubkey/rxdb/issues/9128
 
-This is just another painful setup step. Find a way to not require devs to add the WeakRef types here: https://rxdb.info/tutorials/typescript.html#known-problems
+For now `addCollections()` runs a `deepEqual()` check on the stored schema when the hashes differ and does not throw `DB6` when the content is equal.
 
-## no longer ship the dist-folder in the repo
+In the next major:
+- Change the normalization in `sortObject()` to no longer use `localeCompare()`, for example a plain code unit comparison (`a < b`). This is faster and does not depend on the locale, but it changes the hash of existing schemas, which is why it is a breaking change.
+- Remove the `deepEqual()` fallback check in `addCollections()` again.
 
-Same for /docs, use a different branch for that.
+## Add end-to-end TypeScript typings for mango queries
 
-## Add `context` string to all write errors
-We already pass the context string to `storageInstance.bulkWrite()` and when we include it into bulk-write errors, debugging becomes way easier.
+https://github.com/pubkey/rxdb/pull/8941
 
-## Add databaseNamePrefix to premium sqlite storage
+## Replace `simple-peer` with `@thaunknown/simple-peer`
 
-## Merge memory-mapped fix BREAKING: deleted docs must be purged
+The `simple-peer` package that the [WebRTC replication](https://rxdb.info/replication-webrtc.html), the Google Drive replication and the Microsoft OneDrive replication use is unmaintained. Its last release was `9.11.1` in February 2022 and its repository has over 100 open issues. It depends on `buffer`, `readable-stream`, `randombytes`, `get-browser-rtc`, `queue-microtask`, `err-code` and `debug`, and those Node.js shims are what reaches the users:
 
-https://github.com/pubkey/rxdb-premium-dev/pull/480
+- https://github.com/pubkey/rxdb/issues/8605 `ReferenceError: global is not defined` from `randombytes`, which breaks Angular builds.
+- https://github.com/pubkey/rxdb/issues/4960 `Cannot read properties of undefined (reading 'call') at _Peer.Readable`.
+- https://github.com/pubkey/rxdb/issues/7365 npm audit reports `rxdb -> Depends on vulnerable versions of simple-peer`.
+- The error code `RC7` exists only to tell people that `simple-peer` needs `process.nextTick()` to be polyfilled.
+- `createSimplePeerWrtc()` exists only to work around `simple-peer` mutating the `RTCSessionDescription` objects of WebRTC polyfills.
 
-## Merge OPFS fix BREAKING: FIX memory and cleanup leak
+[@thaunknown/simple-peer](https://www.npmjs.com/package/@thaunknown/simple-peer) is an API compatible fork that is still released. It is ESM, replaces `readable-stream` and `buffer` with `streamx` and `Uint8Array`, and has a `lite.js` entry point that contains only the data channel code and not the MediaStream handling, which is the only part that RxDB uses.
 
-https://github.com/pubkey/rxdb-premium-dev/pull/477
+RxDB only uses `new Peer({initiator, config, trickle})`, the `signal`, `connect`, `data`, `close` and `error` events and `.signal()`, `.send()` and `.destroy()`, so the swap itself is small. These things were found while trying it out and have to be handled:
 
-## `toggleOnDocumentVisible` should default to `true`
+- **It must be an optional peer dependency**, like `firebase` and `mongodb`. The fork depends on `webrtc-polyfill`, which depends on `node-datachannel`, a native NAPI addon with an install script. As a normal dependency that native install runs on every `npm install rxdb`, browser only apps included. Requiring the install is the main reason why this is a breaking change.
+- **It can never be loaded with `require()`.** `webrtc-polyfill` has no `require` condition in its `exports` map, which fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`, and `webrtc-polyfill/lib/Blob.js` starts with a top-level await, which fails with `ERR_REQUIRE_ASYNC_MODULE` on every Node.js version. Raising the `engines` field does not help. It has to be loaded with a dynamic `import()`, which babel and tsx both leave untouched, otherwise `require('rxdb/plugins/replication-webrtc')` breaks in the CommonJS build. The testcases of the Google Drive and OneDrive replication run through tsx and are affected the same way.
+- **The `data` event emits `Uint8Array` instead of a Node.js `Buffer`.** All three call sites decode the payload with `toString()` or `+ ''`, which on a `Uint8Array` returns the comma separated byte values instead of the JSON string. They have to decode with a `TextDecoder`, otherwise every message fails to parse.
+- **React Native still needs a WebRTC implementation.** The fork removed the `wrtc` option and reads the api from `webrtc-polyfill`, which covers browsers with the native api and Node.js with `node-datachannel`. React Native is neither and `webrtc-polyfill` has no `react-native` export condition. Because the fork reads the api from the global scope once at load time, the `wrtc` option can be kept working by writing it to the global scope right before the lazy `import()`. On top of that, Metro has to be told to resolve `webrtc-polyfill` to its browser build, otherwise it picks the Node.js one with the native module.
+- `RC7` and `ensureProcessNextTickIsSet()` can be removed. `streamx` uses `queueMicrotask()`.
+- `@types/simple-peer` can be dropped, but the fork ships no types, so the used part of the api has to be declared. Declaring only the used part narrows the public `SimplePeer` type, which breaks the builds of people who call other methods on the peers from `connect$` and `message$`.
+- `@thaunknown/simple-peer` has to be added to the ignored modules of the `test:deps` script, next to `ws`, because `dependency-check` only detects static imports.
 
-https://github.com/pubkey/rxdb/issues/6810
-
-## Final fields should not be automatically required
-
-https://discord.com/channels/969553741705539624/1237000453791678487/threads/1327921349808885831
-
-## Move `final` definitions to the top level
-
-This should be done similar to where indexes or `encryption` fields are defined. This would 
-then allow to have `final` be also set for nested properties.
+A full implementation with green CI is at https://github.com/pubkey/rxdb/pull/8900
 
 
 ---------------------------------
 ## Maybe later (not sure if should be done)
-
-
-## Suggestions from #6787
-
-See https://github.com/pubkey/rxdb/pull/6787
 
 
 ## Do not allow type mixing

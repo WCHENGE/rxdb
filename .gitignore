@@ -13,6 +13,8 @@ processed.txt
 config/isolate-*
 config/log.txt
 config/pouch__all_dbs__/
+config/supabase/.branches/
+config/supabase/.temp/
 pouch__all_dbs__/
 pouch__all_dbs__/
 .DS_Store
@@ -21,7 +23,15 @@ pouch__all_dbs__/
 isolate-*
 release-body.md
 /test-db-*
-dist/typings
+dist/
+# only the generated plugins folder in the root, not src/plugins/
+/plugins/
 *-debug.log
 .vscode
 ai-context.txt
+docs-src/static/files/video-thumbnails/
+ERROR-MESSAGES.md
+.chrome-profile-perf/
+/docs/
+rxdb-sbom.cdx.json
+rxdb-sbom.spdx.json

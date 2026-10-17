@@ -3,7 +3,7 @@ import {
     first
 } from 'rxjs/operators';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemaObjects,
     schemas,
@@ -20,7 +20,7 @@ import {
 
 
 describe('hooks.test.js', () => {
-    describeParallel('get/set', () => {
+    describe('get/set', () => {
         it('should set a hook', async () => {
             const c = await humansCollection.create(0);
             c.preSave(function () { }, false);
@@ -43,7 +43,7 @@ describe('hooks.test.js', () => {
             c.database.close();
         });
     });
-    describeParallel('insert', () => {
+    describe('insert', () => {
         describe('pre', () => {
             describe('positive', () => {
                 it('series', async () => {
@@ -182,7 +182,7 @@ describe('hooks.test.js', () => {
             });
         });
     });
-    describeParallel('save', () => {
+    describe('save', () => {
         describe('pre', () => {
             describe('positive', () => {
                 it('series', async () => {
@@ -304,11 +304,28 @@ describe('hooks.test.js', () => {
                     assert.strictEqual(count, 1);
                     c.database.close();
                 });
+                it('should receive the RxDocument instance as second argument', async () => {
+                    const c = await humansCollection.createPrimary(0);
+                    const human = schemaObjects.simpleHumanData();
+                    await c.insert(human);
+                    const doc = await c.findOne(human.passportId).exec(true);
+                    let count = 0;
+                    let receivedInstance: any;
+                    c.postSave(function (data, instance) {
+                        receivedInstance = instance;
+                        count++;
+                    }, false);
+                    await doc.incrementalPatch({ firstName: 'foobar' });
+                    assert.strictEqual(count, 1);
+                    assert.ok(isRxDocument(receivedInstance));
+                    assert.strictEqual(receivedInstance.primary, human.passportId);
+                    c.database.close();
+                });
             });
             describe('negative', () => { });
         });
     });
-    describeParallel('remove', () => {
+    describe('remove', () => {
         describe('pre', () => {
             describe('positive', () => {
                 it('series', async () => {
@@ -469,7 +486,7 @@ describe('hooks.test.js', () => {
             describe('negative', () => { });
         });
     });
-    describeParallel('postCreate', () => {
+    describe('postCreate', () => {
         describe('positive', () => {
             it('should define a getter', async () => {
                 const db = await createRxDatabase({
@@ -523,7 +540,7 @@ describe('hooks.test.js', () => {
             });
         });
     });
-    describeParallel('issues', () => {
+    describe('issues', () => {
         it('ISSUE #158 : Throwing error in async preInsert does not prevent insert', async () => {
             const c = await humansCollection.create(0);
             c.preInsert(async function () {
@@ -541,6 +558,59 @@ describe('hooks.test.js', () => {
             const allDocs = await c.find().exec();
             assert.strictEqual(allDocs.length, 0);
             c.database.close();
+        });
+        it('should auto-generate composite primary key when set in preInsert hook', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                multiInstance: true
+            });
+            const collections = await db.addCollections({
+                humans: {
+                    schema: {
+                        version: 0,
+                        primaryKey: {
+                            key: 'id',
+                            fields: ['name', 'number'],
+                            separator: '|'
+                        },
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            name: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            number: {
+                                type: 'integer',
+                                minimum: 0,
+                                maximum: 9999
+                            }
+                        },
+                        required: [
+                            'id',
+                            'name',
+                            'number'
+                        ]
+                    }
+                }
+            });
+            const collection = collections.humans;
+
+            collection.preInsert((docData) => {
+                docData.name = 'alice';
+                docData.number = 5;
+            }, false);
+
+            const doc = await collection.insert({} as any);
+            assert.strictEqual(doc.id, 'alice|5');
+            assert.strictEqual(doc.name, 'alice');
+            assert.strictEqual(doc.number, 5);
+
+            db.close();
         });
     });
 });

@@ -2,15 +2,16 @@
 title: RxDocument
 slug: rx-document.html
 description: Master RxDB's RxDocument - Insert, find, update, remove, and more for streamlined data handling in modern apps.
+image: /headers/rx-document.jpg
 ---
 
 # RxDocument
-A RxDocument is a object which represents the data of a single JSON document is stored in a collection. It can be compared to a single record in a relational database table. You get an `RxDocument` either as return on inserts/updates, or as result-set of [queries](./rx-query.md).
+An RxDocument is an object which represents the data of a single JSON document stored in a [collection](./rx-collection.md). It can be compared to a single record in a relational database table. You get an `RxDocument` either as return on inserts/updates, or as result-set of [queries](./rx-query.md).
 
 RxDB works on RxDocuments instead of plain JSON data to have more convenient operations on the documents. Also Documents that are fetched multiple times by different queries or operations are automatically de-duplicated by RxDB in memory.
 
 ## insert
-To insert a document into a collection, you have to call the collection's .insert()-function.
+To insert a document into a collection, you have to call the collection's `.insert()` function.
 ```js
 await myCollection.insert({
   name: 'foo',
@@ -19,7 +20,7 @@ await myCollection.insert({
 ```
 
 ## find
-To find documents in a collection, you have to call the collection's .find()-function. [See RxQuery](./rx-query.md).
+To find documents in a collection, you have to call the collection's `.find()` function. [See RxQuery](./rx-query.md).
 ```js
 const docs = await myCollection.find().exec(); // <- find all documents
 ```
@@ -37,11 +38,11 @@ const name = myDocument.name;
 ```
 
 ### get$()
-This function returns an observable of the given paths-value.
+This function returns an observable of the given path's value.
 The current value of this path will be emitted each time the document changes.
 ```js
 // get the live-updating value of 'name'
-var isName;
+let isName;
 myDocument.get$('name')
   .subscribe(newName => {
     isName = newName;
@@ -61,13 +62,13 @@ myDocument.name$
 
 
 ### proxy-get
-All properties of a `RxDocument` are assigned as getters so you can also directly access values instead of using the get()-function.
+All properties of an `RxDocument` are assigned as getters so you can also directly access values instead of using the get()-function.
 
 ```js
   // Identical to myDocument.get('name');
-  var name = myDocument.name;
+  const name = myDocument.name;
   // Can also get nested values.
-  var nestedValue = myDocument.whatever.nestedfield;
+  const nestedValue = myDocument.whatever.nestedfield;
 
   // Also usable with observables:
   myDocument.firstName$.subscribe(newName => console.log('name is: ' + newName));
@@ -77,7 +78,7 @@ All properties of a `RxDocument` are assigned as getters so you can also directl
 ```
 
 ### update()
-Updates the document based on the [mongo-update-syntax](https://docs.mongodb.com/manual/reference/operator/update-field/), based on the [mingo library](https://github.com/kofrasa/mingo#updating-documents).
+Updates the document based on the [Mongo update syntax](https://docs.mongodb.com/manual/reference/operator/update-field/), based on the [mingo library](https://github.com/kofrasa/mingo#updating-documents).
 
 ```js
 
@@ -99,7 +100,7 @@ await myDocument.update({
 ```
 
 ### modify()
-Updates a documents data based on a function that mutates the current data and returns the new value.
+Updates a document's data based on a function that mutates the current data and returns the new value.
 
 ```js
 
@@ -114,7 +115,7 @@ console.log(myDocument.name); // 'foooobarNew'
 
 ### patch()
 
-Overwrites the given attributes over the documents data.
+Overwrites the given attributes in the document's data.
 
 ```js
 await myDocument.patch({
@@ -125,9 +126,9 @@ console.log(myDocument.name); // 'Steve'
 ```
 
 
-### Prevent conflicts with the incremental methods
+### Prevent conflicts with the incremental methods {#incrementalModify}
 
-Making a normal change to the non-latest version of a `RxDocument` will lead to a `409 CONFLICT` error because RxDB
+Making a normal change to the non-latest version of an `RxDocument` will lead to a `409 CONFLICT` error because RxDB
 uses [revision checks](./transactions-conflicts-revisions.md) instead of transactions.
 
 To make a change to a document, no matter what the current state is, you can use the `incremental` methods:
@@ -172,10 +173,8 @@ const latestDoc = myDocument.getLatest();
 console.log(docAfterEdit === latestDoc); // > true
 ```
 
-
-
-### Observe $
-Calling this will return an [RxJS-Observable](https://rxjs.dev/guide/observable) which the current newest state of the RxDocument.
+### Observe $ {#observe}
+Calling this will return an [RxJS Observable](https://rxjs.dev/guide/observable) which emits the current newest state of the RxDocument.
 
 ```js
 // get all changeEvents
@@ -192,7 +191,7 @@ myDocument.remove();
 
 ### Remove and update in a single atomic operation
 
-Sometimes you want to change a documents value and also remove it in the same operation. For example this can be useful when you use [replication](./replication.md) and want to set a `deletedAt` timestamp. Then you might have to ensure that setting this timestamp and deleting the document happens in the same atomic operation.
+Sometimes you want to change a document's value and also remove it in the same operation. For example this can be useful when you use [replication](./replication.md) and want to set a `deletedAt` timestamp. Then you might have to ensure that setting this timestamp and deleting the document happens in the same atomic operation.
 
 To do this the modifying operations of a document accept setting the `_deleted` field. For example:
 
@@ -248,7 +247,7 @@ console.log(myDocument.deleted);
 
 ### toJSON()
 
-Returns the document's data as plain json object. This will return an **immutable** object. To get something that can be modified, use `toMutableJSON()` instead.
+Returns the document's data as plain JSON object. This will return an **immutable** object. To get something that can be modified, use `toMutableJSON()` instead.
 
 ```js
 const json = myDocument.toJSON();
@@ -260,7 +259,7 @@ console.dir(json);
 */
 ```
 
-You can also set `withMetaFields: true` to get additional meta fields like the revision, attachments or the deleted flag.
+You can also set `withMetaFields: true` to get additional meta fields like the revision, [attachments](./rx-attachment.md) or the deleted flag.
 
 ```js
 const json = myDocument.toJSON(true);
@@ -277,7 +276,7 @@ console.dir(json);
 ### toMutableJSON()
 
 Same as `toJSON()` but returns a deep cloned object that can be mutated afterwards.
-Remember that deep cloning is performance expensive and should only be done when necessary.
+Remember that deep cloning is expensive and should only be done when necessary.
 
 
 ```js
@@ -288,7 +287,7 @@ json.firstName = 'Alice'; // The returned document can be mutated
 
 
 :::note All methods of RxDocument are bound to the instance
-When you get a method from a `RxDocument`, the method is automatically bound to the documents instance. This means you do not have to use things like `myMethod.bind(myDocument)` like you would do in jsx.
+When you get a method from a `RxDocument`, the method is automatically bound to the document's instance. This means you do not have to use things like `myMethod.bind(myDocument)` like you would do in jsx.
 :::
 
 ### isRxDocument
@@ -296,3 +295,31 @@ Returns true if the given object is an instance of RxDocument. Returns false if 
 ```js
 const is = isRxDocument(myObj);
 ```
+
+## Document Lifetime and Immutability
+
+**RxDocument instances are immutable.** Each instance represents a snapshot of the document at the time it was fetched or last written. Modifying a document does not update existing instances of it - it creates a new `RxDocument` instance with the updated data. The old instance retains its original data.
+
+```js
+const doc = await myCollection.findOne('foobar').exec();
+console.log(doc.age); // 10
+
+await doc.incrementalPatch({ age: 20 });
+
+// The original instance still has the old data
+console.log(doc.age); // 10
+
+// Use getLatest() to get the updated state
+console.log(doc.getLatest().age); // 20
+```
+
+**RxDB de-duplicates document instances.** When the same document is fetched multiple times without any writes in between, RxDB returns the same instance to save memory. Once a write occurs, subsequent fetches return a new instance reflecting the updated state.
+
+**Calling non-incremental write methods on an outdated instance throws a `CONFLICT` error.** If you hold a reference to a document and another operation modifies that document in the meantime, calling `.patch()`, `.update()`, or `.modify()` on the outdated instance will fail with a conflict error. See [Transactions, Conflicts and Revisions](./transactions-conflicts-revisions.md) for details on how RxDB handles conflicts.
+
+To avoid this, either:
+- Use the [incremental methods](#incrementalModify) (`incrementalPatch`, `incrementalModify`, `incrementalUpdate`) which always fetch the latest state before applying changes.
+- Call `getLatest()` to get the current state before writing.
+- Re-query the collection to get a fresh document.
+
+**How long to keep a reference to an `RxDocument`.** Treat an `RxDocument` like plain JSON data - it is a snapshot valid at the time of retrieval. RxDB manages query result caching internally via [event-reduce](./rx-query.md), so you do not need to cache documents yourself. For components that display document data and need live updates, subscribe to the document's `$` observable instead of holding a static reference.

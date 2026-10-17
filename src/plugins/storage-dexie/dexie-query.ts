@@ -82,7 +82,12 @@ export async function dexieQuery<RxDocType>(
     const query = preparedQuery.query;
 
     const skip = query.skip ? query.skip : 0;
-    const limit = query.limit ? query.limit : Infinity;
+    /**
+     * Use typeof so an explicit `limit: 0` from the mango query is
+     * honored. The previous truthy check treated `0` as "no limit"
+     * and returned all matching documents.
+     */
+    const limit = typeof query.limit === 'number' ? query.limit : Infinity;
     const skipPlusLimit = skip + limit;
     const queryPlan = preparedQuery.queryPlan;
 
@@ -93,11 +98,19 @@ export async function dexieQuery<RxDocType>(
             preparedQuery.query
         );
     }
-    const keyRange = getKeyRangeByQueryPlan(
-        state.booleanIndexes,
-        queryPlan,
-        (state.dexieDb as any)._options.IDBKeyRange
-    );
+    let keyRange;
+    try {
+        keyRange = getKeyRangeByQueryPlan(
+            state.booleanIndexes,
+            queryPlan,
+            (state.dexieDb as any)._options.IDBKeyRange
+        );
+    } catch (err: any) {
+        if (err.name === 'DataError') {
+            return { documents: [] };
+        }
+        throw err;
+    }
 
     const queryPlanFields: string[] = queryPlan.index;
 
@@ -105,7 +118,7 @@ export async function dexieQuery<RxDocType>(
     await state.dexieDb.transaction(
         'r',
         state.dexieTable,
-        async (dexieTx) => {
+        async (dexieTx: any) => {
             /**
              * Here we use the native IndexedDB transaction
              * to get the cursor.
@@ -203,16 +216,24 @@ export async function dexieCount<RxDocType>(
     const queryPlan = preparedQuery.queryPlan;
     const queryPlanFields: string[] = queryPlan.index;
 
-    const keyRange = getKeyRangeByQueryPlan(
-        state.booleanIndexes,
-        queryPlan,
-        (state.dexieDb as any)._options.IDBKeyRange
-    );
+    let keyRange;
+    try {
+        keyRange = getKeyRangeByQueryPlan(
+            state.booleanIndexes,
+            queryPlan,
+            (state.dexieDb as any)._options.IDBKeyRange
+        );
+    } catch (err: any) {
+        if (err.name === 'DataError') {
+            return 0;
+        }
+        throw err;
+    }
     let count: number = -1;
     await state.dexieDb.transaction(
         'r',
         state.dexieTable,
-        async (dexieTx) => {
+        async (dexieTx: any) => {
             const tx = (dexieTx as any).idbtrans;
             const store = tx.objectStore(DEXIE_DOCS_TABLE_NAME);
             let index: any;

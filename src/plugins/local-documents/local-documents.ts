@@ -60,24 +60,52 @@ export async function insertLocal<DocData extends Record<string, any> = any, Rea
  * save the local-document-data
  * overwrites existing if exists
  */
-export function upsertLocal<DocData extends Record<string, any> = any, Reactivity = unknown>(
+export async function upsertLocal<DocData extends Record<string, any> = any, Reactivity = unknown>(
     this: any,
     id: string,
     data: DocData
 ): Promise<RxLocalDocument<DocData, any, Reactivity>> {
-    return this.getLocal(id)
-        .then((existing: RxDocument) => {
-            if (!existing) {
+    const state = await getLocalDocStateByParent(this);
+    while (true) {
+        try {
+            const docDataFromCache = state.docCache.getLatestDocumentDataIfExists(id);
+
+            if (!docDataFromCache) {
                 // create new one
-                const docPromise = this.insertLocal(id, data);
-                return docPromise;
+                return await this.insertLocal(id, data);
+            } else if (docDataFromCache._deleted) {
+                // document was deleted before, un-delete it via the write queue
+                const writeResult = await state.incrementalWriteQueue.addWrite(
+                    docDataFromCache,
+                    (docData: any) => {
+                        docData.data = data;
+                        docData._deleted = false;
+                        return docData;
+                    }
+                );
+                return state.docCache.getCachedRxDocument(writeResult) as any;
             } else {
                 // update existing
-                return existing.incrementalModify(() => {
+                const existing = state.docCache.getCachedRxDocument(docDataFromCache) as any;
+                return await existing.incrementalModify(() => {
                     return data;
                 });
             }
-        });
+        } catch (err: any) {
+            if (err && err.status === 409) {
+                if (err.documentInDb) {
+                    state.docCache.getCachedRxDocument(err.documentInDb);
+                } else {
+                    const latestDoc = await getSingleDocument(state.storageInstance, id);
+                    if (latestDoc) {
+                        state.docCache.getCachedRxDocument(latestDoc);
+                    }
+                }
+                continue;
+            }
+            throw err;
+        }
+    }
 }
 
 export async function getLocal<DocData = any, Reactivity = unknown>(this: any, id: string): Promise<RxLocalDocument<DocData, any, Reactivity> | null> {
@@ -87,6 +115,9 @@ export async function getLocal<DocData = any, Reactivity = unknown>(this: any, i
     // check in doc-cache
     const found = docCache.getLatestDocumentDataIfExists(id);
     if (found) {
+        if (found._deleted) {
+            return null;
+        }
         return Promise.resolve(
             docCache.getCachedRxDocument(found) as any
         );
@@ -117,7 +148,7 @@ export function getLocal$<DocData = any, Reactivity = unknown>(this: RxCollectio
                 };
             }
         }),
-        mergeMap(async (changeEventOrDoc) => {
+        mergeMap(async (changeEventOrDoc: { changeEvent?: RxChangeEvent<RxLocalDocumentData>; doc?: any }) => {
             if (changeEventOrDoc.changeEvent) {
                 const cE = changeEventOrDoc.changeEvent;
                 if (!cE.isLocal || cE.documentId !== id) {
@@ -138,8 +169,8 @@ export function getLocal$<DocData = any, Reactivity = unknown>(this: RxCollectio
                 };
             }
         }),
-        filter(filterFlagged => filterFlagged.use),
-        map(filterFlagged => {
+        filter((filterFlagged: { use: boolean; doc?: any }) => filterFlagged.use),
+        map((filterFlagged: { use: boolean; doc?: any }) => {
             return filterFlagged.doc as any;
         })
     );

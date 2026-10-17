@@ -1,11 +1,13 @@
 ---
 title: ORM
 slug: orm.html
+description: Add ORM capabilities to RxDB collections and documents with custom static methods, instance methods, and attachment methods for structured data access.
+image: /headers/orm.jpg
 ---
 
 # Object-Data-Relational-Mapping
 
-Like [mongoose](http://mongoosejs.com/docs/guide.html#methods), RxDB has ORM-capabilities which can be used to add specific behavior to documents and collections.
+Like [mongoose](http://mongoosejs.com/docs/guide.html#methods), RxDB has ORM capabilities which can be used to add specific behavior to documents and collections.
 
 ## statics
 
@@ -13,7 +15,7 @@ Statics are defined collection-wide and can be called on the collection.
 
 ### Add statics to a collection
 
-To add static functions, pass a `statics`-object when you create your collection. The object contains functions, mapped to their function-names.
+To add static functions, pass a `statics` object when you create your collection. The object contains functions, mapped to their function names.
 
 ```javascript
 const heroes = await myDatabase.addCollections({
@@ -31,7 +33,7 @@ console.log(heroes.scream());
 // 'AAAH!!'
 ```
 
-You can also use the this-keyword which resolves to the collection:
+You can also use the `this` keyword which resolves to the collection:
 
 ```javascript
 const heroes = await myDatabase.addCollections({
@@ -48,11 +50,11 @@ console.log(heroes.whoAmI());
 // 'heroes'
 ```
 
-## instance-methods
+## Instance Methods
 
-Instance-methods are defined collection-wide. They can be called on the RxDocuments of the collection.
+Instance methods are defined collection-wide. They can be called on the [RxDocuments](./rx-document.md) of the collection.
 
-### Add instance-methods to a collection
+### Add instance methods to a collection
 
 ```javascript
 const heroes = await myDatabase.addCollections({
@@ -70,7 +72,7 @@ console.log(doc.scream());
 // 'AAAH!!'
 ```
 
-Here you can also use the this-keyword:
+Here you can also use the `this` keyword:
 
 ```javascript
 const heroes = await myDatabase.addCollections({
@@ -93,7 +95,7 @@ console.log(doc.whoAmI());
 
 ## attachment-methods
 
-Attachment-methods are defined collection-wide. They can be called on the RxAttachments of the RxDocuments of the collection.
+Attachment methods are defined collection-wide. They can be called on the [RxAttachments](./rx-attachment.md) of the RxDocuments of the collection.
 
 ```javascript
 const heroes = await myDatabase.addCollections({

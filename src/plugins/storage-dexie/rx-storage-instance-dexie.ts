@@ -99,7 +99,6 @@ export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
          * Some storages might add any _meta fields
          * internally. To ensure RxDB can work with that in the
          * test suite, we add a random field here.
-         * To ensure 
          */
         if (this.devMode) {
             documentWrites = documentWrites.map(row => {
@@ -156,7 +155,7 @@ export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
                 }
 
                 // handle attachments
-                const putAttachments: { id: string, data: string }[] = [];
+                const putAttachments: { id: string, data: Blob }[] = [];
                 categorized.attachmentsAdd.forEach(attachment => {
                     putAttachments.push({
                         id: attachmentObjectId(attachment.documentId, attachment.attachmentId),
@@ -257,7 +256,7 @@ export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
                     .below(maxDeletionTime)
                     .toArray();
                 const removeIds: string[] = [];
-                toRemove.forEach(doc => {
+                toRemove.forEach((doc: any) => {
                     if (doc._deleted === '1') {
                         removeIds.push(doc[this.primaryPath]);
                     }
@@ -269,7 +268,7 @@ export class RxStorageInstanceDexie<RxDocType> implements RxStorageInstance<
         return true;
     }
 
-    async getAttachmentData(documentId: string, attachmentId: string, _digest: string): Promise<string> {
+    async getAttachmentData(documentId: string, attachmentId: string, _digest: string): Promise<Blob> {
         ensureNotClosed(this);
         const state = await this.internals;
         const id = attachmentObjectId(documentId, attachmentId);

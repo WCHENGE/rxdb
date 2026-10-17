@@ -6,13 +6,16 @@ import {
 } from 'rxjs';
 import { filter } from 'rxjs/operators';
 import type {
+    RxChangeEventBulk,
     RxCollection,
     RxStorageChangeEvent
 } from './types/index.d.ts';
 import {
-    appendToArray,
     requestIdlePromiseNoQueue
 } from './plugins/utils/index.ts';
+import {
+    newRxError
+} from './rx-error.ts';
 
 
 /**
@@ -49,8 +52,8 @@ export class ChangeEventBuffer<RxDocType> {
     ) {
         this.subs.push(
             this.collection.eventBulks$.pipe(
-                filter(bulk => !bulk.isLocal)
-            ).subscribe(eventBulk => {
+                filter((bulk: RxChangeEventBulk<RxDocType>) => !bulk.isLocal)
+            ).subscribe((eventBulk: RxChangeEventBulk<RxDocType>) => {
                 this.tasks.add(() => this._handleChangeEvents(eventBulk.events));
                 if (this.tasks.size <= 1) {
                     requestIdlePromiseNoQueue().then(() => {
@@ -76,7 +79,7 @@ export class ChangeEventBuffer<RxDocType> {
         if (events.length > this.limit) {
             this.buffer = events.slice(events.length * -1);
         } else {
-            appendToArray(this.buffer, events);
+            this.buffer = this.buffer.concat(events);
             this.buffer = this.buffer.slice(this.limit * -1);
         }
         const counterBase = counterBefore + 1;
@@ -140,7 +143,7 @@ export class ChangeEventBuffer<RxDocType> {
         this.processTasks();
         const ret = this.getFrom(pointer);
         if (ret === null) {
-            throw new Error('out of bounds');
+            throw newRxError('COB1');
         } else {
             ret.forEach(cE => fn(cE));
         }

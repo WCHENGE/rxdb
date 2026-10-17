@@ -2,16 +2,22 @@
 title: Empower RxDB with the LokiJS RxStorage
 slug: rx-storage-lokijs.html
 description: Discover the lightning-fast LokiJS RxStorage for RxDB. Explore in-memory speed, multi-tab support, and pros & cons of this unique storage solution.
+image: /headers/rx-storage-lokijs.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DeprecatedBlock} from '@site/src/components/deprecated-block';
 
 # RxStorage LokiJS
 
 The LokiJS RxStorage is based on [LokiJS](https://github.com/techfort/LokiJS) which is an **in-memory** database that processes all data in memory and only saves to disc when the app is closed or an interval is reached. This makes it very fast but you have the possibility to lose seemingly persisted writes when the JavaScript process ends before the persistence loop has been done.
 
 
-:::warning LokiJS was removed in RxDB version 16
+<DeprecatedBlock>
+
 The LokiJS project itself is no longer in development or maintained and therefore the lokijs RxStorage is **removed**. There are known bugs like having wrong query results of losing data. LokiJS bugs that occur outside of the RxDB layer will not be fixed and the LokiJS RxStorage was removed in RxDB version 16. Using LokiJS as storage is no longer possible. In production it is recommended to use another [RxStorage](./rx-storage.md) instead. For browsers better use the [IndexedDB](./rx-storage-indexeddb.md) storage. For fast lazy persistence in memory data (similar to how lokijs works) you can use the [Memory Mapped](./rx-storage-memory-mapped.md) storage. If you really need the lokijs RxStorage, you can fork the open-source code from the previous RxDB version.
-:::
+
+</DeprecatedBlock>
 
 ### Pros
 
@@ -20,10 +26,10 @@ The LokiJS project itself is no longer in development or maintained and therefor
 
 ### Cons
 
-- It does not support attachments.
+- It does not support [attachments](./rx-attachment.md).
 - Data can be lost when the JavaScript process is killed ungracefully like when the browser crashes or the power of the PC is terminated.
 - All data must fit into the memory.
-- Slow initialisation time when used with `multiInstance: true` because it has to await the leader election process.
+- Slow initialisation time when used with `multiInstance: true` because it has to await the [leader election](./leader-election.md) process.
 - Slow initialisation time when really much data is stored inside of the database because it has to parse a big `JSON` string.
 
 ## Usage
@@ -36,8 +42,10 @@ import {
     getRxStorageLoki
 } from 'rxdb/plugins/storage-lokijs';
 
-// in the browser, we want to persist data in IndexedDB, so we use the indexeddb adapter.
-const LokiIncrementalIndexedDBAdapter = require('lokijs/src/incremental-indexeddb-adapter');
+// in the browser, we want to persist data in
+// IndexedDB, so we use the indexeddb adapter.
+const LokiIncrementalIndexedDBAdapter =
+    require('lokijs/src/incremental-indexeddb-adapter');
 
 const db = await createRxDatabase({
     name: 'exampledb',
@@ -59,7 +67,7 @@ Find more about the possible adapters at the [LokiJS docs](https://github.com/te
 ## Multi-Tab support
 
 When you use plain LokiJS, you cannot build an app that can be used in multiple browser tabs. The reason is that LokiJS loads data in bulk and then only regularly persists the in-memory state to disc. When opened in multiple tabs, it would happen that the LokiJS instances overwrite each other and data is lost.
-With the RxDB LokiJS-plugin, this problem is fixed with the [LeaderElection](https://github.com/pubkey/broadcast-channel#using-the-leaderelection) module. Between all open tabs, a leading tab is elected and only in this tab a database is created. All other tabs do not run queries against their own database, but instead call the leading tab to send and retrieve data. When the leading tab is closed, a new leader is elected that reopens the database and processes queries. You can disable this by setting `multiInstance: false` when creating the `RxDatabase`.
+With the RxDB LokiJS-plugin, this problem is fixed with the [LeaderElection](https://github.com/pubkey/broadcast-channel#using-the-leaderelection) module. Between all open tabs, a leading tab is elected and only in this tab a database is created. All other tabs do not run queries against their own database, but instead call the leading tab to send and retrieve data. When the leading tab is closed, a new leader is elected that reopens the database and processes queries. You can disable this by setting `multiInstance: false` when creating the [RxDatabase](./rx-database.md).
 
 ## Autosave and autoload
 
@@ -133,3 +141,13 @@ If you already have premium access and want to use the LokiJS [RxStorage](./rx-s
 import { setPremiumFlag } from 'rxdb-premium/plugins/shared';
 setPremiumFlag();
 ```
+
+## FAQ
+
+<Faq>
+<FaqItem question="Is LokiJS actively maintained today?">
+
+No, the LokiJS open-source project is entirely unmaintained and abandoned by its core authors. Because of insurmountable unfixed bugs causing incorrect query matching and data loss during ungraceful process terminations, the LokiJS RxStorage adapter was officially removed from **[RxDB](./rx-database.md)** in version 16. Developers requiring extreme in-memory performance should immediately transition to the modern `getRxStorageMemory` or `getRxStorageMemoryMapped` plugins instead.
+
+</FaqItem>
+</Faq>

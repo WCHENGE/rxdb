@@ -2,18 +2,26 @@
 title: Populate and Link Docs in RxDB
 slug: population.html
 description: Learn how to reference and link documents across collections in RxDB. Discover easy population without joins and handle complex relationships.
+image: /headers/population.jpg
 ---
+
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {Population} from '@site/src/components/animations/population';
 
 # Population
 
-There are no joins in RxDB but sometimes we still want references to documents in other collections. This is where population comes in. You can specify a relation from one RxDocument to another RxDocument in the same or another RxCollection of the same database.
-Then you can get the referenced document with the population-getter.
+There are no joins in RxDB but sometimes we still want references to documents in other collections. This is where population comes in. You can specify a relation from one [RxDocument](./rx-document.md) to another [RxDocument](./rx-document.md) in the same or another [RxCollection](./rx-collection.md) of the same database.
+Then you can get the referenced document with the population getter.
 
 This works exactly like population with [mongoose](http://mongoosejs.com/docs/populate.html).
 
+<DocsAnimation subtitle="Populating referenced documents from another collection">
+<Population />
+</DocsAnimation>
+
 ## Schema with ref
 
-The `ref`-keyword in properties describes to which collection the field-value belongs to (has a relationship). 
+The `ref` keyword in properties describes to which collection the field value belongs to (has a relationship). 
 
 ```javascript
 export const refHuman = {
@@ -22,17 +30,21 @@ export const refHuman = {
     primaryKey: 'name',
     properties: {
         name: {
-            type: 'string'
+            type: 'string',
+            maxLength: 100
         },
         bestFriend: {
             ref: 'human',     // refers to collection human
-            type: 'string'    // ref-values must always be string or ['string','null'] (primary of foreign RxDocument) 
+            // ref-values must always be string
+            // or ['string', 'null']
+            // (primary of foreign RxDocument)
+            type: 'string'
         }
     }
 };
 ```
 
-You can also have a one-to-many reference by using a string-array.
+You can also have a one-to-many reference by using a string array.
 
 ```js
 export const schemaWithOneToManyReference = {
@@ -41,7 +53,8 @@ export const schemaWithOneToManyReference = {
   type: 'object',
   properties: {
     name: {
-      type: 'string'
+      type: 'string',
+      maxLength: 100
     },
     friends: {
       type: 'array',
@@ -57,8 +70,8 @@ export const schemaWithOneToManyReference = {
 ## populate()
 
 ### via method
-To get the referred RxDocument, you can use the populate()-method.
-It takes the field-path as attribute and returns a Promise which resolves to the foreign document or null if not found.
+To get the referred RxDocument, you can use the `populate()` method.
+It takes the field path as attribute and returns a Promise which resolves to the foreign document or null if not found.
 
 ```javascript
 await humansCollection.insert({
@@ -75,8 +88,8 @@ console.dir(bestFriend); //> RxDocument[Alice]
 ```
 
 ### via getter
-You can also get the populated RxDocument with the direct getter. Therefore you have to add an underscore suffix `_` to the fieldname.
-This works also on nested values.
+You can also get the populated RxDocument with the direct getter. To do this, you have to add an underscore suffix `_` to the field name.
+This also works on nested values.
 
 ```javascript
 await humansCollection.insert({
@@ -88,7 +101,7 @@ await humansCollection.insert({
   bestFriend: 'Alice'
 });
 const doc = await humansCollection.findOne('Bob').exec();
-const bestFriend = await doc.bestFriend_; // notice the underscore_
+const bestFriend = await doc.bestFriend_; // notice the underscore `_`
 console.dir(bestFriend); //> RxDocument[Alice]
 ```
 
@@ -118,6 +131,9 @@ const myCollection = await myDatabase.addCollections({
   }
 });
 
+/**
+ * We assume myDocument is a document from the collection
+ */
 const mother = await myDocument.family.mother_;
 console.dir(mother); //> RxDocument
 ```
@@ -158,6 +174,6 @@ await myCollection.insert({
 });
 
 const doc = await humansCollection.findOne('Alice').exec();
-const friends = await myDocument.friends_;
+const friends = await doc.friends_;
 console.dir(friends); //> Array.<RxDocument>
 ```

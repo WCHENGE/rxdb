@@ -1,16 +1,34 @@
 const webpack = require('webpack');
 
 
-const externals = {};
-[
+/**
+ * Only the node:-prefixed imports are replaced with an empty object.
+ * Webpack also applies object-style externals to the matching bare
+ * import (e.g. 'assert'), which would replace the browser polyfills,
+ * so a function is used that matches the exact request string.
+ */
+const nodeExternals = new Set([
     'path',
     'events',
     'url',
     'fs',
     'module',
     'http',
-    'assert'
-].forEach(k => externals['node:' + k] = '{}');
+    'assert',
+    'buffer',
+    'net',
+    'querystring',
+    'sqlite',
+    'util',
+    'child_process',
+    'zlib'
+].map(k => 'node:' + k));
+function externals({ request }, callback) {
+    if (nodeExternals.has(request)) {
+        return callback(null, '{}');
+    }
+    callback();
+}
 
 module.exports = {
     target: 'web',
@@ -54,5 +72,16 @@ module.exports = {
         new webpack.ProvidePlugin({
             process: 'process/browser',
         })
+    ],
+    /**
+     * Suppress known warnings from:
+     * - express/lib/view.js: dynamic require
+     * - port-manager.js: intentional dynamic import to avoid bundling
+     * - init.test.js: intentional dynamic imports for node-only test servers
+     */
+    ignoreWarnings: [
+        { module: /express[\\/]lib[\\/]view\.js/ },
+        { module: /helper[\\/]port-manager\.js/ },
+        { module: /unit[\\/]init\.test\.js/ }
     ]
 };

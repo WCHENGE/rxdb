@@ -11,8 +11,8 @@ import {
     subscribe
 } from 'graphql';
 import { createServer } from 'node:http';
-import ws from 'ws';
-import { useServer } from 'graphql-ws/lib/use/ws';
+import { WebSocketServer } from 'ws';
+import { useServer } from 'graphql-ws/use/ws';
 import { Request, Response, NextFunction } from 'express';
 
 import express from 'express';
@@ -27,14 +27,14 @@ import {
 import { ensureNotFalsy, lastOfArray } from 'event-reduce-js';
 import { RxReplicationWriteToMasterRow } from '../../plugins/core/index.mjs';
 import {
-    HumanWithTimestampDocumentType,
-    nextPort
+    HumanWithTimestampDocumentType
 } from '../../plugins/test-utils/index.mjs';
 import { GraphQLServerUrl, RxGraphQLReplicationClientState } from '../../plugins/core/index.mjs';
 
 import {
     graphQLRequest
 } from '../../plugins/replication-graphql/index.mjs';
+import { nextPort } from './port-manager.ts';
 
 function sortByUpdatedAtAndPrimary(
     a: any,
@@ -257,7 +257,7 @@ export async function spawn(
         writeHumansFail: (_args: any) => {
             throw new Error('writeHumansFail called');
         },
-        humanChanged: () => pubsub.asyncIterator('humanChanged')
+        humanChanged: () => pubsub.asyncIterableIterator('humanChanged')
     };
 
     // header simulation middleware
@@ -302,7 +302,7 @@ export async function spawn(
 
             const wsPort = port + 500;
             const wss = createServer(server);
-            const wsServer = new ws.Server({
+            const wsServer = new WebSocketServer({
                 server: wss,
                 path: GRAPHQL_SUBSCRIPTION_PATH,
             });

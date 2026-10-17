@@ -1,20 +1,25 @@
 import assert from 'assert';
 
-import type {
-    MangoQuery
+import {
+    addRxPlugin,
+    type MangoQuery
 } from '../../plugins/core/index.mjs';
 
 import {
     NoSqlQueryBuilder,
-    createQueryBuilder
+    createQueryBuilder,
+    RxDBQueryBuilderPlugin
 } from '../../plugins/query-builder/index.mjs';
+addRxPlugin(RxDBQueryBuilderPlugin);
 
-import { describeParallel } from './config.ts';
+import { humansCollection } from '../../plugins/test-utils/index.mjs';
+
+import './config.ts';
 
 /**
  * This tests the plugin 'query-builder'
  */
-describeParallel('query-builder.test.js', () => {
+describe('query-builder.test.js', () => {
     describe('NoSqlQueryBuilder', () => {
         it('should make a basic roundtrip', () => {
             const startQuery: MangoQuery = {
@@ -105,5 +110,113 @@ describeParallel('query-builder.test.js', () => {
             assert.deepStrictEqual(startQuery, builtJson.query);
         });
 
+        it('eq() should use $eq operator so it can coexist with other operators on the same field', () => {
+            // Using eq() should store as { $eq: value } not as a raw primitive,
+            // so that chaining another operator on the same field does not silently
+            // overwrite the equality condition.
+            const builder = createQueryBuilder();
+            builder
+                .where('age').eq(25)
+                .where('age').gt(20);
+            const result = builder.toJSON();
+            assert.deepStrictEqual(result.query.selector, {
+                age: {
+                    $eq: 25,
+                    $gt: 20
+                }
+            });
+        });
+        it('equals() should use $eq operator so it can coexist with other operators on the same field', () => {
+            const builder = createQueryBuilder();
+            builder
+                .where('age').equals(25)
+                .where('age').gt(20);
+            const result = builder.toJSON();
+            assert.deepStrictEqual(result.query.selector, {
+                age: {
+                    $eq: 25,
+                    $gt: 20
+                }
+            });
+        });
+        it('operator followed by eq() should preserve both conditions', () => {
+            const builder = createQueryBuilder();
+            builder
+                .where('age').gt(20)
+                .where('age').eq(25);
+            const result = builder.toJSON();
+            assert.deepStrictEqual(result.query.selector, {
+                age: {
+                    $gt: 20,
+                    $eq: 25
+                }
+            });
+        });
+        it('selector shorthand value should be preserved when chaining another operator on the same field', () => {
+            // When a selector uses shorthand syntax (e.g., { age: 5 } instead of { age: { $eq: 5 } }),
+            // chaining another operator on the same field should preserve the implicit equality condition.
+            const builder = createQueryBuilder<{ age: number; }>({
+                selector: {
+                    age: 5
+                }
+            });
+            builder.where('age').gt(3);
+            const result = builder.toJSON();
+            assert.deepStrictEqual(result.query.selector, {
+                age: {
+                    $eq: 5,
+                    $gt: 3
+                }
+            });
+        });
+        it('selector shorthand null value should be preserved when chaining another operator', () => {
+            const builder = createQueryBuilder<{ name: string | null; }>({
+                selector: {
+                    name: null
+                }
+            });
+            builder.where('name').ne('bar');
+            const result = builder.toJSON();
+            assert.deepStrictEqual(result.query.selector, {
+                name: {
+                    $eq: null,
+                    $ne: 'bar'
+                }
+            });
+        });
+    });
+    describe('RxQuery', () => {
+        it('should merge an operator into a selector shorthand value via .where(object)', async () => {
+            const c = await humansCollection.create(0);
+            await c.bulkInsert([
+                { passportId: 'a', firstName: 'Alice', lastName: 'A', age: 5 },
+                { passportId: 'b', firstName: 'Bob', lastName: 'B', age: 7 },
+                { passportId: 'c', firstName: 'Carol', lastName: 'C', age: 7 }
+            ]);
+
+            const shorthandFirst = await c.find({
+                selector: {
+                    age: 7
+                }
+            }).where({
+                age: {
+                    $gt: 3
+                }
+            }).exec();
+            assert.deepStrictEqual(shorthandFirst.map(d => d.passportId), ['b', 'c']);
+
+            const operatorFirst = await c.find({
+                selector: {
+                    age: {
+                        $lt: 7
+                    }
+                }
+            }).where({
+                age: 7
+            }).exec();
+            assert.deepStrictEqual(operatorFirst.map(d => d.passportId), []);
+
+            c.database.close();
+        });
     });
 });

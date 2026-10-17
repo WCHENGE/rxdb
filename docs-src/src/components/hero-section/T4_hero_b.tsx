@@ -7,16 +7,22 @@ import { EmojiChatStateful } from '../emoji-chat';
 import { PixelToggle } from '../toggle';
 import { useState } from 'react';
 import { IconWifi } from '../icons/wifi';
-import { IframeFormModal } from '../modal';
-import { ABTestContent } from '../a-b-tests';
+// import { IframeFormModal } from '../modal';
+import { ReplicationDiagram } from '../replication-diagram';
+import { VideoModal } from '../video-box';
+import { YOUTUBE_VIDEO_MAIN } from '../video-section';
+import { VideoPlayButtonArrow } from '../video-button';
 
 export function HeroSection_B(props: {
     sem?: SemPage;
     scrollToSection: ScrollToSection;
 }) {
-    const [openDemo, setOpenDemo] = useState(false);
+    // const [openDemo, setOpenDemo] = useState(false);
+    const [openVideo, setOpenVideo] = useState(false);
 
-    return <div className="block first hero centered dark">
+    return <div className="block first hero centered dark" style={{
+        background: 'linear-gradient(to bottom, rgba(15, 23, 42, 0.8), #05060a)'
+    }}>
         <div className="content">
             {
                 props.sem && props.sem.iconUrl ? (
@@ -31,7 +37,7 @@ export function HeroSection_B(props: {
                 textAlign: 'center',
             }}>
                 {
-                    props.sem ? props.sem.title : <>The easiest way to <b>store</b> and <b>sync</b> Data inside of your App</>
+                    props.sem ? props.sem.title : <>The Local-First <b>Database</b> for <b>JavaScript</b> Apps</>
                 }
             </h1>
             <div className="inner">
@@ -40,7 +46,14 @@ export function HeroSection_B(props: {
                         marginTop: 0,
                         marginBottom: 0
                     }} className='centered-mobile-p'>
-                        RxDB is a NoSQL database for JavaScript that runs directly in your app. With a <a href="/articles/local-first-future.html" target="_blank">local-first</a> design, it delivers zero-latency queries even offline, and syncs seamlessly with many backends. With observable queries, your UI updates instantly as data changes.
+                        {
+                            props.sem && props.sem.text
+                                ? props.sem.text
+                                : <>
+                                    RxDB is a NoSQL database for JavaScript that runs directly in your app. With a <a href="/articles/local-first-future.html" target="_blank">local-first</a> design,
+                                    it delivers zero-latency queries even offline, and syncs seamlessly with any backend.
+                                </>
+                        }
                     </p>
                     <CheckedList className='centered-mobile padding-right-20-0' style={{
                         paddingTop: 35,
@@ -48,22 +61,48 @@ export function HeroSection_B(props: {
                         paddingBottom: 0,
                         maxWidth: 360
                     }}>
-                        <>
-                            Build apps that work <b onClick={() => props.scrollToSection('offline')}>offline</b>
-                        </>
-                        <>
-                            Sync with <b onClick={() => props.scrollToSection('replication')}>any Backend</b>
-                        </>
-                        <>
-                            Observable <b onClick={() => props.scrollToSection('realtime')}>Realtime Queries</b>
-                        </>
-                        <>
-                            All JavaScript <b onClick={() => props.scrollToSection('runtimes')}>Runtimes</b> Supported
-                        </>
+                        {
+                            props.sem && props.sem.bulletpoints
+                                ? props.sem.bulletpoints
+                                : [
+                                    <>
+                                        Build apps that work <b onClick={() => props.scrollToSection('offline')}>offline</b>
+                                    </>,
+                                    <>
+                                        Sync with <b onClick={() => props.scrollToSection('replication')}>any Backend</b>
+                                    </>,
+                                    <>
+                                        Observable <b onClick={() => props.scrollToSection('realtime')}>Realtime Queries</b>
+                                    </>,
+                                    <>
+                                        All JavaScript <b onClick={() => props.scrollToSection('runtimes')}>Runtimes</b> Supported
+                                    </>
+                                ]
+                        }
                     </CheckedList>
+                </div>
 
+                <div
+                    className="half right justify-center-mobile grid-2-mobile grid-3"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                    }}
+                >
+                    <ReplicationDiagram
+                        dark={true}
+                        hasIcon={false}
+                        onPlayClick={() => {
+                            setOpenVideo(true);
+                            triggerTrackingEvent('hero_section_video_open_diagram', 0.4);
+                        }}
+                    />
+                </div>
+            </div>
+            <div className="flex-start-center" style={{display: 'flex'}}>
+                <div className="half left" style={{}}>
                     <div style={{
-                        marginTop: 60,
+                        marginTop: 44,
                         display: 'flex',
                         flexWrap: 'wrap',
                         gap: 10,
@@ -71,30 +110,39 @@ export function HeroSection_B(props: {
                     }} className='hero-action-buttons centered-smaller-mobile'>
                         <Button className="hero-action"
                             onClick={() => {
+                                setOpenVideo(true);
+                                triggerTrackingEvent('hero_section_video_open', 0.4);
+                            }}
+                            icon=<VideoPlayButtonArrow style={{
+                                transform: 'scale(0.70)'
+                            }} />
+                        >Watch Video</Button>
+                        <VideoModal
+                            open={openVideo}
+                            videoId={YOUTUBE_VIDEO_MAIN.videoId}
+                            title={YOUTUBE_VIDEO_MAIN.title}
+                            startAt={YOUTUBE_VIDEO_MAIN.startAt}
+                            onClose={() => setOpenVideo(false)}
+                        />
+                        {/* <Button className="hero-action"
+                            onClick={() => {
                                 setOpenDemo(true);
                                 triggerTrackingEvent('hero_section_demo_open', 0.4);
                             }}
-                        >Schedule a Demo</Button>
-                        <IframeFormModal
+                        >Schedule a Demo</Button> */}
+                        {/* <IframeFormModal
                             iframeUrl='https://webforms.pipedrive.com/f/6Fz0viOs1HDtaA9sgYbt29eTE4tsxrW29hQbk8hGIvr1Bzl8NJrZNhcGWQlLcN1Dxh'
                             open={openDemo}
                             onClose={() => setOpenDemo(false)}
-                        />
+                        /> */}
+
+
                         <Button primary
                             className="hero-action"
                             href="/quickstart.html"
-                            target='_blank'
                             onClick={() => triggerTrackingEvent('hero_section_start_now', 0.4)}
                         >Get Started For Free</Button>
                     </div>
-                </div>
-                <div
-                    className="half right justify-center-mobile grid-2-mobile grid-3"
-                >
-
-                    <ABTestContent />
-
-
                 </div>
             </div>
             <HeroRuntimes></HeroRuntimes>
@@ -112,7 +160,7 @@ export function HeroEmojiChat() {
             justifyItems: 'center',
             alignSelf: 'start',
             flexDirection: 'row',
-            gap: 20,
+            gap: 20
         }} className='flex-end-center'
         >
             <EmojiChatStateful

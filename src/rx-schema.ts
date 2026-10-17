@@ -1,7 +1,8 @@
 import {
     overwriteGetterForCaching,
     isMaybeReadonlyArray,
-    deepEqual
+    deepEqual,
+    flatClone
 } from './plugins/utils/index.ts';
 import {
     newRxError,
@@ -29,6 +30,14 @@ import {
     normalizeRxJsonSchema
 } from './rx-schema-helper.ts';
 import { overwritable } from './overwritable.ts';
+
+/**
+ * @performance Hashing is expensive and the same schema is often
+ * hashed many times, for example when the same schema is used in multiple
+ * collections or when a database is closed and created again.
+ */
+const SCHEMA_HASH_CACHE_MAX_SIZE = 100;
+const SCHEMA_HASH_CACHE = new WeakMap<HashFunction, Map<string, Promise<string>>>();
 
 export class RxSchema<RxDocType = any> {
     public indexes: MaybeReadonly<string[]>[];
@@ -73,14 +82,65 @@ export class RxSchema<RxDocType = any> {
         );
     }
 
+    public getJsonSchemaWithoutMeta(): RxJsonSchema<RxDocumentData<RxDocType>> {
+        const jsonSchema: any = flatClone(this.jsonSchema);
+        jsonSchema.properties = flatClone(jsonSchema.properties);
+        delete jsonSchema.properties._deleted;
+        delete jsonSchema.properties._rev;
+        delete jsonSchema.properties._meta;
+        delete jsonSchema.properties._attachments;
+
+        if (jsonSchema.required) {
+            jsonSchema.required = jsonSchema.required.filter((r: string) => !r.startsWith('_'));
+        }
+
+        // remove internal meta fields from indexes, consistent with properties and required cleanup
+        if (jsonSchema.indexes) {
+            jsonSchema.indexes = jsonSchema.indexes
+                .map((index: string | string[]) => {
+                    const arr: string[] = isMaybeReadonlyArray(index) ? [...index] : [index];
+                    return arr.filter((field: string) => !field.startsWith('_'));
+                })
+                .filter((index: string[]) => index.length > 0);
+        }
+
+        return jsonSchema as RxJsonSchema<RxDocumentData<RxDocType>>;
+    }
+
     /**
      * @overrides itself on the first call
      */
     public get hash(): Promise<string> {
+        const hashFunction = this.hashFunction;
+        let hashByInput = SCHEMA_HASH_CACHE.get(hashFunction);
+        if (!hashByInput) {
+            hashByInput = new Map();
+            SCHEMA_HASH_CACHE.set(hashFunction, hashByInput);
+        }
+        const input = JSON.stringify(this.jsonSchema);
+        let hash = hashByInput.get(input);
+        if (!hash) {
+            hash = hashFunction(input);
+            if (hashByInput.size >= SCHEMA_HASH_CACHE_MAX_SIZE) {
+                hashByInput.delete(hashByInput.keys().next().value as string);
+            }
+            hashByInput.set(input, hash);
+            /**
+             * A failed hashing must not be cached
+             * so that the next call can try again.
+             */
+            const cachedHash = hash;
+            const cache = hashByInput;
+            Promise.resolve(cachedHash).catch(() => {
+                if (cache.get(input) === cachedHash) {
+                    cache.delete(input);
+                }
+            });
+        }
         return overwriteGetterForCaching(
             this,
             'hash',
-            this.hashFunction(JSON.stringify(this.jsonSchema))
+            hash
         );
     }
 
@@ -224,7 +284,40 @@ export function isRxSchema(obj: any): boolean {
 }
 
 /**
- * Used as helper function the generate the document type out of the schema via typescript.
+ * Helper function to generate the document type out of the schema via TypeScript.
+ * Always use this together with `as const` on the schema literal so that the
+ * TypeScript compiler can infer the narrowest possible type.
+ *
+ * ## AI Agent Guidance — Canonical Schema Definition Pattern
+ *
+ * ```ts
+ * import {
+ *   toTypedRxJsonSchema,
+ *   ExtractDocumentTypeFromTypedRxJsonSchema,
+ *   RxJsonSchema
+ * } from 'rxdb';
+ *
+ * const todoSchemaLiteral = {
+ *   title: 'todo schema',
+ *   version: 0,
+ *   primaryKey: 'id',
+ *   type: 'object',
+ *   properties: {
+ *     id:        { type: 'string', maxLength: 100 },
+ *     title:     { type: 'string' },
+ *     completed: { type: 'boolean' },
+ *     createdAt: { type: 'string', format: 'date-time' },
+ *     updatedAt: { type: 'string', format: 'date-time' }
+ *   },
+ *   required: ['id', 'title', 'completed', 'createdAt', 'updatedAt'],
+ *   indexes: ['updatedAt', ['completed', 'updatedAt']]
+ * } as const;
+ *
+ * const schemaTyped = toTypedRxJsonSchema(todoSchemaLiteral);
+ * export type TodoDocType = ExtractDocumentTypeFromTypedRxJsonSchema<typeof schemaTyped>;
+ * export const todoSchema: RxJsonSchema<TodoDocType> = todoSchemaLiteral;
+ * ```
+ *
  * @link https://github.com/pubkey/rxdb/discussions/3467
  */
 export function toTypedRxJsonSchema<T extends DeepReadonly<RxJsonSchema<any>>>(schema: T): DeepMutable<T> {

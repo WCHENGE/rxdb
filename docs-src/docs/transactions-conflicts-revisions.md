@@ -2,16 +2,20 @@
 title: Transactions, Conflicts and Revisions
 slug: transactions-conflicts-revisions.html
 description: Learn RxDB's approach to local and replication conflicts. Discover how incremental writes and custom handlers keep your app stable and efficient.
+image: /headers/transactions-conflicts-revisions.jpg
 ---
+
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {ConflictHandling} from '@site/src/components/animations/conflict-handling';
 
 # Transactions, Conflicts and Revisions
 
-In contrast to most SQL databases, RxDB does not have the concept of relational, ACID transactions. Instead, RxDB has to apply different techniques that better suit the offline-first, client side world where it is not possible to create a transaction between multiple maybe-offline client devices.
+In contrast to most SQL databases, RxDB does not have the concept of relational ACID transactions. Instead, RxDB has to apply different techniques that better suit the offline-first, client-side world where it is not possible to create a transaction between multiple maybe-offline client devices.
 
 ## Why RxDB does not have transactions
 
 When talking about transactions, we mean [ACID transactions](https://en.wikipedia.org/wiki/ACID) that guarantee the properties of atomicity, consistency, isolation and durability.
-With an ACID transaction you can mutate data dependent on the current state of the database. It is ensured that no other database operations happen in between your transaction and after the transaction has finished, it is guaranteed that the new data is actually written to the disc.
+With an ACID transaction you can mutate data dependent on the current state of the database. It is ensured that no other database operations happen in between your transaction and after the transaction has finished, it is guaranteed that the new data is actually written to the disk.
 
 To implement ACID transactions on a **single server**, the database has to keep track on who is running transactions and then schedule these transactions so that they can run in isolation.
 
@@ -19,7 +23,7 @@ As soon as you have to split your database on **multiple servers**, transaction 
 
 But with RxDB you have **multiple clients** that can go randomly online or offline. The users can have different devices and the clock of these devices can go off by any time. To support ACID transactions here, RxDB would have to make the whole world stand still for all clients, while one client is doing a write operation. And even that can only work when all clients are online. Implementing that might be possible, but at the cost of an unpredictable amount of performance loss and not being able to support [offline-first](./offline-first.md).
 
-> A single write operation to a document is the only atomic thing you can do in RxDB.
+> A single write operation to a document is the only atomic thing you can do in [RxDatabase](./rx-database.md).
 
 The benefits of not having to support transactions:
 
@@ -31,7 +35,7 @@ The benefits of not having to support transactions:
 
 ## Revisions
 
-Working without transactions leads to having undefined state when doing multiple database operations at the same time. Most client side databases rely on a last-write-wins strategy on write operations. This might be a viable solution for some cases, but often this leads to strange problems that are hard to debug.
+Working without transactions leads to having undefined state when doing multiple database operations at the same time. Most client-side databases rely on a last-write-wins strategy on write operations. This might be a viable solution for some cases, but often this leads to strange problems that are hard to debug.
 
 Instead, to ensure that the behavior of RxDB is **always predictable**, RxDB relies on **revisions** for version control. Revisions work similar to [Lamport Clocks](https://martinfowler.com/articles/patterns-of-distributed-systems/lamport-clock.html).
 
@@ -57,9 +61,13 @@ Instead of handling local conflicts, in most cases it is easier to ensure that t
 
 A replication conflict appears when multiple clients write to the same documents at once and these documents are then replicated to the backend server. 
 
-When you replicate with the [Graphql replication](./replication-graphql.md) and the [replication primitives](./replication.md), RxDB assumes that conflicts are **detected** and **resolved** at the client side.
+<DocsAnimation subtitle="Two offline edits of the same document resolved into one revision">
+<ConflictHandling />
+</DocsAnimation>
 
-When a document is send to the backend and the backend detected a conflict (by comparing revisions or other properties), the backend will respond with the actual document state so that the client can compare this with the local document state and create a new, resolved document state that is then pushed to the server again. You can read more about the replication conflicts [here](./replication.md#conflict-handling).
+When you replicate with the [GraphQL replication](./replication-graphql.md) and the [replication primitives](./replication.md), RxDB assumes that conflicts are **detected** and **resolved** at the client side.
+
+When a document is sent to the backend and the backend detected a conflict (by comparing revisions or other properties), the backend will respond with the actual document state so that the client can compare this with the local document state and create a new, resolved document state that is then pushed to the server again. You can read more about the replication conflicts [here](./replication.md#conflict-handling).
 
 
 ## Custom conflict handler
@@ -81,7 +89,8 @@ export const defaultConflictHandler: RxConflictHandler<any> = {
          * document has to be pushed to the remote.
          * If the documents are deep equal,
          * we have no conflict.
-         * Because deepEqual is CPU expensive, on your custom conflict handler you might only
+         * Because deepEqual is CPU expensive, on your
+         * custom conflict handler you might only
          * check some properties, like the updatedAt time or revisions
          * for better performance.
          */

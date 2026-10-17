@@ -1,7 +1,7 @@
 import assert from 'assert';
 import { wait, waitUntil } from 'async-test-util';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemaObjects,
     schemas,
@@ -14,16 +14,18 @@ import {
     addRxPlugin,
     RxCollection,
     RxJsonSchema,
-    ensureNotFalsy
+    ensureNotFalsy,
+    removeRxDatabase
 } from '../../plugins/core/index.mjs';
 
 import { replicateRxCollection } from '../../plugins/replication/index.mjs';
 
 import { RxDBCleanupPlugin } from '../../plugins/cleanup/index.mjs';
 import { wrappedValidateAjvStorage } from '../../plugins/validate-ajv/index.mjs';
+import { DEFAULT_CLEANUP_POLICY } from '../../plugins/cleanup/index.mjs';
 addRxPlugin(RxDBCleanupPlugin);
 
-describeParallel('cleanup.test.js', () => {
+describe('cleanup.test.js', () => {
     describe('basics', () => {
         it('should clean up the deleted documents', async () => {
             const db = await createRxDatabase({
@@ -48,6 +50,7 @@ describeParallel('cleanup.test.js', () => {
             await doc.remove();
 
             await waitUntil(async () => {
+                await collection.cleanup(0);
                 const deletedDocInStorage = await collection.storageInstance.findDocumentsById(
                     [
                         doc.primary,
@@ -60,7 +63,7 @@ describeParallel('cleanup.test.js', () => {
                 return !deletedDocStillInStorage;
             });
 
-            db.close();
+            await db.close();
         });
         it('should work by manually calling RxCollection.cleanup()', async () => {
             const db = await createRxDatabase({
@@ -88,7 +91,7 @@ describeParallel('cleanup.test.js', () => {
             );
             assert.ok(deletedDocInStorage.length >= 1);
 
-            db.close();
+            await db.close();
         });
     });
     describe('cleanup and replication', () => {
@@ -114,7 +117,7 @@ describeParallel('cleanup.test.js', () => {
             });
 
             const collection: RxCollection<HumanDocumentType> = cols.humans;
-            replicateRxCollection({
+            const replicationState = replicateRxCollection({
                 collection,
                 replicationIdentifier: 'my-rep',
                 deletedField: '_deleted',
@@ -142,7 +145,8 @@ describeParallel('cleanup.test.js', () => {
             );
             assert.ok(deletedDocInStorage[0]);
 
-            db.remove();
+            await replicationState.cancel();
+            await db.remove();
         });
         /**
          * While the metadata of a replication is append-only
@@ -196,10 +200,203 @@ describeParallel('cleanup.test.js', () => {
             await collection.cleanup(0);
             assert.ok(cleanupCalls > 0, 'cleanup call count must be greater zero');
 
-            db.remove();
+            await replicationState.cancel();
+            await db.remove();
         });
     });
     describe('issues', () => {
+        it('#8948 must find a document that was re-inserted after the cleanup purged its tombstone', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                eventReduce: true
+            });
+            const cols = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const collection: RxCollection<HumanDocumentType> = cols.humans;
+
+            const docData = schemaObjects.humanData('foobar');
+            await collection.insert(docData);
+            const doc = await collection.findOne(docData.passportId).exec(true);
+            await doc.remove();
+            await collection.cleanup(0);
+
+            // the cleanup purged the tombstone, so this write starts a new revision chain
+            await collection.insert(docData);
+
+            const byId = await collection.findOne(docData.passportId).exec();
+            assert.ok(byId, 'findOne() by primary key must return the re-inserted document');
+
+            const bySelector = await collection.find({
+                selector: { passportId: docData.passportId }
+            }).exec();
+            assert.strictEqual(bySelector.length, 1);
+
+            const latest = collection._docCache.getLatestDocumentDataIfExists(docData.passportId);
+            assert.strictEqual(ensureNotFalsy(latest)._deleted, false);
+
+            await db.close();
+        });
+        it('minimumDeletedTime not respected', async () => {
+            const dbName = 'test-cleanup-' + Date.now() + '-' + randomToken(10);
+            try {
+                await removeRxDatabase(dbName, config.storage.getStorage());
+            } catch (err) { }
+            const db = await createRxDatabase({
+                name: dbName,
+                storage: config.storage.getStorage(),
+                eventReduce: true,
+                multiInstance: false
+            });
+            const cols = await db.addCollections({
+                human: {
+                    schema: schemas.human
+                }
+            });
+            const col = cols.human;
+
+            const storageInstance = col.storageInstance.originalStorageInstance;
+            const cleanupBefore = storageInstance.cleanup.bind(storageInstance);
+
+            const calls: number[] = [];
+            storageInstance.cleanup = (t) => {
+                calls.push(t);
+                return cleanupBefore(t);
+            };
+
+            await col.cleanup(0);
+            await col.cleanup(5);
+            await col.cleanup();
+
+
+            assert.strictEqual(calls[0], 0);
+            assert.strictEqual(calls[1], 5);
+            assert.strictEqual(calls[2], DEFAULT_CLEANUP_POLICY.minimumDeletedTime);
+
+            await col.database.remove();
+        });
+        it('should correctly loop cleanup when storage cleanup returns false (batched cleanup)', async () => {
+            /**
+             * Some storages like FoundationDB clean up in batches
+             * and return false from cleanup() to indicate more work is needed.
+             * The cleanup loop must continue calling cleanup() until all calls return true.
+             * @link https://github.com/pubkey/rxdb/issues/cleanup-batched
+             */
+            const baseStorage = config.storage.getStorage();
+            const origCreateStorageInstance = baseStorage.createStorageInstance.bind(baseStorage);
+
+            /**
+             * Wrap the storage to simulate batched cleanup:
+             * - First cleanup() call returns false without cleaning (more work needed)
+             * - Second cleanup() call does the real cleanup and returns true
+             */
+            const wrappedStorage: typeof baseStorage = Object.assign(
+                {},
+                baseStorage,
+                {
+                    createStorageInstance(params: any) {
+                        return origCreateStorageInstance(params).then((instance: any) => {
+                            const origCleanup = instance.cleanup.bind(instance);
+                            let cleanupCallCount = 0;
+                            instance.cleanup = function (minimumDeletedTime: number) {
+                                cleanupCallCount++;
+                                if (cleanupCallCount === 1) {
+                                    // simulate batched cleanup: not done yet
+                                    return Promise.resolve(false);
+                                }
+                                return origCleanup(minimumDeletedTime);
+                            };
+                            return instance;
+                        });
+                    }
+                }
+            );
+
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: wrappedStorage,
+                cleanupPolicy: {
+                    awaitReplicationsInSync: false,
+                    minimumCollectionAge: 200000,
+                    minimumDeletedTime: 0,
+                    runEach: 200000,
+                    waitForLeadership: false
+                }
+            });
+            const cols = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const collection: RxCollection<HumanDocumentType> = cols.humans;
+
+            const doc = await collection.insert(schemaObjects.humanData());
+            const docPrimary = doc.primary;
+            await doc.remove();
+
+            // cleanup() should loop internally: first call returns false, second does real work
+            await collection.cleanup(0);
+
+            // Verify the deleted document was actually cleaned up from storage
+            const docsInStorage = await collection.storageInstance.findDocumentsById(
+                [docPrimary],
+                true
+            );
+            const deletedDocStillExists = !!docsInStorage.find(
+                (d: any) => d[collection.schema.primaryPath] === docPrimary
+            );
+            assert.strictEqual(
+                deletedDocStillExists,
+                false,
+                'deleted document should be removed after cleanup even when storage returns false on first call'
+            );
+
+            await db.close();
+        });
+        it('cleanup() should return true as stated by the TypeScript return type', async () => {
+            /**
+             * RxCollection.cleanup() is declared to return Promise<boolean>
+             * where true means all cleanable documents have been removed.
+             * But the cleanup plugin implementation returns Promise<void> (undefined at runtime),
+             * so the return value does not match the declared type.
+             */
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                cleanupPolicy: {
+                    awaitReplicationsInSync: false,
+                    minimumCollectionAge: 200000,
+                    minimumDeletedTime: 0,
+                    runEach: 200000,
+                    waitForLeadership: false
+                }
+            });
+            const cols = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const collection: RxCollection<HumanDocumentType> = cols.humans;
+
+            // insert and delete a document
+            const doc = await collection.insert(schemaObjects.humanData());
+            await doc.remove();
+
+            // cleanup(0) should return true when done
+            const result = await collection.cleanup(0);
+            assert.strictEqual(typeof result, 'boolean', 'cleanup() must return a boolean, not ' + typeof result);
+            assert.strictEqual(result, true, 'cleanup() must return true when all deleted documents have been cleaned up');
+
+            // also test cleanup without arguments
+            const result2 = await collection.cleanup();
+            assert.strictEqual(typeof result2, 'boolean', 'cleanup() without args must also return a boolean');
+            assert.strictEqual(result2, true);
+
+            await db.close();
+        });
         it('fields with umlauts and emojis could break the state after cleanup in some storages', async () => {
             type DocType = {
                 id: string;

@@ -18,7 +18,6 @@ import type {
     RxError
 } from '../types/index.d.ts';
 import {
-    appendToArray,
     createRevision,
     ensureNotFalsy,
     flatClone,
@@ -143,13 +142,13 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
         const sub = replicationHandler
             .masterChangeStream$
             .pipe(
-                mergeMap(async (ev) => {
+                mergeMap(async (ev: any) => {
                     /**
                      * While a push is running, we have to delay all incoming
                      * events from the server to not mix up the replication state.
                      */
                     await firstValueFrom(
-                        state.events.active.up.pipe(filter(s => !s))
+                        state.events.active.up.pipe(filter((s: boolean) => !s))
                     );
                     return ev;
                 })
@@ -161,7 +160,7 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
         // unsubscribe when replication is canceled
         firstValueFrom(
             state.events.canceled.pipe(
-                filter(canceled => !!canceled)
+                filter((canceled: boolean) => !!canceled)
             )
         ).then(() => sub.unsubscribe());
     }
@@ -219,14 +218,14 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
 
     function downstreamProcessChanges(tasks: Task[]) {
         state.stats.down.downstreamProcessChanges = state.stats.down.downstreamProcessChanges + 1;
-        const docsOfAllTasks: WithDeleted<RxDocType>[] = [];
+        let docsOfAllTasks: WithDeleted<RxDocType>[] = [];
         let lastCheckpoint: CheckpointType | undefined = null as any;
 
         tasks.forEach(task => {
             if (task === 'RESYNC') {
-                throw new Error('SNH');
+                throw newRxError('SNH');
             }
-            appendToArray(docsOfAllTasks, task.documents);
+            docsOfAllTasks = docsOfAllTasks.concat(task.documents);
             lastCheckpoint = stackCheckpoints([lastCheckpoint, task.checkpoint]);
         });
         return persistFromMaster(
@@ -238,7 +237,7 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
 
     /**
      * It can happen that the calls to masterChangesSince() or the changeStream()
-     * are way faster then how fast the documents can be persisted.
+     * are way faster than how fast the documents can be persisted.
      * Therefore we merge all incoming downResults into the nonPersistedFromMaster object
      * and process them together if possible.
      * This often bundles up single writes and improves performance
@@ -319,7 +318,7 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
                         ) {
                             /**
                              * The current fork state represents a resolved conflict
-                             * that first must be send to the master in the upstream.
+                             * that first must be sent to the master in the upstream.
                              * All conflicts are resolved by the upstream.
                              */
                             // return PROMISE_RESOLVE_VOID;
@@ -345,21 +344,37 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
                         ) {
                             isAssumedMasterEqualToForkState = true;
                         }
+
                         if (
                             (
-                                forkStateFullDoc &&
-                                assumedMaster &&
-                                isAssumedMasterEqualToForkState === false
-                            ) ||
-                            (
-                                forkStateFullDoc && !assumedMaster
+                                (
+                                    forkStateFullDoc &&
+                                    assumedMaster &&
+                                    isAssumedMasterEqualToForkState === false
+                                )
+                                ||
+                                (
+                                    forkStateFullDoc && !assumedMaster
+                                )
+                            ) && !state.skipStoringPullMeta
+                            &&
+                            !(
+                                forkStateFullDoc._meta.o &&
+                                (
+                                    forkStateFullDoc._meta.o.hash === identifierHash &&
+                                    forkStateFullDoc._meta.o._rev === getHeightOfRevision(forkStateFullDoc._rev)
+                                )
                             )
                         ) {
+
                             /**
                              * We have a non-upstream-replicated
                              * local write to the fork.
-                             * This means we ignore the downstream of this document
-                             * because anyway the upstream will first resolve the conflict.
+                             * This means either we have to upstream the local
+                             * doc data first, or it means that the fork state was
+                             * synced from the master but the process exited before
+                             * the metadata was written.
+                             * @link https://github.com/pubkey/rxdb/pull/7804
                              */
                             return PROMISE_RESOLVE_VOID;
                         }
@@ -439,6 +454,13 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
                             newForkState._meta = (masterState as any)._meta;
                         }
 
+
+
+                        newForkState._meta.o = {
+                            _rev: !forkStateFullDoc ? 1 : getHeightOfRevision(forkStateFullDoc._rev) + 1,
+                            hash: identifierHash
+                        };
+
                         const forkWriteRow = {
                             previous: forkStateFullDoc,
                             document: newForkState
@@ -448,6 +470,7 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
                             identifierHash,
                             forkWriteRow.previous
                         );
+
                         writeRowsToFork.push(forkWriteRow);
                         writeRowsToForkById[docId] = forkWriteRow;
                         writeRowsToMeta[docId] = await getMetaWriteRow(
@@ -495,7 +518,7 @@ export async function startReplicationDownstream<RxDocType, CheckpointType = any
                     });
                 }
             }).then(() => {
-                if (useMetaWriteRows.length > 0) {
+                if (!state.skipStoringPullMeta && useMetaWriteRows.length > 0) {
                     return state.input.metaInstance.bulkWrite(
                         stripAttachmentsDataFromMetaWriteRows(state, useMetaWriteRows),
                         'replication-down-write-meta'

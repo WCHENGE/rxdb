@@ -1,6 +1,6 @@
 import assert from 'assert';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     RxJsonSchema,
     randomToken,
@@ -37,7 +37,7 @@ import {
 } from '../../src/plugins/test-utils/schema-objects.ts';
 
 const TEST_CONTEXT = 'rx-storage-query-correctness.test.ts';
-describeParallel('rx-storage-query-correctness.test.ts', () => {
+describe('rx-storage-query-correctness.test.ts', () => {
     type TestCorrectQueriesInput<RxDocType> = {
         notRunIfTrue?: () => boolean;
         testTitle: string;
@@ -378,7 +378,7 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                 ]
             },
             {
-                info: 'compare more then one field',
+                info: 'compare more than one field',
                 query: {
                     selector: {
                         age: {
@@ -464,7 +464,7 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                     },
                     sort: [{ passportId: 'asc' }]
                 },
-                selectorSatisfiedByIndex: false,
+                selectorSatisfiedByIndex: true,
                 expectedResultDocIds: [
                     'aa',
                     'bb',
@@ -489,7 +489,7 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                 ]
             },
             {
-                info: 'compare more then one field',
+                info: 'compare more than one field',
                 query: {
                     selector: {
                         age: {
@@ -710,6 +710,89 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
         ]
     });
     /**
+     * @link https://github.com/pubkey/rxdb/issues/8631
+     * The query planner uses the min/max of the $in values
+     * as scan range on the index. Documents whose value lies
+     * inside that range without being one of the $in values
+     * must still be filtered out.
+     */
+    testCorrectQueries<HumanDocumentType>({
+        testTitle: '$in with index use',
+        data: [
+            schemaObjects.humanData('aa', 3, 'aaron'),
+            schemaObjects.humanData('bb', 10, 'aaron'),
+            schemaObjects.humanData('cc', 4, 'carol'),
+            schemaObjects.humanData('dd', 2, 'dave'),
+            schemaObjects.humanData('ee', 1, 'jack'),
+            schemaObjects.humanData('ff', 30, 'zoe')
+        ],
+        schema: withIndexes(human, [
+            ['firstName', 'age']
+        ]),
+        queries: [
+            {
+                info: '$in combined with range operator and desc sort',
+                query: {
+                    selector: {
+                        firstName: {
+                            $in: ['aaron', 'jack', 'carol']
+                        },
+                        age: {
+                            $lt: 5
+                        }
+                    },
+                    sort: [
+                        { age: 'desc' },
+                        { passportId: 'asc' }
+                    ],
+                    index: ['firstName', 'age'],
+                    limit: 50
+                },
+                selectorSatisfiedByIndex: false,
+                expectedResultDocIds: [
+                    'cc',
+                    'aa',
+                    'ee'
+                ]
+            },
+            {
+                info: '$in values that span the whole index range',
+                query: {
+                    selector: {
+                        firstName: {
+                            $in: ['aaron', 'zoe']
+                        }
+                    },
+                    sort: [{ passportId: 'asc' }],
+                    index: ['firstName', 'age']
+                },
+                selectorSatisfiedByIndex: false,
+                expectedResultDocIds: [
+                    'aa',
+                    'bb',
+                    'ff'
+                ]
+            },
+            {
+                info: '$in with mixed value types must not use the min/max bounds',
+                query: {
+                    selector: {
+                        firstName: {
+                            $in: ['aaron', 42]
+                        } as any
+                    },
+                    sort: [{ passportId: 'asc' }],
+                    index: ['firstName', 'age']
+                },
+                selectorSatisfiedByIndex: false,
+                expectedResultDocIds: [
+                    'aa',
+                    'bb'
+                ]
+            }
+        ]
+    });
+    /**
      * $in must not only work on strings but also on
      * arrays.
      */
@@ -908,6 +991,55 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                 ]
             },
             {
+                info: '$elemMatch with regex operator payload',
+                query: {
+                    selector: {
+                        skills: {
+                            $elemMatch: {
+                                name: {
+                                    $regex: '^bar[13]$',
+                                    $options: 'i'
+                                }
+                            }
+                        },
+                    },
+                    sort: [{ name: 'asc' }]
+                },
+                selectorSatisfiedByIndex: false,
+                expectedResultDocIds: [
+                    'foo1',
+                    'foo2'
+                ]
+            },
+            {
+                info: '$elemMatch with nested logical operator',
+                query: {
+                    selector: {
+                        skills: {
+                            $elemMatch: {
+                                $or: [
+                                    {
+                                        damage: 5
+                                    },
+                                    {
+                                        name: {
+                                            $regex: '^bar4$'
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                    },
+                    sort: [{ name: 'asc' }]
+                },
+                selectorSatisfiedByIndex: false,
+                expectedResultDocIds: [
+                    'foo1',
+                    'foo2',
+                    'foo3'
+                ]
+            },
+            {
                 info: '$size',
                 query: {
                     selector: {
@@ -922,6 +1054,112 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                     'foo3'
                 ]
             },
+        ]
+    });
+    testCorrectQueries({
+        testTitle: '$elemMatch nested arrays with regex',
+        data: [
+            {
+                id: 'a',
+                groups: [
+                    {
+                        name: 'admins',
+                        tags: ['Owner', 'Ops']
+                    },
+                    {
+                        name: 'users',
+                        tags: ['read']
+                    }
+                ]
+            },
+            {
+                id: 'b',
+                groups: [
+                    {
+                        name: 'guests',
+                        tags: ['ops']
+                    }
+                ]
+            },
+            {
+                id: 'c',
+                groups: [
+                    {
+                        name: 'admins',
+                        tags: ['audit']
+                    }
+                ]
+            }
+        ],
+        schema: {
+            version: 0,
+            primaryKey: 'id',
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    maxLength: 100
+                },
+                groups: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            name: {
+                                type: 'string'
+                            },
+                            tags: {
+                                type: 'array',
+                                items: {
+                                    type: 'string'
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            required: ['id', 'groups']
+        },
+        queries: [
+            {
+                info: '$elemMatch on normal object array fields',
+                query: {
+                    selector: {
+                        groups: {
+                            $elemMatch: {
+                                name: 'admins'
+                            }
+                        }
+                    },
+                    sort: [{ id: 'asc' }]
+                },
+                expectedResultDocIds: [
+                    'a',
+                    'c'
+                ]
+            },
+            {
+                info: 'nested $elemMatch with regex/$options payload',
+                query: {
+                    selector: {
+                        groups: {
+                            $elemMatch: {
+                                tags: {
+                                    $elemMatch: {
+                                        $regex: '^ops$',
+                                        $options: 'i'
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    sort: [{ id: 'asc' }]
+                },
+                expectedResultDocIds: [
+                    'a',
+                    'b'
+                ]
+            }
         ]
     });
     testCorrectQueries({
@@ -1840,5 +2078,462 @@ describeParallel('rx-storage-query-correctness.test.ts', () => {
                 expectedResultDocIds: []
             },
         ],
+    });
+
+    /**
+     * Edge cases for number comparison operators specifically
+     * at exact boundary values — verifying that `$gt` with the
+     * exact value of a stored document never returns that document,
+     * and `$gte` always does. Tests minimum and maximum stored values.
+     */
+        testCorrectQueries<{
+            id: string;
+            score: number;
+        }>({
+            testTitle: 'number comparison at exact boundary values including min/max',
+            data: [
+                { id: 'aa', score: 0 },
+                { id: 'bb', score: 1 },
+                { id: 'cc', score: 50 },
+                { id: 'dd', score: 99 },
+                { id: 'ee', score: 100 }
+            ],
+            schema: {
+                primaryKey: 'id',
+                type: 'object',
+                version: 0,
+                properties: {
+                    id: { type: 'string', maxLength: 20 },
+                    score: { type: 'number', minimum: 0, maximum: 100, multipleOf: 1 }
+                },
+                required: ['id', 'score'],
+                indexes: ['score']
+            },
+            queries: [
+                {
+                    info: '$gt at the minimum stored value excludes it',
+                    query: {
+                        selector: { score: { $gt: 0 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['bb', 'cc', 'dd', 'ee']
+                },
+                {
+                    info: '$gte at the minimum stored value includes it',
+                    query: {
+                        selector: { score: { $gte: 0 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['aa', 'bb', 'cc', 'dd', 'ee']
+                },
+                {
+                    info: '$lt at the maximum stored value excludes it',
+                    query: {
+                        selector: { score: { $lt: 100 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['aa', 'bb', 'cc', 'dd']
+                },
+                {
+                    info: '$lte at the maximum stored value includes it',
+                    query: {
+                        selector: { score: { $lte: 100 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['aa', 'bb', 'cc', 'dd', 'ee']
+                },
+                {
+                    info: '$gt at an intermediate value excludes it',
+                    query: {
+                        selector: { score: { $gt: 50 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['dd', 'ee']
+                },
+                {
+                    info: '$lt at an intermediate value excludes it',
+                    query: {
+                        selector: { score: { $lt: 50 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: ['aa', 'bb']
+                },
+                {
+                    info: 'single document range with $gte + $lte at same value',
+                    query: {
+                        selector: { score: { $gte: 50, $lte: 50 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    expectedResultDocIds: ['cc']
+                },
+                {
+                    info: 'empty range with $gt + $lt at same value',
+                    query: {
+                        selector: { score: { $gt: 50, $lt: 50 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    expectedResultDocIds: []
+                },
+                {
+                    info: '$gt at the maximum stored value returns empty',
+                    query: {
+                        selector: { score: { $gt: 100 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: []
+                },
+                {
+                    info: '$lt at the minimum stored value returns empty',
+                    query: {
+                        selector: { score: { $lt: 0 } },
+                        sort: [{ score: 'asc' }]
+                    },
+                    selectorSatisfiedByIndex: true,
+                    expectedResultDocIds: []
+                }
+            ]
+        });
+
+    testCorrectQueries<{
+        id: string;
+        temperature: number;
+    }>({
+        testTitle: 'negative decimal numbers sort and query correctly',
+        data: [
+            { id: 'a', temperature: -1.9 },
+            { id: 'b', temperature: -1.5 },
+            { id: 'c', temperature: -1.1 },
+            { id: 'd', temperature: -1.0 },
+            { id: 'e', temperature: 0.0 },
+            { id: 'f', temperature: 1.1 },
+            { id: 'g', temperature: 1.5 }
+        ],
+        schema: {
+            primaryKey: 'id',
+            type: 'object',
+            version: 0,
+            properties: {
+                id: { type: 'string', maxLength: 20 },
+                temperature: { type: 'number', minimum: -100, maximum: 100, multipleOf: 0.01 }
+            },
+            required: ['id', 'temperature'],
+            indexes: ['temperature']
+        },
+        queries: [
+            {
+                info: 'sort ascending returns negative decimals in correct order',
+                query: {
+                    selector: { temperature: { $gte: -2 } },
+                    sort: [{ temperature: 'asc' }]
+                },
+                selectorSatisfiedByIndex: true,
+                expectedResultDocIds: ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+            },
+            {
+                info: '$gt on a negative decimal excludes smaller values',
+                query: {
+                    selector: { temperature: { $gt: -1.5 } },
+                    sort: [{ temperature: 'asc' }]
+                },
+                selectorSatisfiedByIndex: true,
+                expectedResultDocIds: ['c', 'd', 'e', 'f', 'g']
+            },
+            {
+                info: '$lt on a negative decimal excludes larger values',
+                query: {
+                    selector: { temperature: { $lt: -1.0 } },
+                    sort: [{ temperature: 'asc' }]
+                },
+                selectorSatisfiedByIndex: true,
+                expectedResultDocIds: ['a', 'b', 'c']
+            },
+            {
+                info: 'range query with negative decimal bounds',
+                query: {
+                    selector: { temperature: { $gte: -1.5, $lte: -1.1 } },
+                    sort: [{ temperature: 'asc' }]
+                },
+                expectedResultDocIds: ['b', 'c']
+            }
+        ]
+    });
+
+    testCorrectQueries<{
+        id: string;
+        score: number;
+    }>({
+        testTitle: 'compound index with decimal numbers preserves correct sort order',
+        data: [
+            { id: 'a', score: 0 },
+            { id: 'b', score: 1 },
+            { id: 'c', score: 2 },
+            { id: 'd', score: 3 },
+            { id: 'e', score: 4 },
+            { id: 'f', score: 5 }
+        ],
+        schema: {
+            primaryKey: 'id',
+            type: 'object',
+            version: 0,
+            properties: {
+                id: { type: 'string', maxLength: 20 },
+                score: { type: 'number', minimum: -10, maximum: 10, multipleOf: 0.1 }
+            },
+            required: ['id', 'score'],
+            indexes: ['score']
+        },
+        queries: [
+            {
+                info: '$gt on integer value with decimal-precision index',
+                query: {
+                    selector: { score: { $gt: 2 } },
+                    sort: [{ score: 'asc' }]
+                },
+                selectorSatisfiedByIndex: true,
+                expectedResultDocIds: ['d', 'e', 'f']
+            },
+            {
+                info: '$lt on integer value with decimal-precision index',
+                query: {
+                    selector: { score: { $lt: 3 } },
+                    sort: [{ score: 'asc' }]
+                },
+                selectorSatisfiedByIndex: true,
+                expectedResultDocIds: ['a', 'b', 'c']
+            },
+            {
+                info: '$gte/$lte range with decimal-precision index',
+                query: {
+                    selector: { score: { $gte: 1, $lte: 4 } },
+                    sort: [{ score: 'asc' }]
+                },
+                expectedResultDocIds: ['b', 'c', 'd', 'e']
+            }
+        ]
+    });
+
+    testCorrectQueries<{
+        id: string;
+        status: string;
+        age: number;
+    }>({
+        testTitle: 'enum field with $eq should be sort-irrelevant and return correct results',
+        data: [
+            { id: '1', status: 'active', age: 30 },
+            { id: '2', status: 'inactive', age: 10 },
+            { id: '3', status: 'active', age: 10 },
+            { id: '4', status: 'active', age: 50 },
+            { id: '5', status: 'pending', age: 20 },
+        ],
+        schema: {
+            version: 0,
+            primaryKey: 'id',
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    maxLength: 100
+                },
+                status: {
+                    type: 'string',
+                    enum: ['active', 'inactive', 'pending'],
+                    maxLength: 20
+                },
+                age: {
+                    type: 'integer',
+                    minimum: 0,
+                    maximum: 150,
+                    multipleOf: 1
+                }
+            },
+            indexes: [
+                ['status', 'age']
+            ],
+            required: ['id', 'status', 'age']
+        },
+        queries: [
+            {
+                info: 'enum $eq with sort on next index field returns correct results in order',
+                query: {
+                    selector: {
+                        status: { $eq: 'active' }
+                    },
+                    sort: [{ age: 'asc' }]
+                },
+                expectedResultDocIds: ['3', '1', '4']
+            }
+        ]
+    });
+
+    /**
+     * getStartIndexStringFromUpperBound() incorrectly mapped INDEX_MIN to '1'
+     * for boolean fields, widening the index range when a preceding field
+     * used exclusive bounds ($gt/$lt). With selectorSatisfiedByIndex=true,
+     * boundary documents were returned without per-document filtering.
+     */
+    testCorrectQueries<{ id: string; age: number; isActive: boolean; }>({
+        testTitle: '$gt/$lt on field before boolean index field should not include boundary docs',
+        schema: {
+            version: 0,
+            primaryKey: 'id',
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    maxLength: 100
+                },
+                age: {
+                    type: 'integer',
+                    minimum: 0,
+                    maximum: 150,
+                    multipleOf: 1
+                },
+                isActive: {
+                    type: 'boolean'
+                }
+            },
+            indexes: [
+                ['age', 'isActive']
+            ],
+            required: ['id', 'age', 'isActive']
+        },
+        data: [
+            { id: 'a', age: 10, isActive: true },
+            { id: 'b', age: 30, isActive: true },
+            { id: 'c', age: 30, isActive: false },
+            { id: 'd', age: 50, isActive: false },
+            { id: 'e', age: 50, isActive: true },
+            { id: 'f', age: 70, isActive: false }
+        ],
+        queries: [
+            {
+                info: '$gt/$lt exclusive bounds must not include boundary age values',
+                query: {
+                    selector: {
+                        age: { $gt: 20, $lt: 50 }
+                    },
+                    sort: [{ age: 'asc' }]
+                },
+                expectedResultDocIds: ['b', 'c'],
+                selectorSatisfiedByIndex: true
+            }
+        ]
+    });
+
+    testCorrectQueries({
+        testTitle: 'string fields with control characters (codepoint < 32) must be found by queries',
+        schema: {
+            version: 0,
+            primaryKey: 'id',
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    maxLength: 100
+                },
+                name: {
+                    type: 'string',
+                    maxLength: 100
+                },
+                age: {
+                    type: 'integer',
+                    minimum: 0,
+                    maximum: 150,
+                    multipleOf: 1
+                }
+            },
+            indexes: [
+                ['name'],
+                ['age', 'name']
+            ],
+            required: ['id', 'name', 'age']
+        },
+        data: [
+            { id: 'tab-name', name: '\tAlice', age: 30 },
+            { id: 'newline-name', name: '\nBob', age: 25 },
+            { id: 'normal-name', name: 'Carol', age: 35 },
+            { id: 'space-name', name: ' Dave', age: 40 }
+        ],
+        queries: [
+            {
+                info: 'find all documents including those with control characters in string fields',
+                query: {
+                    selector: {},
+                    sort: [{ name: 'asc' }]
+                },
+                expectedResultDocIds: ['tab-name', 'newline-name', 'space-name', 'normal-name']
+            },
+            {
+                info: 'control character strings with $gte should be found',
+                query: {
+                    selector: {
+                        name: { $gte: '\t' }
+                    },
+                    sort: [{ name: 'asc' }]
+                },
+                expectedResultDocIds: ['tab-name', 'newline-name', 'space-name', 'normal-name']
+            },
+            {
+                info: 'compound index: $gt on first field must not leak docs via control chars in second field',
+                query: {
+                    selector: {
+                        age: { $gt: 30 }
+                    },
+                    sort: [{ age: 'asc' }]
+                },
+                expectedResultDocIds: ['normal-name', 'space-name']
+            }
+        ]
+    });
+
+    testCorrectQueries<{ id: string; score: number; }>({
+        testTitle: 'range bound outside the schema minimum/maximum must still match the boundary documents',
+        data: [
+            { id: 'aa', score: 0 },
+            { id: 'bb', score: 1 },
+            { id: 'cc', score: 50 },
+            { id: 'dd', score: 99 },
+            { id: 'ee', score: 100 }
+        ],
+        schema: {
+            version: 0,
+            indexes: [['score']],
+            primaryKey: 'id',
+            type: 'object',
+            properties: {
+                id: { type: 'string', maxLength: 2 },
+                score: { type: 'number', minimum: 0, maximum: 100, multipleOf: 1 }
+            },
+            required: ['id', 'score']
+        },
+        queries: [
+            {
+                info: '$gt below the schema minimum must include the minimum document',
+                query: { selector: { score: { $gt: -10 } }, sort: [{ score: 'asc' }] },
+                expectedResultDocIds: ['aa', 'bb', 'cc', 'dd', 'ee']
+            },
+            {
+                info: '$lt above the schema maximum must include the maximum document',
+                query: { selector: { score: { $lt: 110 } }, sort: [{ score: 'asc' }] },
+                expectedResultDocIds: ['aa', 'bb', 'cc', 'dd', 'ee']
+            },
+            {
+                info: '$gt at the exact minimum must still exclude it',
+                query: { selector: { score: { $gt: 0 } }, sort: [{ score: 'asc' }] },
+                expectedResultDocIds: ['bb', 'cc', 'dd', 'ee']
+            },
+            {
+                info: '$lt at the exact maximum must still exclude it',
+                query: { selector: { score: { $lt: 100 } }, sort: [{ score: 'asc' }] },
+                expectedResultDocIds: ['aa', 'bb', 'cc', 'dd']
+            }
+        ]
     });
 });

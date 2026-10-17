@@ -1,6 +1,7 @@
 import {
     Observable,
     Subject,
+    distinctUntilChanged,
     filter,
     firstValueFrom,
     map,
@@ -23,6 +24,7 @@ import type {
 } from '../../types/index.d.ts';
 import {
     MIGRATION_DEFAULT_BATCH_SIZE,
+    MIGRATION_LEADER_TIMING,
     addMigrationStateToDatabase,
     getOldCollectionMeta,
     migrateDocumentData,
@@ -37,6 +39,7 @@ import {
     errorToPlainJson,
     getDefaultRevision,
     getDefaultRxDocumentMeta,
+    now,
     promiseWait
 } from '../utils/index.ts';
 import type {
@@ -84,9 +87,22 @@ export class RxMigrationState {
     public readonly mustMigrate: ReturnType<typeof mustMigrate>;
     public readonly statusDocId: string;
     public readonly $: Observable<RxMigrationStatus>;
-    public replicationState?: RxStorageInstanceReplicationState<any>;
+
+    /**
+     * Contains ALL replication states
+     * that are ever used in this migration state.
+     */
+    public replicationStates = new Set<RxStorageInstanceReplicationState<any>>();
+    /**
+     * All storage instances that are opened by the migration itself.
+     * They have to be closed when the migration is canceled,
+     * otherwise they stay open forever when the migration is interrupted,
+     * for example when the database is closed while the migration is running.
+     */
+    public openStorageInstances = new Set<RxStorageInstance<any, any, any>>();
     public canceled: boolean = false;
     public broadcastChannel?: BroadcastChannel;
+    public heartbeatInterval?: ReturnType<typeof setInterval>;
     constructor(
         public readonly collection: RxCollection,
         public readonly migrationStrategies: NumberFunctionMap,
@@ -109,8 +125,13 @@ export class RxMigrationState {
             this.database.internalStore,
             this.statusDocId
         ).pipe(
-            filter(d => !!d),
-            map(d => ensureNotFalsy(d).data),
+            filter((d: RxMigrationStatusDocument | null) => !!d),
+            map((d: RxMigrationStatusDocument | null) => ensureNotFalsy(d).data),
+            /**
+             * The heartbeat of the leader rewrites the status document
+             * without changing its data, which must not emit here.
+             */
+            distinctUntilChanged((a, b) => deepEqual(a, b)),
             shareReplay(RXJS_SHARE_REPLAY_DEFAULTS)
         );
     }
@@ -129,16 +150,53 @@ export class RxMigrationState {
      * is run on a different browser tab.
      */
     async startMigration(batchSize: number = MIGRATION_DEFAULT_BATCH_SIZE): Promise<void> {
-        const must = await this.mustMigrate;
-        if (!must) {
-            return;
-        }
         if (this.started) {
             throw newRxError('DM1');
         }
+        /**
+         * Block outside writes to the collection while the migration is running.
+         * The migration replication fills the new storage and concurrent writes
+         * could conflict with that process.
+         * We set the flag synchronously (before the `mustMigrate` await) so that
+         * any code calling `migratePromise()` and then immediately performing a
+         * write will reliably observe the block.
+         * If no migration is actually needed, the flag is cleared again below.
+         */
+        this.collection.migrationInProgress = true;
+        const must = await this.mustMigrate;
+        if (!must) {
+            this.collection.migrationInProgress = false;
+            return;
+        }
         this.started = true;
 
+        /**
+         * Ensure the migration is cleaned up when the collection or the
+         * database is closed. Registering this here (instead of inside
+         * migrateStorage()) guarantees the broadcastChannel / leader
+         * election is released even if the migration throws before the
+         * replication is set up.
+         */
+        this.collection.onClose.push(() => this.cancel());
+        this.database.onClose.push(() => this.cancel());
 
+        try {
+            await this.runMigration(batchSize);
+        } finally {
+            this.stopHeartbeat();
+            /**
+             * Always close the broadcastChannel so that the tab does not
+             * stay leader forever if the migration throws on any code path.
+             * @link https://github.com/pubkey/rxdb/pull/7827
+             */
+            if (this.broadcastChannel) {
+                await this.broadcastChannel.close();
+                this.broadcastChannel = undefined;
+            }
+        }
+    }
+
+    private async runMigration(batchSize: number): Promise<void> {
         /**
          * To ensure that multiple tabs do not migrate the same collection,
          * we use a new broadcastChannel/leaderElector for each collection.
@@ -153,7 +211,14 @@ export class RxMigrationState {
                 this.collection.schema.version
             ].join('|'));
             const leaderElector = createLeaderElection(this.broadcastChannel);
-            await leaderElector.awaitLeadership();
+            const waitResult = await this.awaitLeadershipOrStalledLeader(
+                () => leaderElector.awaitLeadership()
+            );
+            if (waitResult === 'DONE' || this.canceled) {
+                this.collection.migrationInProgress = false;
+                return;
+            }
+            this.startHeartbeat();
         }
 
         /**
@@ -172,6 +237,7 @@ export class RxMigrationState {
             password: this.database.password,
             devMode: overwritable.isDevMode()
         });
+        this.openStorageInstances.add(oldStorageInstance);
 
 
         const connectedInstances = await this.getConnectedStorageInstances();
@@ -206,6 +272,7 @@ export class RxMigrationState {
                         connectedInstance.newStorage,
                         batchSize
                     );
+                    this.openStorageInstances.delete(connectedInstance.newStorage);
                     await connectedInstance.newStorage.close();
                 })
             );
@@ -222,8 +289,19 @@ export class RxMigrationState {
                 batchSize
             );
         } catch (err) {
+            this.openStorageInstances.delete(oldStorageInstance);
             await oldStorageInstance.close();
+            this.collection.migrationInProgress = false;
             await this.updateStatus(s => {
+                /**
+                 * When a frozen leader was taken over by another tab
+                 * and continues later, it can fail because the other tab
+                 * has already finished the migration and removed the old storages.
+                 * A finished migration must not be marked as failed.
+                 */
+                if (s.status === 'DONE') {
+                    return s;
+                }
                 s.status = 'ERROR';
                 s.error = errorToPlainJson(err as Error);
                 return s;
@@ -231,36 +309,148 @@ export class RxMigrationState {
             return;
         }
 
-        // remove old collection meta doc
-        try {
-            await writeSingle(
-                this.database.internalStore,
-                {
-                    previous: oldCollectionMeta,
-                    document: Object.assign(
-                        {},
-                        oldCollectionMeta,
-                        {
-                            _deleted: true
-                        }
-                    )
-                },
-                'rx-migration-remove-collection-meta'
-            );
-        } catch (error) {
-            const isConflict = isBulkWriteConflictError<InternalStoreCollectionDocType>(error);
-            if (isConflict && !!isConflict.documentInDb._deleted) {
-            } else {
-                throw error;
+        /**
+         * Remove old collection meta doc with retry on conflict.
+         * The _rev of the meta doc may have changed since we fetched it
+         * at the start of migration (due to updateStatus() calls),
+         * so we re-fetch before each deletion attempt.
+         * @link https://github.com/pubkey/rxdb/issues/7791
+         */
+        while (true) {
+            const currentMeta = await getOldCollectionMeta(this);
+            if (!currentMeta) {
+                break;
+            }
+            try {
+                await writeSingle(
+                    this.database.internalStore,
+                    {
+                        previous: currentMeta,
+                        document: Object.assign(
+                            {},
+                            currentMeta,
+                            {
+                                _deleted: true
+                            }
+                        )
+                    },
+                    'rx-migration-remove-collection-meta'
+                );
+                break;
+            } catch (error) {
+                const isConflict = isBulkWriteConflictError<InternalStoreCollectionDocType>(error);
+                if (isConflict && !!isConflict.documentInDb._deleted) {
+                    break;
+                } else if (isConflict) {
+                    continue;
+                } else {
+                    throw error;
+                }
             }
         }
 
+        this.collection.migrationInProgress = false;
         await this.updateStatus(s => {
             s.status = 'DONE';
             return s;
         });
-        if (this.broadcastChannel) {
-            await this.broadcastChannel.close();
+    }
+
+    /**
+     * Waits until this instance is the leader of the migration.
+     * Returns 'STALLED' when the current leader did not write
+     * the status document for longer than MIGRATION_LEADER_TIMING.timeout,
+     * because then the leader is likely frozen, throttled or discarded
+     * by the browser and this instance takes over the migration.
+     * Returns 'DONE' when another instance has finished the migration.
+     * @link https://github.com/pubkey/rxdb/issues/9191
+     */
+    public async awaitLeadershipOrStalledLeader(
+        awaitLeadership: () => Promise<any>
+    ): Promise<'LEADER' | 'STALLED' | 'DONE'> {
+        let waiting = true;
+        const startTime = now();
+        const leadershipPromise = awaitLeadership().then(() => 'LEADER' as const);
+        const stalledPromise = (async () => {
+            while (waiting && !this.canceled) {
+                await promiseWait(MIGRATION_LEADER_TIMING.heartbeatInterval);
+                if (!waiting || this.canceled) {
+                    break;
+                }
+                const statusDoc = await getSingleDocument<RxMigrationStatusDocument>(
+                    this.database.internalStore,
+                    this.statusDocId
+                );
+                if (statusDoc && statusDoc.data.status === 'DONE') {
+                    return 'DONE' as const;
+                }
+                const lastActivity = Math.max(
+                    startTime,
+                    statusDoc ? statusDoc._meta.lwt : 0
+                );
+                if (now() - lastActivity > MIGRATION_LEADER_TIMING.timeout) {
+                    return 'STALLED' as const;
+                }
+            }
+            /**
+             * Waiting has ended because of leadership or cancellation,
+             * the other promise of the race decides the result.
+             */
+            return new Promise<never>(() => { });
+        })();
+        try {
+            return await Promise.race([leadershipPromise, stalledPromise]);
+        } finally {
+            waiting = false;
+        }
+    }
+
+    /**
+     * Regularly rewrites the status document while this instance
+     * runs the migration, so that other instances can see that
+     * the leader is still alive.
+     * Frozen or discarded browser tabs do not run timers,
+     * so the heartbeat stops when the leader stops working.
+     */
+    public startHeartbeat() {
+        this.stopHeartbeat();
+        this.heartbeatInterval = setInterval(() => {
+            this.updateStatusQueue = this.updateStatusQueue.then(async () => {
+                if (this.canceled) {
+                    return;
+                }
+                try {
+                    const previous = await getSingleDocument<RxMigrationStatusDocument>(
+                        this.database.internalStore,
+                        this.statusDocId
+                    );
+                    if (!previous || previous.data.status !== 'RUNNING') {
+                        return;
+                    }
+                    const newDoc = clone(previous);
+                    newDoc._meta.lwt = now();
+                    await writeSingle<RxMigrationStatusDocument>(
+                        this.database.internalStore,
+                        {
+                            previous,
+                            document: newDoc
+                        },
+                        INTERNAL_CONTEXT_MIGRATION_STATUS
+                    );
+                } catch (_err) {
+                    /**
+                     * A failed heartbeat is not a problem,
+                     * conflicts mean another write has refreshed the document anyway.
+                     */
+                }
+            });
+        }, MIGRATION_LEADER_TIMING.heartbeatInterval);
+    }
+
+    public stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = undefined;
         }
     }
 
@@ -308,7 +498,7 @@ export class RxMigrationState {
                 for (const oneHandler of useHandlers) {
                     status = oneHandler(status);
                 }
-                status.count.percent = Math.round((status.count.handled / status.count.total) * 100);
+                status.count.percent = status.count.total === 0 ? 100 : Math.round((status.count.handled / status.count.total) * 100);
 
                 if (
                     newDoc && previous &&
@@ -347,9 +537,6 @@ export class RxMigrationState {
         newStorage: RxStorageInstance<any, any, any>,
         batchSize: number
     ) {
-
-        this.collection.onClose.push(() => this.cancel());
-        this.database.onClose.push(() => this.cancel());
         const replicationMetaStorageInstance = await this.database.storage.createStorageInstance({
             databaseName: this.database.name,
             collectionName: 'rx-migration-state-meta-' + oldStorage.collectionName + '-' + oldStorage.schema.version,
@@ -360,6 +547,7 @@ export class RxMigrationState {
             password: this.database.password,
             devMode: overwritable.isDevMode()
         });
+        this.openStorageInstances.add(replicationMetaStorageInstance);
 
         const replicationHandlerBase = rxStorageInstanceToReplicationHandler(
             newStorage,
@@ -374,6 +562,7 @@ export class RxMigrationState {
 
         const replicationState = replicateRxStorageInstance({
             keepMeta: true,
+            skipStoringPullMeta: false,
             identifier: [
                 'rx-migration-state',
                 oldStorage.collectionName,
@@ -430,8 +619,25 @@ export class RxMigrationState {
                     // filter out the documents where the migration strategy returned null
                     migratedRows = migratedRows.filter(row => !!row && !!row.newDocumentState);
 
-                    const result = await replicationHandlerBase.masterWrite(migratedRows as any);
-                    return result;
+                    await replicationHandlerBase.masterWrite(migratedRows as any);
+
+                    /**
+                     * Push-conflicts are ignored on purpose,
+                     * we keep what is already stored in the new storage
+                     * and drop the 'old' document state.
+                     *
+                     * Reporting the conflicts to the upstream would make the migration
+                     * run forever: The rows are pushed with `assumedMasterState: undefined`
+                     * which the replication protocol handles as an insert, so every document
+                     * that already exists in the new storage is a conflict. The upstream then
+                     * resolves these conflicts by writing the master state back into the
+                     * old storage, that write emits on the fork change stream, the same
+                     * documents are read again and the cycle starts over.
+                     * This happens whenever documents are already in the new storage before
+                     * the migration runs, for example when a previous migration was
+                     * interrupted after it has written some documents.
+                     */
+                    return [];
                 },
                 masterChangeStream$: new Subject<any>().asObservable()
             },
@@ -442,10 +648,10 @@ export class RxMigrationState {
             conflictHandler: defaultConflictHandler,
             hashFunction: this.database.hashFunction
         });
-
+        this.replicationStates.add(replicationState);
 
         let hasError: RxError | RxTypeError | false = false;
-        replicationState.events.error.subscribe(err => hasError = err);
+        replicationState.events.error.subscribe((err: RxError | RxTypeError) => hasError = err);
 
         // update replication status on each change
         replicationState.events.processed.up.subscribe(() => {
@@ -460,17 +666,25 @@ export class RxMigrationState {
 
         await this.updateStatusQueue;
         if (hasError) {
+            await cancelRxStorageReplication(replicationState);
+            this.openStorageInstances.delete(replicationMetaStorageInstance);
             await replicationMetaStorageInstance.close();
             throw hasError;
         }
 
         // cleanup old storages
-        await Promise.all([
-            oldStorage.remove(),
-            replicationMetaStorageInstance.remove()
-        ]);
+        this.openStorageInstances.delete(oldStorage);
+        this.openStorageInstances.delete(replicationMetaStorageInstance);
+        /**
+         * Remove the storages one after another, not in parallel.
+         * Storages like SQLite share a single connection between all
+         * storage instances of one database and can only run
+         * one operation on it at the same time.
+         */
+        await oldStorage.remove();
+        await replicationMetaStorageInstance.remove();
 
-        await this.cancel();
+        await cancelRxStorageReplication(replicationState);
     }
 
     /**
@@ -480,9 +694,24 @@ export class RxMigrationState {
      */
     public async cancel() {
         this.canceled = true;
-        if (this.replicationState) {
-            await cancelRxStorageReplication(this.replicationState);
-        }
+        this.stopHeartbeat();
+        this.collection.migrationInProgress = false;
+        await Promise.all(
+            Array.from(this.replicationStates.values())
+                .map(state => cancelRxStorageReplication(state))
+        );
+
+        /**
+         * Close the storage instances that were opened by the migration.
+         * After the replications are canceled, migrateStorage() does not
+         * continue and therefore never closes them on its own.
+         */
+        const openInstances = Array.from(this.openStorageInstances);
+        this.openStorageInstances.clear();
+        await Promise.all(
+            openInstances.map(instance => instance.close().catch(() => { }))
+        );
+
         if (this.broadcastChannel) {
             await this.broadcastChannel.close();
         }
@@ -557,6 +786,8 @@ export class RxMigrationState {
                                 collectionName: connectedStorage.collectionName
                             })
                         ]);
+                        this.openStorageInstances.add(oldStorage);
+                        this.openStorageInstances.add(newStorage);
                         ret.push({ oldStorage, newStorage });
                     })
             )
@@ -568,7 +799,7 @@ export class RxMigrationState {
 
 
     async migratePromise(batchSize?: number): Promise<RxMigrationStatus> {
-        this.startMigration(batchSize);
+        this.startMigration(batchSize).catch(() => { });
         const must = await this.mustMigrate;
         if (!must) {
             return {
@@ -576,7 +807,7 @@ export class RxMigrationState {
                 collectionName: this.collection.name,
                 count: {
                     handled: 0,
-                    percent: 0,
+                    percent: 100,
                     total: 0
                 }
             };
@@ -585,12 +816,12 @@ export class RxMigrationState {
         const result = await Promise.race([
             firstValueFrom(
                 this.$.pipe(
-                    filter(d => d.status === 'DONE')
+                    filter((d: RxMigrationStatus) => d.status === 'DONE')
                 )
             ),
             firstValueFrom(
                 this.$.pipe(
-                    filter(d => d.status === 'ERROR')
+                    filter((d: RxMigrationStatus) => d.status === 'ERROR')
                 )
             )
         ]);

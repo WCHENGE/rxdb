@@ -1,25 +1,26 @@
 ---
-title: 🚀 Quickstart
+title: Quickstart
 slug: quickstart.html
 description: Learn how to build a realtime app with RxDB. Follow this quickstart for setup, schema creation, data operations, and real-time syncing.
+image: /headers/quickstart.jpg
 ---
 
 import {Steps} from '@site/src/components/steps';
 import {TriggerEvent} from '@site/src/components/trigger-event';
 import {Tabs} from '@site/src/components/tabs';
+import {NavbarDropdownSyncList} from '@site/src/components/navbar-dropdowns';
 
-<TriggerEvent type="page_quickstart" value={0.5} maxPerUser={1}/>
+import { IconQuickstart } from '@site/src/components/icons/quickstart';
+import { HeadlineWithIcon } from '@site/src/components/headline-with-icon';
 
-# RxDB Quickstart
+<TriggerEvent type="page_quickstart" value={0.2} maxPerUser={1} redditEventType="PageVisit" />
+
+# <HeadlineWithIcon h1 icon={<IconQuickstart />}>RxDB Quickstart</HeadlineWithIcon>
 
 Welcome to the RxDB Quickstart. Here we'll learn how to create a simple real-time app with the RxDB database that is able to store and query data persistently in a browser and does realtime updates to the UI on changes.
 
 <br />
-<center>
-    <a href="https://rxdb.info/">
-        <img src="/files/logo/rxdb_javascript_database.svg" alt="JavaScript Embedded Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Embedded Database" />
 
 <br />
 
@@ -36,6 +37,7 @@ npm install rxdb rxjs
 
 RxDB is able to run in a wide range of JavaScript runtimes like browsers, mobile apps, desktop and servers. Therefore different storage engines exist that ensure the best performance depending on where RxDB is used.
 
+
 <Tabs>
 
 #### LocalStorage
@@ -43,7 +45,9 @@ RxDB is able to run in a wide range of JavaScript runtimes like browsers, mobile
 Use this for the simplest browser setup and very small datasets. It has a tiny bundle size and works anywhere [localStorage](./articles/localstorage.md) is available, but is not optimized for large data or heavy writes.
 
 ```ts
-import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
+import {
+    getRxStorageLocalstorage
+} from 'rxdb/plugins/storage-localstorage';
 
 let storage = getRxStorageLocalstorage();
 ```
@@ -54,18 +58,22 @@ let storage = getRxStorageLocalstorage();
 The premium [IndexedDB storage](./rx-storage-indexeddb.md) is a high-performance, browser-native storage with a smaller bundle and faster startup compared to Dexie-based IndexedDB. Recommended when you have [👑 premium](/premium/) access and care about performance and bundle size.
 
 ```ts
-import { getRxStorageIndexedDB } from 'rxdb-premium/plugins/storage-indexeddb';
+import {
+    getRxStorageIndexedDB
+} from 'rxdb-premium/plugins/storage-indexeddb';
 
-let storage = getRxStorageDexie();
+let storage = getRxStorageIndexedDB();
 ```
 
 
 #### Dexie.js
 
-[Dexie.js](./rx-storage-dexie.md) is a friendly wrapper around IndexedDB and is a great default for browser apps when you don’t use premium. It’s reliable, works well for medium-sized datasets, and is free to use.
+[Dexie.js](./rx-storage-dexie.md) is a friendly wrapper around IndexedDB and is a great default for browser apps when you don't use premium. It's reliable, works well for medium-sized datasets, and is free to use.
 
 ```ts
-import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import {
+    getRxStorageDexie
+} from 'rxdb/plugins/storage-dexie';
 
 let storage = getRxStorageDexie();
 ```
@@ -79,12 +87,13 @@ let storage = getRxStorageDexie();
 
 ```ts
 import {
-getRxStorageSQLite,
-getSQLiteBasicsNode
+    getRxStorageSQLite,
+    getSQLiteBasicsNode
 } from 'rxdb-premium/plugins/storage-sqlite';
 
 // Provide the sqliteBasics adapter for your runtime, e.g. Node.js, React Native, etc.
-// For example in Node.js you would derive sqliteBasics from a sqlite3-compatible library:
+// For example in Node.js you would derive
+// sqliteBasics from a sqlite3-compatible library:
 import sqlite3 from 'sqlite3';
 
 const storage = getRxStorageSQLite({
@@ -96,14 +105,26 @@ const storage = getRxStorageSQLite({
 
 ```ts
 import {
-getRxStorageSQLiteTrial,
-getSQLiteBasicsNodeNative
+    getRxStorageSQLiteTrial,
+    getSQLiteBasicsNodeNative
 } from 'rxdb/plugins/storage-sqlite';
 import { DatabaseSync } from 'node:sqlite';
 
 const storage = getRxStorageSQLiteTrial({
 sqliteBasics: getSQLiteBasicsNodeNative(DatabaseSync)
 });
+```
+
+#### Expo Filesystem 👑
+
+For React Native and Expo applications, the [Expo Filesystem storage](./rx-storage-filesystem-expo.md) offers superior performance compared to SQLite and Async Storage by utilizing OPFS JSI bindings.
+
+```ts
+import {
+    getRxStorageExpoAsync
+} from 'rxdb-premium/plugins/storage-filesystem-expo';
+
+let storage = getRxStorageExpoAsync();
 ```
 
 #### And more...
@@ -119,8 +140,8 @@ There are many more storages such as [MongoDB](./rx-storage-mongodb.md), [DenoKV
         RxDB provides a wide range of storages depending on your JavaScript runtime and performance needs.
         <ul>
     <li>In the Browser: Use the <a href="/rx-storage-localstorage.html">LocalStorage</a> storage for simple setup and small build size. For bigger datasets, use either the <a href="/rx-storage-dexie.html">dexie.js storage</a> (free) or the <a href="/rx-storage-indexeddb.html">IndexedDB RxStorage</a> if you have <a href="/premium/">👑 premium access</a> which is a bit faster and has a smaller build size.</li>
-    <li>In <a href="/electron-database.html">Electron</a> and <a href="/react-native-database.html">ReactNative</a>: Use the <a href="./rx-storage-sqlite.html">SQLite RxStorage</a> if you have <a href="/premium/">👑 premium access</a> or the <a href="/rx-storage-sqlite.html">trial-SQLite RxStorage</a> for tryouts.</li>
-    <li>In Capacitor: Use the <a href="/rx-storage-sqlite.html">SQLite RxStorage</a> if you have <a href="/premium/">👑 premium access</a>, otherwise use the <a href="/rx-storage-localstorage.html">localStorage</a> storage.</li>
+    <li>In <a href="/electron-database.html">Electron</a> and <a href="/react-native-database.html">React Native</a>: Use the <a href="./rx-storage-sqlite.html">SQLite RxStorage</a> if you have <a href="/premium/">👑 premium access</a> or the <a href="/rx-storage-sqlite.html">SQLite Trial RxStorage</a> for tryouts.</li>
+    <li>In Capacitor: Use the <a href="/rx-storage-sqlite.html">SQLite RxStorage</a> if you have <a href="/premium/">👑 premium access</a>, otherwise use the <a href="/rx-storage-localstorage.html">LocalStorage</a> storage.</li>
 </ul>
 
     </div>
@@ -197,7 +218,7 @@ await myDatabase.addCollections({
 });
 ```
 
-### Insert a document
+### Insert a Document
 
 Now that we have an RxCollection we can store some [documents](./rx-document.md) in it.
 
@@ -236,7 +257,7 @@ await firstDocument.patch({
 });
 ```
 
-### Delete a document
+### Delete a Document
 
 Delete the document so that it can no longer be found in queries:
 
@@ -262,7 +283,7 @@ observable.subscribe(notDoneDocs => {
 });
 ```
 
-### Observe a Document value
+### Observe a Document Value
 
 You can also subscribe to the fields of a single RxDocument. Add the `$` sign to the desired field and then subscribe to the returned observable.
 
@@ -279,6 +300,54 @@ RxDB has multiple [replication plugins](./replication.md) to replicate database 
 
 
 <Tabs>
+
+#### HTTP
+
+```ts
+import {
+  replicateHTTP,
+  pullQueryBuilderFromRxSchema,
+} from "rxdb/plugins/replication-http";
+
+replicateHTTP({
+  collection: db.todos,
+  push: {
+    handler: async (rows) => {
+      return fetch("https://example.com/api/todos/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rows),
+      }).then((res) => res.json());
+    },
+  },
+
+  pull: {
+    handler: async (lastCheckpoint) => {
+      return fetch(
+        "https://example.com/api/todos/pull?" +
+        new URLSearchParams({
+          checkpoint: JSON.stringify(lastCheckpoint)
+        }),
+      ).then((res) => res.json());
+    },
+  },
+});
+```
+
+
+#### GraphQL
+
+```ts
+import { replicateGraphQL } from 'rxdb/plugins/replication-graphql';
+
+replicateGraphQL({
+    collection: db.todos,
+    url: 'https://example.com/graphql',
+    push: { batchSize: 50 },
+    pull: { batchSize: 50 }
+});
+```
+
 
 #### WebRTC (P2P)
 
@@ -299,18 +368,6 @@ replicateWebRTC({
 })
 ```
 
-#### GraphQL
-
-```ts
-import { replicateGraphQL } from 'rxdb/plugins/replication-graphql';
-
-replicateGraphQL({
-    collection: db.todos,
-    url: 'https://example.com/graphql',
-    push: { batchSize: 50 },
-    pull: { batchSize: 50 }
-});
-```
 
 #### CouchDB
 
@@ -326,40 +383,13 @@ replicateCouchDB({
 });
 ```
 
-#### HTTP
-
-```ts
-import {
-  replicateHTTP,
-  pullQueryBuilderFromRxSchema,
-} from "rxdb/plugins/replication-http";
-
-replicateHTTP({
-  collection: db.todos,
-  push: {
-    handler: async (rows) => {
-      return fetch("https:/example.com/api/todos/push", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rows),
-      }).then((res) => res.json());
-    },
-  },
-
-  pull: {
-    handler: async (lastCheckpoint) => {
-      return fetch(
-        "https://example.com/api/todos/pull?" +
-          new URLSearchParams({ checkpoint: JSON.stringify(lastCheckpoint) }),
-      ).then((res) => res.json());
-    },
-  },
-});
-```
 
 #### And more...
 
 Explore all [replication plugins](/replication.html), including advanced conflict handling and custom protocols.
+
+<NavbarDropdownSyncList />
+
 </Tabs>
 </Steps>
 

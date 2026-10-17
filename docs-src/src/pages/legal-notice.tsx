@@ -1,17 +1,15 @@
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Head from '@docusaurus/Head';
 import Layout from '@theme/Layout';
 import React from 'react';
 
 export default function LegalNotice() {
-    const { siteConfig } = useDocusaurusContext();
     return (
         <>
             <Head>
                 <meta name="robots" content="noindex"></meta>
             </Head>
             <Layout
-                title={`Legal Notice - ${siteConfig.title}`}
+                title={'Legal Notice'}
                 description="RxDB Legal Notice"
             >
                 <main>
@@ -36,6 +34,9 @@ export default function LegalNotice() {
 
                         <h6>Umsatzsteuer-ID nach §27a Umsatzsteuergesetz</h6>
                         DE357840955
+
+                        <h6>NCAGE Code (NATO Commercial and Government Entity Code)</h6>
+                        CNP90
 
                         <h6>Verantwortlich für den Inhalt (gem. § 55 Abs. 2 RStV)</h6>
                         Der oben genannte Eigentümer.

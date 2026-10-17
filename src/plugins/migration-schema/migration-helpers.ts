@@ -70,10 +70,22 @@ export function migrateDocumentData(
     const attachmentsBefore = flatClone(docData._attachments);
     const mutateableDocData = clone(docData);
     const meta = mutateableDocData._meta;
+    const deleted = mutateableDocData._deleted;
+    delete mutateableDocData._deleted;
     delete mutateableDocData._meta;
     mutateableDocData._attachments = attachmentsBefore;
 
     let nextVersion = docSchemaVersion + 1;
+
+    /**
+     * Track attachments across chained strategies so that each strategy
+     * receives the document matching the public `WithAttachments<DocData>`
+     * contract, even when an earlier strategy returned a fresh object that
+     * did not forward `_attachments`. A strategy that explicitly rewrites
+     * `_attachments` still wins because its value is carried forward as
+     * the new baseline.
+     */
+    let currentAttachments = attachmentsBefore;
 
     // run the document through migrationStrategies
     let currentPromise = Promise.resolve(mutateableDocData);
@@ -83,7 +95,16 @@ export function migrateDocumentData(
             collection,
             version,
             docOrNull
-        ));
+        )).then(docOrNull => {
+            if (docOrNull !== null) {
+                if (typeof docOrNull._attachments === 'undefined') {
+                    docOrNull._attachments = currentAttachments;
+                } else {
+                    currentAttachments = docOrNull._attachments;
+                }
+            }
+            return docOrNull;
+        });
         nextVersion++;
     }
 
@@ -95,6 +116,7 @@ export function migrateDocumentData(
         if (meta) {
             doc._meta = meta;
         }
+        doc._deleted = deleted;
         return doc;
     });
 }
@@ -126,6 +148,28 @@ export async function mustMigrate(
     return !!oldColDoc;
 }
 export const MIGRATION_DEFAULT_BATCH_SIZE = 200;
+
+/**
+ * With multiInstance: true, only the leader tab runs the migration.
+ * The leader refreshes the migration status document every
+ * `heartbeatInterval` milliseconds. When the status document of a migration
+ * was not written for `timeout` milliseconds, the waiting tabs assume
+ * that the leader is frozen, throttled or discarded by the browser
+ * and take over the migration.
+ * @link https://github.com/pubkey/rxdb/issues/9191
+ */
+export const MIGRATION_LEADER_TIMING = {
+    timeout: 60 * 1000,
+    heartbeatInterval: 5 * 1000
+};
+
+export function setMigrationLeaderTiming(
+    timeout: number,
+    heartbeatInterval: number = Math.max(1, Math.floor(timeout / 4))
+) {
+    MIGRATION_LEADER_TIMING.timeout = timeout;
+    MIGRATION_LEADER_TIMING.heartbeatInterval = heartbeatInterval;
+}
 
 
 export type MigrationStateWithCollection = {

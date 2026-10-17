@@ -1,18 +1,22 @@
 ---
-title: ⚙️ RxStorage Layer - Choose the Perfect RxDB Storage for Every Use Case
+title: RxStorage Layer - Choose the Perfect RxDB Storage for Every Use Case
 slug: rx-storage.html
 description: Discover how RxDB's modular RxStorage lets you swap engines and unlock top performance, no matter the environment or use case.
+image: /headers/rx-storage.jpg
 ---
 
-# RxStorage
+import { IconStorage } from '@site/src/components/icons/storage';
+import { HeadlineWithIcon } from '@site/src/components/headline-with-icon';
 
-RxDB is not a self contained database. Instead the data is stored in an implementation of the [RxStorage interface](https://github.com/pubkey/rxdb/blob/master/src/types/rx-storage.interface.d.ts). This allows you to **switch out** the underlying data layer, depending on the JavaScript environment and performance requirements. For example you can use the SQLite storage for a capacitor app or you can use the LocalStorage RxStorage to store data in localstorage in a browser based application. There are also storages for other JavaScript runtimes like Node.js, React-Native, NativeScript and more.
+# <HeadlineWithIcon h1 icon={<IconStorage />}>RxStorage</HeadlineWithIcon>
+
+RxDB is not a self-contained database. Instead the data is stored in an implementation of the [RxStorage interface](https://github.com/pubkey/rxdb/blob/master/src/types/rx-storage.interface.d.ts). This allows you to **switch out** the underlying data layer, depending on the JavaScript environment and performance requirements. For example you can use the SQLite storage for a capacitor app or you can use the LocalStorage RxStorage to store data in localstorage in a browser-based application. There are also storages for other JavaScript runtimes like Node.js, React-Native, NativeScript and more.
 
 
 ## Quick Recommendations
 
 - In the Browser: Use the [LocalStorage](./rx-storage-localstorage.md) storage for simple setup and small build size. For bigger datasets, use either the [dexie.js storage](./rx-storage-dexie.md) (free) or the [IndexedDB RxStorage](./rx-storage-indexeddb.md) if you have [👑 premium access](/premium/) which is a bit faster and has a smaller build size.
-- In [Electron](./electron-database.md) and [ReactNative](./react-native-database.md): Use the [SQLite RxStorage](./rx-storage-sqlite.md) if you have [👑 premium access](/premium/) or the [trial-SQLite RxStorage](./rx-storage-sqlite.md) for tryouts.
+- In [Electron](./electron-database.md) and [ReactNative](./react-native-database.md): Use the [SQLite RxStorage](./rx-storage-sqlite.md) if you have [👑 premium access](/premium/) or the [trial-SQLite RxStorage](./rx-storage-sqlite.md) for tryouts. For ultimate performance in Expo and React Native, use the [Expo Filesystem RxStorage](./rx-storage-filesystem-expo.md).
 - In Capacitor: Use the [SQLite RxStorage](./rx-storage-sqlite.md) if you have [👑 premium access](/premium/), otherwise use the [localStorage](./rx-storage-localstorage.md) storage.
 
 
@@ -22,14 +26,16 @@ The RxStorage layer of RxDB is very flexible. Here are some examples on how to c
 
 ### Storing much data in a browser securely
 
-Lets say you build a browser app that needs to store a big amount of data as secure as possible. Here we can use a combination of the storages (encryption, IndexedDB, compression, schema-checks) that increase security and reduce the stored data size.
+Lets say you build a browser app that needs to store a big amount of data as securely as possible. Here we can use a combination of the storages (encryption, IndexedDB, compression, schema-checks) that increase security and reduce the stored data size.
 
 We use the schema-validation on the top level to ensure schema-errors are clearly readable and do not contain [encrypted](./encryption.md)/[compressed](./key-compression.md) data. The encryption is used inside of the compression because encryption of compressed data is more efficient.
 
 ```ts
 import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import { wrappedKeyCompressionStorage } from 'rxdb/plugins/key-compression';
-import { wrappedKeyEncryptionCryptoJsStorage } from 'rxdb/plugins/encryption-crypto-js';
+import {
+    wrappedKeyEncryptionCryptoJsStorage
+} from 'rxdb/plugins/encryption-crypto-js';
 import { getRxStorageIndexedDB } from 'rxdb-premium/plugins/storage-indexeddb';
 
 const myDatabase = await createRxDatabase({
@@ -52,7 +58,9 @@ Also we can utilize a combination of storages to create a database that is optim
 import { getRxStorageSharding } from 'rxdb-premium/plugins/storage-sharding';
 import { getRxStorageWorker } from 'rxdb-premium/plugins/storage-worker';
 import { getRxStorageIndexedDB } from 'rxdb-premium/plugins/storage-indexeddb';
-import { getLocalstorageMetaOptimizerRxStorage } from 'rxdb-premium/plugins/storage-localstorage-meta-optimizer';
+import {
+    getLocalstorageMetaOptimizerRxStorage
+} from 'rxdb-premium/plugins/storage-localstorage-meta-optimizer';
 
 const myDatabase = await createRxDatabase({
     storage: getLocalstorageMetaOptimizerRxStorage({
@@ -68,11 +76,15 @@ const myDatabase = await createRxDatabase({
 
 ### Low Latency on Writes and Simple Reads
 
-Here we create a storage configuration that is optimized to have a low latency on simple reads and writes. It uses the memory-mapped storage to fetch and store data in memory. For persistence the OPFS storage is used in the main thread which has lower latency for fetching big chunks of data when at initialization the data is loaded from disc into memory. We do not use workers because sending data from the main thread to workers and backwards would increase the latency.
+Here we create a storage configuration that is optimized to have a low latency on simple reads and writes. It uses the memory-mapped storage to fetch and store data in memory. For persistence the OPFS storage is used in the main thread which has lower latency for fetching big chunks of data when at initialization the data is loaded from disk into memory. We do not use workers because sending data from the main thread to workers and backwards would increase the latency.
 
 ```ts
-import { getLocalstorageMetaOptimizerRxStorage } from 'rxdb-premium/plugins/storage-localstorage-meta-optimizer';
-import { getMemoryMappedRxStorage } from 'rxdb-premium/plugins/storage-memory-mapped';
+import {
+    getLocalstorageMetaOptimizerRxStorage
+} from 'rxdb-premium/plugins/storage-localstorage-meta-optimizer';
+import {
+    getMemoryMappedRxStorage
+} from 'rxdb-premium/plugins/storage-memory-mapped';
 import { getRxStorageOPFSMainThread } from 'rxdb-premium/plugins/storage-worker';
 
 
@@ -91,11 +103,11 @@ const myDatabase = await createRxDatabase({
 
 ### Memory
 
-A storage that stores the data in as plain data in the memory of the JavaScript process. Really fast and can be used in all environments. [Read more](./rx-storage-memory.md)
+A storage that stores the data as plain data in the memory of the JavaScript process. Really fast and can be used in all environments. [Read more](./rx-storage-memory.md)
 
 ### LocalStorage
 
-The localstroage based storage stores the data inside of a browsers [localStorage API](./articles/localstorage.md). It is the easiest to set up and has a small bundle size. **If you are new to RxDB, you should start with the LocalStorage RxStorage**. [Read more](./rx-storage-localstorage.md)
+The localStorage based storage stores the data inside of a browsers [localStorage API](./articles/localstorage.md). It is the easiest to set up and has a small bundle size. **If you are new to RxDB, you should start with the LocalStorage RxStorage**. [Read more](./rx-storage-localstorage.md)
 
 ### 👑 IndexedDB
 
@@ -117,7 +129,7 @@ The worker RxStorage is a wrapper around any other RxStorage which allows to run
 
 #### 👑 SharedWorker
 
-The worker RxStorage is a wrapper around any other RxStorage which allows to run the storage in a SharedWorker (only in browsers). By doing so, you can take CPU load from the main process and move it into the worker's process which can improve the perceived performance of your application. [Read more](./rx-storage-shared-worker.md)
+The SharedWorker RxStorage is a wrapper around any other RxStorage which allows to run the storage in a SharedWorker (only in browsers). By doing so, you can take CPU load from the main process and move it into the worker's process which can improve the perceived performance of your application. [Read more](./rx-storage-shared-worker.md)
 
 #### Remote
 The Remote RxStorage is made to use a remote storage and communicate with it over an asynchronous message channel. The remote part could be on another JavaScript process or even on a different host machine. Mostly used internally in other storages like Worker or Electron-ipc. [Read more](./rx-storage-remote.md)
@@ -129,7 +141,7 @@ On some `RxStorage` implementations (like IndexedDB), a huge performance improve
 #### 👑 Memory Mapped
 
 The memory-mapped [RxStorage](./rx-storage.md) is a wrapper around any other RxStorage. The wrapper creates an in-memory storage that is used for query and write operations. This memory instance stores its data in an underlying storage for persistence.
-The main reason to use this is to improve query/write performance while still having the data stored on disc. [Read more](./rx-storage-memory-mapped.md)
+The main reason to use this is to improve query/write performance while still having the data stored on disk. [Read more](./rx-storage-memory-mapped.md)
 
 #### 👑 Localstorage Meta Optimizer
 
@@ -137,10 +149,14 @@ The [RxStorage](./rx-storage.md) Localstorage Meta Optimizer is a wrapper around
 
 #### Electron IpcRenderer & IpcMain
 
-To use RxDB in [electron](./electron-database.md), it is recommended to run the RxStorage in the main process and the RxDatabase in the renderer processes. With the rxdb electron plugin you can create a remote RxStorage and consume it from the renderer process. [Read more](./electron.md)
+To use RxDB in [electron](./electron-database.md), it is recommended to run the RxStorage in the main process and the [RxDatabase](./rx-database.md) in the renderer processes. With the rxdb electron plugin you can create a remote RxStorage and consume it from the renderer process. [Read more](./electron.md)
 
 
 ### Third Party based Storages
+
+#### 👑 Expo Filesystem
+
+The Expo Filesystem storage brings blazing-fast OPFS capabilities to React Native and Expo applications, bypassing the bridge via JSI bindings for maximum performance. This is the fastest storage engine for React Native. [Read more](./rx-storage-filesystem-expo.md)
 
 #### 👑 SQLite
 
@@ -152,7 +168,7 @@ The Dexie.js based storage is based on the Dexie.js IndexedDB wrapper library. [
 
 #### MongoDB
 
-To use RxDB on the server side, the MongoDB RxStorage provides a way of having a secure, scalable and performant storage based on the popular MongoDB NoSQL database [Read more](./rx-storage-mongodb.md)
+To use RxDB on the server side, the MongoDB RxStorage provides a way of having a secure, scalable and performant storage based on the popular MongoDB NoSQL database. [Read more](./rx-storage-mongodb.md)
 
 #### DenoKV
 

@@ -1,7 +1,6 @@
 
 import {
-    Subject,
-    Observable
+    Subject
 } from 'rxjs';
 import type {
     RxStorageInstance,
@@ -22,16 +21,17 @@ import { getPrimaryFieldOfPrimaryKey } from '../../rx-schema-helper.ts';
 import { addRxStorageMultiInstanceSupport } from '../../rx-storage-multiinstance.ts';
 import type { DenoKVIndexMeta, DenoKVSettings, DenoKVStorageInternals } from './denokv-types.ts';
 import { RxStorageDenoKV } from './index.ts';
-import { CLEANUP_INDEX, DENOKV_DOCUMENT_ROOT_PATH, RX_STORAGE_NAME_DENOKV, getDenoGlobal, getDenoKVIndexName } from "./denokv-helper.ts";
+import { CLEANUP_INDEX, DENOKV_DOCUMENT_ROOT_PATH, RX_STORAGE_NAME_DENOKV, commitWithRetry, getDenoGlobal, getDenoKVIndexName } from "./denokv-helper.ts";
 import { getIndexableStringMonad, getStartIndexStringFromLowerBound } from "../../custom-index.ts";
-import { appendToArray, batchArray, lastOfArray, toArray } from "../utils/utils-array.ts";
+import { batchArray, toArray } from "../utils/utils-array.ts";
 import { ensureNotFalsy } from "../utils/utils-other.ts";
 import { categorizeBulkWriteRows } from "../../rx-storage-helper.ts";
 import { now } from "../utils/utils-time.ts";
+import { promiseWait } from "../utils/utils-promise.ts";
 import { queryDenoKV } from "./denokv-query.ts";
 import { INDEX_MAX } from "../../query-planner.ts";
-import { PROMISE_RESOLVE_VOID } from "../utils/utils-promise.ts";
 import { flatClone } from "../utils/utils-object.ts";
+import { PROMISE_RESOLVE_VOID } from 'rxdb-old';
 
 
 
@@ -45,6 +45,7 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
     private changes$: Subject<EventBulk<RxStorageChangeEvent<RxDocumentData<RxDocType>>, RxStorageDefaultCheckpoint>> = new Subject();
     public closed?: Promise<void>;
     public readonly kvPromise: Promise<any>;
+    public writeQueue: Promise<any> = PROMISE_RESOLVE_VOID;
 
     constructor(
         public readonly storage: RxStorageDenoKV,
@@ -74,6 +75,7 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
         fn: () => Promise<T>
     ): Promise<T> {
         const kv = await this.kvPromise;
+        let retryCount = 0;
         while (true) {
             const writeBlockKeyBefore = await kv.get([this.keySpace], this.kvOptions);
             const writeBlockValueBefore = writeBlockKeyBefore ? writeBlockKeyBefore.value : -1;
@@ -84,10 +86,19 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
             if (writeBlockValueBefore === writeBlockValueAfter) {
                 return result;
             }
+            retryCount++;
+            await promiseWait(retryCount * 5);
         }
     }
 
     async bulkWrite(documentWrites: BulkWriteRow<RxDocType>[], context: string): Promise<RxStorageBulkWriteResponse<RxDocType>> {
+        this.writeQueue = this.writeQueue.then(() => this._bulkWrite(documentWrites, context));
+        const ret = this.writeQueue;
+        this.writeQueue = this.writeQueue.catch(() => { });
+        return ret;
+    }
+
+    async _bulkWrite(documentWrites: BulkWriteRow<RxDocType>[], context: string): Promise<RxStorageBulkWriteResponse<RxDocType>> {
         const kv = await this.kvPromise;
         const primaryPath = this.primaryPath;
         const ret: RxStorageBulkWriteResponse<RxDocType> = {
@@ -103,6 +114,7 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
          * and so that we can do bulkWrites
          */
         for (const writeBatch of batches) {
+            let writeRetryCount = 0;
             while (true) {
                 const writeBlockKey = await kv.get([this.keySpace], this.kvOptions);
                 const docsInDB = new Map<string, RxDocumentData<RxDocType>>();
@@ -189,7 +201,7 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
                     }
                 }
                 if (txResult && txResult.ok) {
-                    appendToArray(ret.error, categorized.errors);
+                    ret.error = ret.error.concat(categorized.errors);
                     if (categorized.eventBulk.events.length > 0) {
                         const lastState = ensureNotFalsy(categorized.newestRow).document;
                         categorized.eventBulk.checkpoint = {
@@ -200,6 +212,8 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
                     }
                     break;
                 }
+                writeRetryCount++;
+                await promiseWait(writeRetryCount * 5);
             }
         }
         return ret;
@@ -237,14 +251,14 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
          * @link https://github.com/denoland/deno/issues/18965
          */
         const result = await this.retryUntilNoWriteInBetween(
-            () => this.query(preparedQuery)
+            () => queryDenoKV(this, preparedQuery)
         );
         return {
             count: result.documents.length,
             mode: 'fast'
         };
     }
-    getAttachmentData(documentId: string, attachmentId: string, digest: string): Promise<string> {
+    getAttachmentData(documentId: string, attachmentId: string, digest: string): Promise<Blob> {
         throw new Error("Method not implemented.");
     }
     changeStream() {
@@ -303,16 +317,16 @@ export class RxStorageInstanceDenoKV<RxDocType> implements RxStorageInstance<
                 continue;
             }
 
-
-            let tx = kv.atomic();
-            tx = tx.check(docDataResult);
-            tx = tx.delete([this.keySpace, DENOKV_DOCUMENT_ROOT_PATH, docId]);
-            Object
-                .values(this.internals.indexes)
-                .forEach(indexMetaInner => {
-                    tx = tx.delete([this.keySpace, indexMetaInner.indexId, docId]);
+            await commitWithRetry(() => {
+                let tx = kv.atomic();
+                tx = tx.check(docDataResult);
+                tx = tx.delete([this.keySpace, DENOKV_DOCUMENT_ROOT_PATH, docId]);
+                Object.values(this.internals.indexes).forEach(indexMetaInner => {
+                    const indexString = indexMetaInner.getIndexableString(docData as any);
+                    tx = tx.delete([this.keySpace, indexMetaInner.indexId, indexString]);
                 });
-            await tx.commit();
+                return tx;
+            });
         }
         return noMoreUndeleted;
     }

@@ -2,7 +2,10 @@
 title: Electron Database - Storage adapters for SQLite, Filesystem and In-Memory
 slug: electron-database.html
 description: Harness the database power of SQLite, Filesystem, and in-memory storage in Electron with RxDB. Build fast, offline-first apps that sync in real time.
+image: /headers/electron-database.jpg
 ---
+
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Electron Database - RxDB with different storage for SQLite, Filesystem and In-Memory
 
@@ -10,9 +13,7 @@ description: Harness the database power of SQLite, Filesystem, and in-memory sto
 Because the desktop application runs on the client's device, it is suitable to use a database that can store and query data locally. This allows you to create so-called [local first](./offline-first.md) apps that store data locally and even work when the user has no internet connection.
 While there are many options to store data in Electron, for complex realtime apps using [RxDB](https://rxdb.info/) is recommended because it is a database made for UI-based client-side application, not a server-side database.
 
-<p align="center">
-  <img src="./files/icons/electron.svg" alt="Electron" width="70" />
-</p>
+<CenteredImage src="./files/icons/electron.svg" alt="Electron" width={70} />
 
 ## Databases for Electron
 
@@ -30,20 +31,18 @@ Because Electron runs on a desktop computer, you might think that it should be p
 
 ### Localstorage / IndexedDB / WebSQL as alternatives to SQLite in Electron
 
-Because Electron uses a common Chrome web browser in the renderer process, you can access the common Web Storage APIs like [Localstorage](./articles/localstorage.md), IndexedDB and WebSQL. This is easy to set up and storing small sets of data can be achieved in a short span of time. 
+Because Electron uses a common Chrome web browser in the renderer process, you can access the common Web Storage APIs like [Localstorage](./articles/localstorage.md), [IndexedDB](./rx-storage-indexeddb.md) and WebSQL. This is easy to set up and storing small sets of data can be achieved in a short span of time. 
 
-But as soon as your application goes beyond a simple TODO-app, there are multiple obstacles that come in your way. One thing is the bad multi-tab support. If you have more than one *renderer* process, it becomes hard to manage database writes between them. Each *browser tab* could modify the database state while the others do not know of the changes and keep an outdated UI.
+But as soon as your application goes beyond a simple todo-app, there are multiple obstacles that come in your way. One thing is the bad multi-tab support. If you have more than one *renderer* process, it becomes hard to manage database writes between them. Each *browser tab* could modify the database state while the others do not know of the changes and keep an outdated UI.
 
 Another thing is performance. [IndexedDB is slow](./slow-indexeddb.md), mostly because it has to go through layers of browser security and abstractions. Storing and querying a lot of data might become your performance bottleneck. Localstorage and WebSQL are even slower, by the way. Using these Web Storage APIs is generally only recommended when you know for sure that there will be always only **one rendering process** and performance is not that relevant. The main reason for that is the security- and abstraction layers that write- and read operations have to go through when using the browsers IndexedDB API. So instead of using IndexedDB in Electron in the renderer process, you should use something that runs in the "main" process in Node.js like the [Filesystem RxStorage](./rx-storage-filesystem-node.md) or the [In Memory RxStorage](./rx-storage-memory.md).
 
 ### RxDB
 
-<p align="center">
-  <img src="./files/logo/rxdb_javascript_database.svg" alt="RxDB" width="170" />
-</p>
+<RxdbLogo alt="RxDB" width={170} />
 
 
-[RxDB](https://rxdb.info/) is a NoSQL database for JavaScript applications. It has many features that come in handy when RxDB is used with UI based applications like your Electron app. For example, it is able to subscribe to query results of single fields of documents. It has encryption and compression features and most important it has a battle tested [Sync Engine](./replication.md) that can be used to do a realtime sync with your backend.
+[RxDB](https://rxdb.info/) is a NoSQL database for JavaScript applications. It has many features that come in handy when RxDB is used with UI based applications like your Electron app. For example, it is able to subscribe to query results of single fields of documents. It has [encryption](./encryption.md) and [compression](./key-compression.md) features and most important it has a battle tested [Sync Engine](./replication.md) that can be used to do a realtime sync with your backend.
 
 Because of the [flexible storage](https://rxdb.info/rx-storage.html) layer of RxDB, there are many options on how to use it with Electron:
 
@@ -54,7 +53,7 @@ Because of the [flexible storage](https://rxdb.info/rx-storage.html) layer of Rx
 - The [Dexie.js RxStorage](./rx-storage-dexie.md)
 - The [Node.js Filesystem](./rx-storage-filesystem-node.md)
 
-It is recommended to use the [SQLite RxStorage](./rx-storage-sqlite.md) because it has the best performance and is the easiest to set up. However it is part of the [👑 Premium Plugins](/premium/) which must be purchased, so to try out RxDB with Electron, you might want to use one of the other options. To start with RxDB, I would recommend using the LocalStorage RxStorage in the renderer processes. Because RxDB is able to broadcast the database state between browser tabs, having multiple renderer processes is not a problem like it would be when you use plain IndexedDB without RxDB.
+It is recommended to use the [SQLite RxStorage](./rx-storage-sqlite.md) because it has the best performance and is the easiest to set up. However it is part of the [👑 Premium Plugins](/premium/) which must be purchased, so to try out RxDB with Electron, you might want to use one of the other options. To start with RxDB, I would recommend using the LocalStorage [RxStorage](./rx-storage.md) in the renderer processes. Because RxDB is able to broadcast the database state between browser tabs, having multiple renderer processes is not a problem like it would be when you use plain IndexedDB without RxDB.
 In production, you would always run the RxStorage in the main process with the [RxStorage Electron IpcRenderer & IpcMain](./electron.md#rxstorage-electron-ipcrenderer--ipcmain) plugins.
 
 First, you have to install all dependencies via `npm install rxdb rxjs`.
@@ -141,9 +140,7 @@ const rows = await ipcRenderer.invoke('db-query', "SELECT * FROM Users");
 The downside of SQLite (or SQL in general) is that it is lacking many features that are handful when using a database together with **UI based** applications. It is not possible to observe queries or document fields and there is no replication method to sync data with a server. This makes SQLite a good solution when you just want to store data on the client or process expensive SQL queries on the server, but it is not suitable for more complex operations like two-way replication, encryption, compression and so on. Also developer helpers like TypeScript type safety are totally out of reach.
 
 
-<p align="center">
-  <img src="./files/logo/rxdb_javascript_database.svg" alt="RxDB Electron Database" width="170" />
-</p>
+<RxdbLogo alt="RxDB Electron Database" width={170} />
 
 
 ## Follow up

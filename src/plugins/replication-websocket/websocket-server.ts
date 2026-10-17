@@ -4,12 +4,11 @@ import type {
     RxReplicationHandler
 } from '../../types/index.d.ts';
 
-import type {
-    WebSocket,
-    ServerOptions
-} from 'isomorphic-ws';
-import pkg from 'isomorphic-ws';
-const { WebSocketServer } = pkg;
+import {
+    type WebSocket,
+    WebSocketServer,
+    type ServerOptions,
+} from 'ws';
 
 import type {
     WebsocketMessageResponseType,
@@ -87,12 +86,12 @@ export function getReplicationHandlerByCollection<RxDocType>(
 
 export function startWebsocketServer(options: WebsocketServerOptions): WebsocketServerState {
     const { database, ...wsOptions } = options;
-    const serverState = startSocketServer(wsOptions);
+    const serverState = startSocketServer(wsOptions as any);
 
     // auto close when the database gets closed
     database.onClose.push(() => serverState.close());
 
-    serverState.onConnection$.subscribe(ws => {
+    serverState.onConnection$.subscribe((ws: WebSocket) => {
         const onCloseHandlers: Function[] = [];
         ws.onclose = () => {
             onCloseHandlers.map(fn => fn());
@@ -110,7 +109,7 @@ export function startWebsocketServer(options: WebsocketServerOptions): Websocket
              * it means that the client requested the masterChangeStream$
              */
             if (typeof method !== 'function') {
-                const changeStreamSub = handler.masterChangeStream$.subscribe(ev => {
+                const changeStreamSub = handler.masterChangeStream$.subscribe((ev: any) => {
                     const streamResponse: WebsocketMessageResponseType = {
                         id: 'stream',
                         collection: message.collection,

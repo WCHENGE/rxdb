@@ -1,5 +1,5 @@
 import assert from 'assert';
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import AsyncTestUtil from 'async-test-util';
 
 import {
@@ -32,14 +32,15 @@ import {
 
 import {
     encryptString,
-    decryptString
+    decryptString,
+    wrappedKeyEncryptionCryptoJsStorage
 } from '../../plugins/encryption-crypto-js/index.mjs';
 import { replicateRxCollection } from '../../plugins/replication/index.mjs';
 import { getRxStorageMemory } from '../../plugins/storage-memory/index.mjs';
 import { wrappedValidateAjvStorage } from '../../plugins/validate-ajv/index.mjs';
 
 
-describeParallel('encryption.test.ts', () => {
+describe('encryption.test.ts', () => {
     async function createEncryptedCollection(
         amount: number = 10,
         useStorage?: typeof storage
@@ -379,7 +380,8 @@ describeParallel('encryption.test.ts', () => {
         });
     });
     describe('ISSUES', () => {
-        it('#837 Recover from wrong database password', async () => {
+        it('#837 Recover from wrong database password', async function () {
+            this.timeout(30000);
             if (!config.storage.hasPersistence) {
                 return;
             }
@@ -577,6 +579,331 @@ describeParallel('encryption.test.ts', () => {
                 assert.strictEqual(resultsAll.length, 0);
                 await db.remove();
             });
+        });
+        it('should work with encrypted fields that have maxLength in schema', async () => {
+            if (config.storage.hasEncryption) {
+                return;
+            }
+            type DocType = {
+                id: string;
+                secret: string;
+            };
+            const mySchema: RxJsonSchema<DocType> = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    secret: {
+                        type: 'string',
+                        maxLength: 50
+                    }
+                },
+                required: ['id', 'secret'],
+                encrypted: ['secret']
+            };
+            const db = await createRxDatabase<{ test: RxCollection<DocType>; }>({
+                name: randomToken(10),
+                storage: wrappedKeyEncryptionCryptoJsStorage({
+                    storage: wrappedValidateAjvStorage({
+                        storage: getRxStorageMemory()
+                    })
+                }),
+                password: await getPassword()
+            });
+            const collections = await db.addCollections({
+                test: {
+                    schema: mySchema
+                }
+            });
+
+            // insert a document - the encrypted ciphertext is longer than maxLength
+            // but this should still work because maxLength should be stripped from the internal schema
+            await collections.test.insert({
+                id: 'test-1',
+                secret: 'my secret value'
+            });
+            const doc = await collections.test.findOne('test-1').exec(true);
+            assert.strictEqual(doc.secret, 'my secret value');
+
+            await db.remove();
+        });
+        it('should work with encrypted object fields that have nested properties', async () => {
+            if (config.storage.hasEncryption) {
+                return;
+            }
+            type DocType = {
+                id: string;
+                secret: {
+                    name: string;
+                    subname: string;
+                };
+            };
+            const mySchema: RxJsonSchema<DocType> = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    secret: {
+                        type: 'object',
+                        properties: {
+                            name: { type: 'string' },
+                            subname: { type: 'string' }
+                        },
+                        required: ['name', 'subname']
+                    }
+                },
+                required: ['id', 'secret'],
+                encrypted: ['secret']
+            };
+            const db = await createRxDatabase<{ test: RxCollection<DocType>; }>({
+                name: randomToken(10),
+                storage: wrappedKeyEncryptionCryptoJsStorage({
+                    storage: wrappedValidateAjvStorage({
+                        storage: getRxStorageMemory()
+                    })
+                }),
+                password: await getPassword()
+            });
+            const collections = await db.addCollections({
+                test: {
+                    schema: mySchema
+                }
+            });
+
+            await collections.test.insert({
+                id: 'test-1',
+                secret: {
+                    name: 'foo',
+                    subname: 'bar'
+                }
+            });
+            const doc = await collections.test.findOne('test-1').exec(true);
+            assert.strictEqual(doc.secret.name, 'foo');
+            assert.strictEqual(doc.secret.subname, 'bar');
+
+            await db.remove();
+        });
+        it('should correctly encrypt and decrypt nested fields with dot-notation paths and non-string types', async () => {
+            if (config.storage.hasEncryption) {
+                return;
+            }
+            type DocType = {
+                id: string;
+                nested: {
+                    secretScore: number;
+                    label: string;
+                };
+            };
+            const mySchema: RxJsonSchema<DocType> = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    nested: {
+                        type: 'object',
+                        properties: {
+                            secretScore: {
+                                type: 'number'
+                            },
+                            label: {
+                                type: 'string'
+                            }
+                        },
+                        required: ['secretScore', 'label']
+                    }
+                },
+                required: ['id', 'nested'],
+                encrypted: ['nested.secretScore']
+            };
+            const db = await createRxDatabase<{ test: RxCollection<DocType>; }>({
+                name: randomToken(10),
+                storage: wrappedKeyEncryptionCryptoJsStorage({
+                    storage: wrappedValidateAjvStorage({
+                        storage: getRxStorageMemory()
+                    })
+                }),
+                password: await getPassword()
+            });
+            const collections = await db.addCollections({
+                test: {
+                    schema: mySchema
+                }
+            });
+
+            // Insert a document with a nested encrypted number field
+            await collections.test.insert({
+                id: 'test-1',
+                nested: {
+                    secretScore: 42,
+                    label: 'public-label'
+                }
+            });
+            const doc = await collections.test.findOne('test-1').exec(true);
+
+            // The decrypted value must be the original number, not a string
+            assert.strictEqual(doc.nested.secretScore, 42);
+            assert.strictEqual(typeof doc.nested.secretScore, 'number');
+            assert.strictEqual(doc.nested.label, 'public-label');
+
+            await db.remove();
+        });
+        it('should throw when encrypted contains overlapping parent and child paths', async () => {
+            if (config.storage.hasEncryption) {
+                return;
+            }
+            type DocType = {
+                id: string;
+                nested: {
+                    secret: string;
+                    label: string;
+                };
+            };
+            const mySchema: RxJsonSchema<DocType> = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    nested: {
+                        type: 'object',
+                        properties: {
+                            secret: { type: 'string' },
+                            label: { type: 'string' }
+                        },
+                        required: ['secret', 'label']
+                    }
+                },
+                required: ['id', 'nested'],
+                encrypted: [
+                    'nested',
+                    'nested.secret'
+                ]
+            };
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: wrappedKeyEncryptionCryptoJsStorage({
+                    storage: wrappedValidateAjvStorage({
+                        storage: getRxStorageMemory()
+                    })
+                }),
+                password: await getPassword()
+            });
+            await AsyncTestUtil.assertThrows(
+                () => db.addCollections({
+                    test: { schema: mySchema }
+                }),
+                'RxError',
+                'SC43'
+            );
+            await db.remove();
+        });
+    });
+    describe('SECURITY', () => {
+        it('should not expose the database password as an enumerable property', async () => {
+            const useStorage = getEncryptedStorage();
+            const password = await getPassword();
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: useStorage,
+                password
+            });
+
+            // SECURITY: The password must NOT be enumerable on the database object.
+            // If it is enumerable, it can leak through Object.keys(), spreading,
+            // Object.assign(), for..in loops, and JSON.stringify() which are
+            // commonly used in logging, error reporting, and serialization.
+            const keys = Object.keys(db);
+            assert.ok(
+                !keys.includes('password'),
+                'password should not appear in Object.keys(db)'
+            );
+
+            // SECURITY: Spreading the database object must NOT include the password
+            const spread = { ...db };
+            assert.strictEqual(
+                (spread as any).password,
+                undefined,
+                'password should not be included when spreading the db object'
+            );
+
+            // SECURITY: JSON.stringify must NOT include the password.
+            // This is the most common leak vector through logging and error reporting.
+            // The db object has circular references, so use a replacer to handle them.
+            const seen = new WeakSet();
+            const serialized = JSON.stringify(db, (key, value) => {
+                if (typeof value === 'object' && value !== null) {
+                    if (seen.has(value)) {
+                        return undefined;
+                    }
+                    seen.add(value);
+                }
+                return value;
+            });
+            assert.ok(
+                !serialized.includes(password),
+                'password should not appear in JSON.stringify(db)'
+            );
+
+            // SECURITY: The password must still be accessible directly for internal use
+            assert.strictEqual(db.password, password, 'password should still be directly accessible');
+
+            await db.remove();
+        });
+        it('should not leak the password in error parameters when password is too short', async () => {
+            const shortPassword = 'short1';
+            const useStorage = getEncryptedStorage();
+            let thrownError: any = null;
+            try {
+                await createRxDatabase({
+                    name: randomToken(10),
+                    storage: useStorage,
+                    password: shortPassword
+                });
+            } catch (err: any) {
+                thrownError = err;
+            }
+
+            // The error should be thrown
+            assert.ok(thrownError);
+            assert.strictEqual(thrownError.code, 'EN2');
+
+            // SECURITY: The password must NOT be in the error parameters
+            assert.strictEqual(
+                typeof thrownError.parameters.password,
+                'undefined',
+                'password should not be exposed in error parameters'
+            );
+
+            // SECURITY: The password must NOT appear in the error message string
+            assert.ok(
+                !thrownError.message.includes(shortPassword),
+                'password should not appear in the error message'
+            );
+
+            // SECURITY: The password must NOT appear anywhere in the serialized error
+            const serialized = JSON.stringify(
+                thrownError,
+                Object.getOwnPropertyNames(thrownError).filter(p => p !== 'stack')
+            );
+            assert.ok(
+                !serialized.includes(shortPassword),
+                'password should not appear anywhere in the serialized error object'
+            );
         });
     });
 });

@@ -104,6 +104,20 @@ export type ReplicationPushOptions<RxDocType> = {
      * will start from the given checkpoint.
      */
     initialCheckpoint?: any;
+
+    /**
+     * When a local write happens, normally the replication will directly try to persist
+     * the change upstream.
+     *
+     * By providing a function here that returns a promise, the replication will wait until
+     * that promise resolves before running the next upstream persist cycle. This can be
+     * used to batch writes across multiple collections into a single push or to defer
+     * pushing until the CPU is idle (e.g. via requestIdleCallback).
+     *
+     * NOTE: The longer you wait here, the higher the risk of losing writes if the
+     * replication is closed unexpectedly.
+     */
+    waitBeforePersist?: () => Promise<any>;
 };
 
 
@@ -116,7 +130,7 @@ export type ReplicationOptions<RxDocType, CheckpointType> = {
      * Like 'my-rest-replication-to-https://example.com/api/sync'
      */
     replicationIdentifier: string;
-    collection: RxCollection<RxDocType, unknown, unknown, unknown>;
+    collection: RxCollection<RxDocType, any, any, any>;
     /**
      * Define a custom property that is used
      * to flag a document as being deleted.

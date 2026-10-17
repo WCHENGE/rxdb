@@ -1,32 +1,11 @@
-<!--
-| Announcement                                                        |
-| :--: |
-| &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; [Help testing the RxDB version 16 release](https://github.com/pubkey/rxdb/issues/6650) &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |
--->
-
-<!-- | Announcement                                                        |
-| :--: |
-| &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; Version **16.0.0** is now released, read the [CHANGELOG](https://rxdb.info/releases/16.0.0.html) &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp; |
- -->
-
-<!--
-|                                                                                  Announcement                                                                                  |
-| :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| Please take part in the [RxDB user survey 2023](https://rxdb.info/survey.html). This will help me to better plan the steps for the next major release. (takes about 2 minutes) |
--->
-
-<br />
-
-
-
 <p align="center">
   <a href="https://rxdb.info/">
     <img src="./docs-src/static/files/logo/logo_text.svg" width="380px" alt="JavaScript Database" />
   </a>
   <br />
-  <br />
-  <h3 align="center">A fast, local-first, reactive Database for JavaScript Applications</h3>
+  <h3 align="center">A fast, <a href="https://rxdb.info/articles/local-first-future.html">local-first</a>, reactive Database for JavaScript Applications</h3>
 </p>
+<br />
 
 
 <p align="center">
@@ -59,14 +38,17 @@
 </h2>
 
 <p align="justify">
-  RxDB (short for <b>R</b>eactive <b>D</b>ata<b>b</b>ase) is a <a href="https://rxdb.info/articles/local-first-future.html">local-first</a>, NoSQL-database for JavaScript Applications like Websites, hybrid Apps, Electron-Apps, Progressive Web Apps, Deno and <a href="https://rxdb.info/nodejs-database.html">Node.js</a>.
+  RxDB (short for <b>R</b>eactive <b>D</b>ata<b>b</b>ase) is a <a href="https://rxdb.info/articles/local-first-future.html">local-first</a>, NoSQL-database for JavaScript Applications.
   Reactive means that you can not only query the current state, but <b>subscribe</b> to all state changes like the result of a query or even a single field of a document.
-  This is great for UI-based <b>realtime</b> applications in a way that makes it easy to develop and also has great performance benefits but can also be used to create fast backends in Node.js.<br />
-  RxDB provides an easy to implement <a href="https://rxdb.info/replication.html">protocol</a> for realtime <b>replication</b> with your existing infrastructure or one of the plugins for <a href="https://rxdb.info/replication-http.html">HTTP</a>, <a href="https://rxdb.info/replication-graphql.html">GraphQL</a>, <a href="https://rxdb.info/replication-couchdb.html">CouchDB</a>, <a href="https://rxdb.info/replication-websocket.html">Websocket</a>, <a href="https://rxdb.info/replication-webrtc.html">WebRTC</a>, <a href="https://rxdb.info/replication-supabase.html">Supabase</a>, <a href="https://rxdb.info/replication-firestore.html">Firestore</a>, <a href="https://rxdb.info/replication-nats.html">NATS</a>.<br />
-  RxDB is based on a storage interface that enables you to swap out the underlying storage engine. This increases <b>code reuse</b> because you can use the same database code for different JavaScript environments by just switching out the storage settings.
+  This is great for UI-based <b>realtime</b> applications in a way that makes it easy to develop and also has great performance benefits.
 </p>
 
 Use the [quickstart](https://rxdb.info/quickstart.html), read the [documentation](https://rxdb.info/install.html) or explore the [example projects](https://github.com/pubkey/rxdb/tree/master/examples).
+
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=tj7AaDDHv2g" target="_blank"><img src="./docs-src/static/files/readme_video.png" alt="RxDB on Youtube" /></a>
+</p>
 
 
 <h2>
@@ -97,7 +79,7 @@ RxDB is a proven technology used by [thousands of developers](https://github.com
 
 RxDB provides an easy to implement, <b>battle-tested</b> <a href="https://rxdb.info/replication.html">Sync Engine</a> for <a href="https://rxdb.info/articles/realtime-database.html">realtime</a> replication with your existing infrastructure.<br />
 You do not have to use a specific cloud or backend database. The protocol works by implementing three simple HTTP endpoints.
-There are also production-ready plugins to easily replicate with <a href="https://rxdb.info/replication-graphql.html">GraphQL</a>, <a href="https://rxdb.info/replication-couchdb.html">CouchDB</a>, <a href="https://rxdb.info/replication-websocket.html">Websocket</a>, <a href="https://rxdb.info/replication-webrtc.html">WebRTC (P2P)</a>,<a href="https://rxdb.info/replication-supabase.html">Supabase</a>, <a href="https://rxdb.info/replication-firestore.html">Firestore</a> or <a href="https://rxdb.info/replication-nats.html">NATS</a>.
+There are also production-ready plugins to easily replicate with <a href="https://rxdb.info/replication-graphql.html">GraphQL</a>, <a href="https://rxdb.info/replication-couchdb.html">CouchDB</a>, <a href="https://rxdb.info/replication-websocket.html">Websocket</a>, <a href="https://rxdb.info/replication-webrtc.html">WebRTC (P2P)</a>, <a href="https://rxdb.info/replication-supabase.html">Supabase</a>, <a href="https://rxdb.info/replication-firestore.html">Firestore</a>, <a href="https://rxdb.info/replication-nats.html">NATS</a> or <a href="https://rxdb.info/replication-google-drive.html">Google Drive</a>.
 
 
 <h2>
@@ -115,7 +97,6 @@ No matter what kind of runtime you have, as long as it runs JavaScript, it can r
   <img height="13" src="https://cdnjs.cloudflare.com/ajax/libs/browser-logos/39.2.2/firefox/firefox_24x24.png" />
   <img height="13" src="https://cdnjs.cloudflare.com/ajax/libs/browser-logos/39.2.2/safari/safari_24x24.png" />
   <img height="13" src="https://cdnjs.cloudflare.com/ajax/libs/browser-logos/39.2.2/edge/edge_24x24.png" />
-  <img height="13" src="https://cdnjs.cloudflare.com/ajax/libs/browser-logos/39.2.2/archive/internet-explorer_9-11/internet-explorer_9-11_24x24.png" />
   <a href="./examples/angular">Browsers</a>
   <img height="13" src="docs-src/static/files/icons/nodejs.svg" />
   <a href="./examples/node">Node.js</a>
@@ -147,7 +128,8 @@ Since its beginning in 2018, RxDB has gained a huge set of features and plugins 
       <a href="https://rxdb.info/orm.html">ORM</a><br>
       <a href="https://rxdb.info/transactions-conflicts-revisions.html">Conflict Handling</a><br>
       <a href="https://rxdb.info/middleware.html">Middleware</a><br>
-      <a href="https://rxdb.info/reactivity.html">Signals</a>
+      <a href="https://rxdb.info/reactivity.html">Signals</a><br>
+      <a href="https://rxdb.info/articles/tanstack-db/rxdb-collection-for-tanstack-db.html">TanStack DB</a>
     </td>
     <td>
       <a href="https://rxdb.info/rx-state.html">State</a><br>
@@ -168,24 +150,7 @@ Since its beginning in 2018, RxDB has gained a huge set of features and plugins 
   </tr>
 </table>
 
-<!-- - [Logging](https://rxdb.info/logger.html)
-- [Attachments](https://rxdb.info/rx-attachment.html)
-- [ORM](https://rxdb.info/orm.html)
-- [Conflict Handling](https://rxdb.info/transactions-conflicts-revisions.html)
-- [Middleware](https://rxdb.info/middleware.html)
-- [Signals](https://rxdb.info/reactivity.html)
-- [State](https://rxdb.info/rx-state.html)
-- [Backup](https://rxdb.info/backup.html)
-- [Replication](https://rxdb.info/replication.html)
-- [Server](https://rxdb.info/rx-server.html)
-- [Storages](https://rxdb.info/rx-storage.html)
-- [Local Documents](https://rxdb.info/rx-local-document.html)
-- [Schema Validation](https://rxdb.info/schema-validation.html)
-- [Compression](https://rxdb.info/key-compression.html)
-- [Migration](https://rxdb.info/migration-schema.html)
-- [Encryption](https://rxdb.info/encryption.html)
-- [CRDT](https://rxdb.info/crdt.html)
-- [Population](https://rxdb.info/population.html) -->
+
 
 
 <h2>
@@ -202,8 +167,8 @@ npm install rxdb rxjs --save
 #### Store data
 
 ```javascript
-import { 
-  createRxDatabase
+import {
+    createRxDatabase
 } from 'rxdb/plugins/core';
 
 /**
@@ -211,7 +176,9 @@ import {
  * In other JavaScript runtimes, we can use different storages:
  * @link https://rxdb.info/rx-storage.html
  */
-import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
+import {
+    getRxStorageLocalstorage
+} from 'rxdb/plugins/storage-localstorage';
 
 // create a database
 const db = await createRxDatabase({
@@ -219,10 +186,24 @@ const db = await createRxDatabase({
     storage: getRxStorageLocalstorage()
 });
 
-// add collections
+// add collections with a schema
 await db.addCollections({
   heroes: {
-    schema: mySchema
+    schema: {
+      version: 0,
+      primaryKey: 'name',
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          maxLength: 100
+        },
+        healthpoints: {
+          type: 'number'
+        }
+      },
+      required: ['name', 'healthpoints']
+    }
   }
 });
 
@@ -281,6 +262,10 @@ Get started now by [reading the docs](https://rxdb.info/quickstart.html) or expl
   This generates free backlinks so we add some links here to pages
   that we need to rank better.
 -->
-#### More content
-[Angular Database](https://rxdb.info/articles/angular-database.html), [Frontend Database](https://rxdb.info/articles/frontend-database.html), [localStorage](https://rxdb.info/articles/localstorage.html), [React Database](https://rxdb.info/articles/react-database.html), [Browser Database](https://rxdb.info/articles/browser-database.html), [React Native Database](https://rxdb.info/react-native-database.html), [PWA Database](https://rxdb.info/articles/progressive-web-app-database.html), [In-memory NoSQL database](https://rxdb.info/articles/in-memory-nosql-database.html), [JSON database](https://rxdb.info/articles/json-database.html), [Angular IndexedDB](https://rxdb.info/articles/angular-indexeddb.html), [React IndexedDB](https://rxdb.info/articles/react-indexeddb.html), [Optimistic UI](https://rxdb.info/articles/optimistic-ui.html), [local database](https://rxdb.info/articles/local-database.html), [React Native Encryption](https://rxdb.info/articles/react-native-encryption.html), [Vue Database](https://rxdb.info/articles/vue-database.html), [jQuery Database](https://rxdb.info/articles/jquery-database.html), [Vue IndexedDB](https://rxdb.info/articles/vue-indexeddb.html), [Firestore Alternative](https://rxdb.info/articles/firestore-alternative.html), [Firebase Realtime Database Alternative](https://rxdb.info/articles/firebase-realtime-database-alternative.html), [Ionic Storage](https://rxdb.info/articles/ionic-storage.html)
 
+#### More content
+[Angular Database](https://rxdb.info/articles/angular-database.html), [Frontend Database](https://rxdb.info/articles/frontend-database.html), [localStorage](https://rxdb.info/articles/localstorage.html), [React Database](https://rxdb.info/articles/react-database.html), [Browser Database](https://rxdb.info/articles/browser-database.html), [React Native Database](https://rxdb.info/react-native-database.html), [PWA Database](https://rxdb.info/articles/progressive-web-app-database.html), [In-memory NoSQL database](https://rxdb.info/articles/in-memory-nosql-database.html), [JSON database](https://rxdb.info/articles/json-database.html), [Angular IndexedDB](https://rxdb.info/articles/angular-indexeddb.html), [React IndexedDB](https://rxdb.info/articles/react-indexeddb.html), [Optimistic UI](https://rxdb.info/articles/optimistic-ui.html), [local database](https://rxdb.info/articles/local-database.html), [React Native Encryption](https://rxdb.info/articles/react-native-encryption.html), [Vue Database](https://rxdb.info/articles/vue-database.html), [jQuery Database](https://rxdb.info/articles/jquery-database.html), [Vue IndexedDB](https://rxdb.info/articles/vue-indexeddb.html), [Firestore Alternative](https://rxdb.info/articles/firestore-alternative.html), [Firebase Realtime Database Alternative](https://rxdb.info/articles/firebase-realtime-database-alternative.html), [Ionic Storage](https://rxdb.info/articles/ionic-storage.html), [Electron SQLite](https://rxdb.info/articles/electron-sqlite.html), [TanStack DB Offline](https://rxdb.info/articles/tanstack-db/tanstack-db-offline-first.html), [DDIL Database](https://rxdb.info/articles/ddil-database.html)
+
+----------------
+
+View [llms.txt](https://rxdb.info/llms.txt)

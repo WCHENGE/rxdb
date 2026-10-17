@@ -18,9 +18,11 @@ import {
 } from './plugins/utils/index.ts';
 import {
     fillObjectDataBeforeInsert,
+    normalizeInlineAttachments,
     createRxCollectionStorageInstance,
     removeCollectionStorages,
-    ensureRxCollectionIsNotClosed
+    ensureRxCollectionIsNotClosed,
+    isWriteAllowed
 } from './rx-collection-helper.ts';
 import {
     createRxQuery,
@@ -50,10 +52,12 @@ import {
     runAsyncPluginHooks,
     runPluginHooks
 } from './hooks.ts';
+import { fillPrimaryKey } from './rx-schema-helper.ts';
 
 import {
     Subscription,
-    Observable
+    Observable,
+    Subject
 } from 'rxjs';
 
 import type {
@@ -64,6 +68,7 @@ import type {
     RxDocument,
     RxDumpCollection,
     RxDumpCollectionAny,
+    RxDumpOptions,
     MangoQuery,
     MangoQueryNoLimit,
     RxCacheReplacementPolicy,
@@ -79,12 +84,13 @@ import type {
     CollectionsOfDatabase,
     RxChangeEventBulk,
     RxLocalDocumentData,
-    RxDocumentBase,
     RxConflictHandler,
     MaybePromise,
     CRDTEntry,
     MangoQuerySelectorAndIndex,
-    MigrationStrategies
+    MigrationStrategies,
+    WebMCPOptions,
+    WebMCPLogEvent
 } from './types/index.d.ts';
 
 import {
@@ -99,7 +105,8 @@ import {
     getWrappedStorageInstance,
     getWrittenDocumentsFromBulkWriteResponse,
     throwIfIsStorageWriteError,
-    WrappedRxStorageInstance
+    WrappedRxStorageInstance,
+    RX_COLLECTION_BULK_INSERT_CONTEXT
 } from './rx-storage-helper.ts';
 import { IncrementalWriteQueue } from './incremental-write.ts';
 import { beforeDocumentUpdateWrite } from './rx-document.ts';
@@ -112,6 +119,14 @@ const HOOKS_WHEN = ['pre', 'post'] as const;
 type HookWhenType = typeof HOOKS_WHEN[number];
 const HOOKS_KEYS = ['insert', 'save', 'remove', 'create'] as const;
 type HookKeyType = typeof HOOKS_KEYS[number];
+
+export interface UpsertOptions {
+    /**
+     * When true, existing attachments not present in the upsert data
+     * will be removed. Defaults to false (preserve existing attachments).
+     */
+    deleteExistingAttachments?: boolean;
+}
 let hooksApplied = false;
 
 export const OPEN_COLLECTIONS = new Set<RxCollectionBase<any, any, any>>();
@@ -151,42 +166,32 @@ export class RxCollectionBase<
         public options: any = {},
         public cacheReplacementPolicy: RxCacheReplacementPolicy = defaultCacheReplacementPolicy,
         public statics: KeyFunctionMap = {},
-        public conflictHandler: RxConflictHandler<RxDocumentType> = defaultConflictHandler
+        public conflictHandler: RxConflictHandler<RxDocumentType> = defaultConflictHandler,
+        public liveQueryUpdateThrottleTime: number | undefined = undefined
     ) {
         _applyHookFunctions(this.asRxCollection);
 
 
         if (database) { // might be falsy on pseudoInstance
             this.eventBulks$ = database.eventBulks$.pipe(
-                filter(changeEventBulk => changeEventBulk.collectionName === this.name)
+                filter((changeEventBulk: RxChangeEventBulk<any>) => changeEventBulk.collectionName === this.name)
             );
         } else { }
-
-
-        /**
-         * Must be last because the hooks might throw on dev-mode
-         * checks and we do not want to have broken collections here.
-         * RxCollection instances created for testings do not have a database
-         * so we do not add these to the list.
-         */
-        if (this.database) {
-            OPEN_COLLECTIONS.add(this);
-        }
     }
 
     get insert$(): Observable<RxChangeEventInsert<RxDocumentType>> {
         return this.$.pipe(
-            filter(cE => cE.operation === 'INSERT')
+            filter((cE: RxChangeEvent<RxDocumentType>) => cE.operation === 'INSERT')
         ) as any;
     }
     get update$(): Observable<RxChangeEventUpdate<RxDocumentType>> {
         return this.$.pipe(
-            filter(cE => cE.operation === 'UPDATE')
+            filter((cE: RxChangeEvent<RxDocumentType>) => cE.operation === 'UPDATE')
         ) as any;
     }
     get remove$(): Observable<RxChangeEventDelete<RxDocumentType>> {
         return this.$.pipe(
-            filter(cE => cE.operation === 'DELETE')
+            filter((cE: RxChangeEvent<RxDocumentType>) => cE.operation === 'DELETE')
         ) as any;
     }
 
@@ -227,6 +232,13 @@ export class RxCollectionBase<
     public onClose: (() => MaybePromise<any>)[] = [];
     public closed = false;
 
+    /**
+     * Set to true while a schema migration is running for this collection.
+     * Writes are blocked while this is true to ensure the migration
+     * replication can fill the new storage without external interference.
+     */
+    public migrationInProgress = false;
+
     public onRemove: (() => MaybePromise<any>)[] = [];
 
     public async prepare(): Promise<void> {
@@ -238,17 +250,22 @@ export class RxCollectionBase<
              * while not awaiting the database.close() call to improve the test times.
              * So when reopening collections and the OPEN_COLLECTIONS size is full,
              * we retry after some times to account for this.
+             * Use a higher retry count to account for slow storage backends like MongoDB
+             * where tests hold collections open for several seconds.
              */
             let count = 0;
-            while (count < 10 && OPEN_COLLECTIONS.size > NON_PREMIUM_COLLECTION_LIMIT) {
-                count++;
+            const startTime = Date.now();
+            while (count < 60 && OPEN_COLLECTIONS.size >= NON_PREMIUM_COLLECTION_LIMIT) {
                 await this.promiseWait(30);
+                count++;
             }
             if (OPEN_COLLECTIONS.size > NON_PREMIUM_COLLECTION_LIMIT) {
+                const timeInRetry = Date.now() - startTime;
                 throw newRxError('COL23', {
                     database: this.database.name,
                     collection: this.name,
                     args: {
+                        timeInRetry,
                         existing: Array.from(OPEN_COLLECTIONS.values()).map(c => ({
                             db: c.database ? c.database.name : '',
                             c: c.name
@@ -256,6 +273,16 @@ export class RxCollectionBase<
                     }
                 });
             }
+        }
+
+        /**
+         * Must be after the check because the hooks might throw on dev-mode
+         * checks and we do not want to have broken collections here.
+         * RxCollection instances created for testings do not have a database
+         * so we do not add these to the list.
+         */
+        if (this.database) {
+            OPEN_COLLECTIONS.add(this);
         }
 
 
@@ -268,14 +295,14 @@ export class RxCollectionBase<
             this.storageInstance,
             this.schema.primaryPath,
             (newData, oldData) => beforeDocumentUpdateWrite(this as any, newData, oldData),
-            result => this._runHooks('post', 'save', result)
+            result => this._runHooks('post', 'save', result, this._docCache.getCachedRxDocument(result))
         );
 
         this.$ = this.eventBulks$.pipe(
-            mergeMap(changeEventBulk => rxChangeEventBulkToRxChangeEvents(changeEventBulk)),
+            mergeMap((changeEventBulk: RxChangeEventBulk<any>) => rxChangeEventBulkToRxChangeEvents(changeEventBulk)),
         );
         this.checkpoint$ = this.eventBulks$.pipe(
-            map(changeEventBulk => changeEventBulk.checkpoint),
+            map((changeEventBulk: RxChangeEventBulk<any>) => changeEventBulk.checkpoint),
         );
 
         this._changeEventBuffer = createChangeEventBuffer<RxDocumentType>(this.asRxCollection);
@@ -283,8 +310,8 @@ export class RxCollectionBase<
         this._docCache = new DocumentCache(
             this.schema.primaryPath,
             this.eventBulks$.pipe(
-                filter(bulk => !bulk.isLocal),
-                map(bulk => bulk.events)
+                filter((bulk: RxChangeEventBulk<any>) => !bulk.isLocal),
+                map((bulk: RxChangeEventBulk<any>) => bulk.events)
             ),
             docData => {
                 if (!documentConstructor) {
@@ -296,9 +323,9 @@ export class RxCollectionBase<
 
 
         const listenToRemoveSub = this.database.internalStore.changeStream().pipe(
-            filter(bulk => {
+            filter((bulk: any) => {
                 const key = this.name + '-' + this.schema.version;
-                const found = bulk.events.find(event => {
+                const found = bulk.events.find((event: any) => {
                     return (
                         event.documentData.context === 'collection' &&
                         event.documentData.key === key &&
@@ -315,7 +342,7 @@ export class RxCollectionBase<
 
 
         const databaseStorageToken = await this.database.storageToken;
-        const subDocs = this.storageInstance.changeStream().subscribe(eventBulk => {
+        const subDocs = this.storageInstance.changeStream().subscribe((eventBulk: any) => {
             const changeEventBulk: RxChangeEventBulk<RxDocumentType | RxLocalDocumentData> = {
                 id: eventBulk.id,
                 isLocal: false,
@@ -361,8 +388,8 @@ export class RxCollectionBase<
 
     async insert(
         json: RxDocumentType | RxDocument
-    ): Promise<RxDocument<RxDocumentType, OrmMethods>> {
-        ensureRxCollectionIsNotClosed(this);
+    ): Promise<RxDocument<RxDocumentType, OrmMethods, Reactivity>> {
+        isWriteAllowed(this);
         const writeResult = await this.bulkInsert([json as any]);
 
         const isError = writeResult.error[0];
@@ -373,13 +400,13 @@ export class RxCollectionBase<
 
     async insertIfNotExists(
         json: RxDocumentType | RxDocument
-    ): Promise<RxDocument<RxDocumentType, OrmMethods>> {
+    ): Promise<RxDocument<RxDocumentType, OrmMethods, Reactivity>> {
         const writeResult = await this.bulkInsert([json as any]);
         if (writeResult.error.length > 0) {
             const error = writeResult.error[0];
             if (error.status === 409) {
                 const conflictDocData = error.documentInDb;
-                return mapDocumentsDataToCacheDocs(this._docCache, [conflictDocData])[0];
+                return mapDocumentsDataToCacheDocs(this._docCache, [conflictDocData])[0] as any;
 
             } else {
                 throw error;
@@ -391,10 +418,10 @@ export class RxCollectionBase<
     async bulkInsert(
         docsData: RxDocumentType[]
     ): Promise<{
-        success: RxDocument<RxDocumentType, OrmMethods>[];
+        success: RxDocument<RxDocumentType, OrmMethods, Reactivity>[];
         error: RxStorageWriteError<RxDocumentType>[];
     }> {
-        ensureRxCollectionIsNotClosed(this);
+        isWriteAllowed(this);
         /**
          * Optimization shortcut,
          * do nothing when called with an empty array
@@ -419,9 +446,16 @@ export class RxCollectionBase<
         if (this.hasHooks('pre', 'insert')) {
             insertRows = await Promise.all(
                 docsData.map(docData => {
-                    const useDocData = fillObjectDataBeforeInsert(this.schema, docData);
+                    const useDocData = fillObjectDataBeforeInsert(this.schema, docData, true);
                     return this._runHooks('pre', 'insert', useDocData)
                         .then(() => {
+                            if (typeof this.schema.jsonSchema.primaryKey !== 'string') {
+                                fillPrimaryKey(
+                                    this.schema.primaryPath as any,
+                                    this.schema.jsonSchema as any,
+                                    useDocData as any
+                                );
+                            }
                             ids.add((useDocData as any)[primaryPath]);
                             return { document: useDocData };
                         });
@@ -440,17 +474,53 @@ export class RxCollectionBase<
 
 
         if (ids.size !== docsData.length) {
+            const duplicateIdSet = new Set<string>();
+            const seenIds = new Set<string>();
+            for (const row of insertRows) {
+                const id = (row.document as any)[primaryPath];
+                if (seenIds.has(id)) {
+                    duplicateIdSet.add(id);
+                } else {
+                    seenIds.add(id);
+                }
+            }
             throw newRxError('COL22', {
                 collection: this.name,
+                duplicateIds: Array.from(duplicateIdSet),
                 args: {
                     documents: docsData
                 }
             });
         }
 
+        // Normalize any inline attachment inputs (compute digest/length from Blob)
+        // Also converts array format to internal map format.
+        // Only create promises for rows that actually need normalization to avoid
+        // expensive await overhead on the hot path.
+        if (this.schema.jsonSchema.attachments) {
+            const normalizePromises: Promise<void>[] = [];
+            for (const row of insertRows) {
+                const doc: any = row.document;
+                const atts = doc._attachments;
+                if (atts == null || Object.keys(atts).length === 0) {
+                    doc._attachments = {};
+                } else {
+                    normalizePromises.push(
+                        normalizeInlineAttachments(this.database.hashFunction, atts)
+                            .then(normalized => {
+                                doc._attachments = normalized;
+                            })
+                    );
+                }
+            }
+            if (normalizePromises.length > 0) {
+                await Promise.all(normalizePromises);
+            }
+        }
+
         const results = await this.storageInstance.bulkWrite(
             insertRows,
-            'rx-collection-bulk-insert'
+            RX_COLLECTION_BULK_INSERT_CONTEXT
         );
 
 
@@ -458,7 +528,7 @@ export class RxCollectionBase<
          * Often the user does not need to access the RxDocuments of the bulkInsert() call.
          * So we transform the data to RxDocuments only if needed to use less CPU performance.
          */
-        let rxDocuments: RxDocument<RxDocumentType, OrmMethods>[];
+        let rxDocuments: RxDocument<RxDocumentType, OrmMethods, Reactivity>[];
         const collection = this;
         const ret = {
             get success() {
@@ -468,7 +538,7 @@ export class RxCollectionBase<
                         insertRows,
                         results
                     );
-                    rxDocuments = mapDocumentsDataToCacheDocs<RxDocumentType, OrmMethods>(collection._docCache, success);
+                    rxDocuments = mapDocumentsDataToCacheDocs<RxDocumentType, OrmMethods>(collection._docCache, success) as any;
                 }
                 return rxDocuments;
             },
@@ -504,10 +574,10 @@ export class RxCollectionBase<
          */
         idsOrDocs: string[] | RxDocument<RxDocumentType>[]
     ): Promise<{
-        success: RxDocument<RxDocumentType, OrmMethods>[];
+        success: RxDocument<RxDocumentType, OrmMethods, Reactivity>[];
         error: RxStorageWriteError<RxDocumentType>[];
     }> {
-        ensureRxCollectionIsNotClosed(this);
+        isWriteAllowed(this);
         const primaryPath = this.schema.primaryPath;
         /**
          * Optimization shortcut,
@@ -520,12 +590,12 @@ export class RxCollectionBase<
             };
         }
 
-        let rxDocumentMap: Map<string, RxDocument<RxDocumentType, OrmMethods>>;
+        let rxDocumentMap: Map<string, RxDocument<RxDocumentType, OrmMethods, Reactivity>>;
         if (typeof idsOrDocs[0] === 'string') {
             rxDocumentMap = await this.findByIds(idsOrDocs as string[]).exec();
         } else {
             rxDocumentMap = new Map();
-            (idsOrDocs as RxDocument<RxDocumentType, OrmMethods>[]).forEach(d => rxDocumentMap.set(d.primary, d));
+            (idsOrDocs as RxDocument<RxDocumentType, OrmMethods, Reactivity>[]).forEach(d => rxDocumentMap.set(d.primary, d));
         }
 
         const docsData: RxDocumentData<RxDocumentType>[] = [];
@@ -562,11 +632,11 @@ export class RxCollectionBase<
             results
         );
 
-        const deletedRxDocuments: RxDocument<RxDocumentType, OrmMethods>[] = [];
+        const deletedRxDocuments: RxDocument<RxDocumentType, OrmMethods, Reactivity>[] = [];
         const successIds: string[] = success.map(d => {
             const id = d[primaryPath] as string;
             const doc = this._docCache.getCachedRxDocument(d);
-            deletedRxDocuments.push(doc);
+            deletedRxDocuments.push(doc as any);
             return id;
         });
 
@@ -592,14 +662,17 @@ export class RxCollectionBase<
     /**
      * same as bulkInsert but overwrites existing document with same primary
      */
-    async bulkUpsert(docsData: Partial<RxDocumentType>[]): Promise<{
-        success: RxDocument<RxDocumentType, OrmMethods>[];
+    async bulkUpsert(docsData: Partial<RxDocumentType>[], options?: UpsertOptions): Promise<{
+        success: RxDocument<RxDocumentType, OrmMethods, Reactivity>[];
         error: RxStorageWriteError<RxDocumentType>[];
     }> {
-        ensureRxCollectionIsNotClosed(this);
+        isWriteAllowed(this);
         const insertData: RxDocumentType[] = [];
         const useJsonByDocId: Map<string, RxDocumentType> = new Map();
-        docsData.forEach(docData => {
+
+        // First pass: synchronous work — schema filling and primary key validation
+        const preparedDocs: RxDocumentType[] = [];
+        for (const docData of docsData) {
             const useJson = fillObjectDataBeforeInsert(this.schema, docData);
             const primary: string = useJson[this.schema.primaryPath] as any;
             if (!primary) {
@@ -609,9 +682,36 @@ export class RxCollectionBase<
                     schema: this.schema.jsonSchema
                 });
             }
+            preparedDocs.push(useJson);
+        }
+
+        // Second pass: normalize inline attachments concurrently across all documents.
+        // Only create promises for docs that actually need normalization to avoid
+        // expensive await overhead on the hot path.
+        if (this.schema.jsonSchema.attachments) {
+            const normalizePromises: Promise<void>[] = [];
+            for (const useJson of preparedDocs) {
+                const atts = (useJson as any)._attachments;
+                if (atts == null || Object.keys(atts).length === 0) {
+                    (useJson as any)._attachments = {};
+                } else {
+                    normalizePromises.push(
+                        normalizeInlineAttachments(this.database.hashFunction, atts)
+                            .then(normalized => {
+                                (useJson as any)._attachments = normalized;
+                            })
+                    );
+                }
+            }
+            if (normalizePromises.length > 0) {
+                await Promise.all(normalizePromises);
+            }
+        }
+        for (const useJson of preparedDocs) {
+            const primary: string = (useJson as any)[this.schema.primaryPath];
             useJsonByDocId.set(primary, useJson);
             insertData.push(useJson);
-        });
+        }
 
         const insertResult = await this.bulkInsert(insertData);
         const success = insertResult.success.slice(0);
@@ -626,9 +726,23 @@ export class RxCollectionBase<
                     const id = err.documentId;
                     const writeData = getFromMapOrThrow(useJsonByDocId, id);
                     const docDataInDb = ensureNotFalsy(err.documentInDb);
-                    const doc = this._docCache.getCachedRxDocuments([docDataInDb])[0];
-                    const newDoc = await doc.incrementalModify(() => writeData);
-                    success.push(newDoc);
+                    const newAttachments = (writeData as any)._attachments;
+                    const deleteExisting = options?.deleteExistingAttachments === true;
+                    const newDoc = await this.incrementalWriteQueue.addWrite(
+                        docDataInDb,
+                        (docWriteData: any): any => {
+                            return Object.assign({}, writeData, {
+                                _attachments: deleteExisting
+                                    ? newAttachments
+                                    : Object.assign(
+                                        {},
+                                        docWriteData._attachments,
+                                        newAttachments
+                                    )
+                            });
+                        }
+                    ).then(writeResult => this._docCache.getCachedRxDocument(writeResult) as any);
+                    success.push(newDoc as any);
                 }
             })
         );
@@ -641,9 +755,9 @@ export class RxCollectionBase<
     /**
      * same as insert but overwrites existing document with same primary
      */
-    async upsert(json: Partial<RxDocumentType>): Promise<RxDocument<RxDocumentType, OrmMethods>> {
-        ensureRxCollectionIsNotClosed(this);
-        const bulkResult = await this.bulkUpsert([json]);
+    async upsert(json: Partial<RxDocumentType>, options?: UpsertOptions): Promise<RxDocument<RxDocumentType, OrmMethods, Reactivity>> {
+        isWriteAllowed(this);
+        const bulkResult = await this.bulkUpsert([json], options);
         throwIfIsStorageWriteError<RxDocumentType>(
             this.asRxCollection,
             (json as any)[this.schema.primaryPath],
@@ -656,8 +770,8 @@ export class RxCollectionBase<
     /**
      * upserts to a RxDocument, uses incrementalModify if document already exists
      */
-    incrementalUpsert(json: Partial<RxDocumentType>): Promise<RxDocument<RxDocumentType, OrmMethods>> {
-        ensureRxCollectionIsNotClosed(this);
+    incrementalUpsert(json: Partial<RxDocumentType>, options?: UpsertOptions): Promise<RxDocument<RxDocumentType, OrmMethods, Reactivity>> {
+        isWriteAllowed(this);
         const useJson = fillObjectDataBeforeInsert(this.schema, json);
         const primary: string = useJson[this.schema.primaryPath] as any;
         if (!primary) {
@@ -666,16 +780,49 @@ export class RxCollectionBase<
             });
         }
 
+        const hasAttachments = !!this.schema.jsonSchema.attachments;
+        const deleteExisting = options?.deleteExistingAttachments === true;
+
         // ensure that it won't try 2 parallel runs
         let queue = this._incrementalUpsertQueues.get(primary);
         if (!queue) {
             queue = PROMISE_RESOLVE_VOID;
         }
         queue = queue
-            .then(() => _incrementalUpsertEnsureRxDocumentExists(this as any, primary as any, useJson))
+            // Normalize array-format attachments to map format
+            .then(() => {
+                if (hasAttachments) {
+                    const atts = (useJson as any)._attachments;
+                    if (atts == null || Object.keys(atts).length === 0) {
+                        return {};
+                    } else {
+                        return normalizeInlineAttachments(this.database.hashFunction, atts);
+                    }
+                }
+                return (useJson as any)._attachments;
+            })
+            .then((normalizedAttachments) => {
+                (useJson as any)._attachments = normalizedAttachments;
+                return _incrementalUpsertEnsureRxDocumentExists(this as any, primary as any, useJson);
+            })
             .then((wasInserted) => {
                 if (!wasInserted.inserted) {
-                    return _incrementalUpsertUpdate(wasInserted.doc, useJson);
+                    const doc = wasInserted.doc;
+                    const newAttachments = (useJson as any)._attachments;
+                    return this.incrementalWriteQueue.addWrite(
+                        doc._data as RxDocumentData<RxDocumentType>,
+                        (docWriteData: any): any => {
+                            return Object.assign({}, useJson, {
+                                _attachments: deleteExisting
+                                    ? newAttachments
+                                    : Object.assign(
+                                        {},
+                                        docWriteData._attachments,
+                                        newAttachments
+                                    )
+                            });
+                        }
+                    ).then(writeResult => this._docCache.getCachedRxDocument(writeResult) as any);
                 } else {
                     return wasInserted.doc;
                 }
@@ -686,7 +833,7 @@ export class RxCollectionBase<
 
     find(queryObj?: MangoQuery<RxDocumentType>): RxQuery<
         RxDocumentType,
-        RxDocument<RxDocumentType, OrmMethods>[],
+        RxDocument<RxDocumentType, OrmMethods, Reactivity>[],
         OrmMethods,
         Reactivity
     > {
@@ -710,7 +857,7 @@ export class RxCollectionBase<
         queryObj?: MangoQueryNoLimit<RxDocumentType> | string
     ): RxQuery<
         RxDocumentType,
-        RxDocument<RxDocumentType, OrmMethods> | null,
+        RxDocument<RxDocumentType, OrmMethods, Reactivity> | null,
         OrmMethods,
         Reactivity
     > {
@@ -772,7 +919,7 @@ export class RxCollectionBase<
         ids: string[]
     ): RxQuery<
         RxDocumentType,
-        Map<string, RxDocument<RxDocumentType, OrmMethods>>,
+        Map<string, RxDocument<RxDocumentType, OrmMethods, Reactivity>>,
         OrmMethods,
         Reactivity
     > {
@@ -791,9 +938,9 @@ export class RxCollectionBase<
     /**
      * Export collection to a JSON friendly format.
      */
-    exportJSON(): Promise<RxDumpCollection<RxDocumentType>>;
-    exportJSON(): Promise<RxDumpCollectionAny<RxDocumentType>>;
-    exportJSON(): Promise<any> {
+    exportJSON(_options?: RxDumpOptions): Promise<RxDumpCollection<RxDocumentType>>;
+    exportJSON(_options?: RxDumpOptions): Promise<RxDumpCollectionAny<RxDocumentType>>;
+    exportJSON(_options?: RxDumpOptions): Promise<any> {
         throw pluginMissing('json-dump');
     }
 
@@ -805,7 +952,11 @@ export class RxCollectionBase<
         throw pluginMissing('json-dump');
     }
 
-    insertCRDT(_updateObj: CRDTEntry<any> | CRDTEntry<any>[]): RxDocument<RxDocumentType, OrmMethods> {
+    registerWebMCP(_options?: WebMCPOptions): { error$: Subject<Error>; log$: Subject<WebMCPLogEvent>; } {
+        throw pluginMissing('webmcp');
+    }
+
+    insertCRDT(_updateObj: CRDTEntry<any> | CRDTEntry<any>[]): RxDocument<RxDocumentType, OrmMethods, Reactivity> {
         throw pluginMissing('crdt');
     }
 
@@ -851,11 +1002,15 @@ export class RxCollectionBase<
 
         const runName = parallel ? 'parallel' : 'series';
 
-        this.hooks[key] = this.hooks[key] || {};
-        this.hooks[key][when] = this.hooks[key][when] || {
-            series: [],
-            parallel: []
-        };
+        if (!this.hooks[key]) {
+            this.hooks[key] = {} as any;
+        }
+        if (!this.hooks[key][when]) {
+            this.hooks[key][when] = {
+                series: [],
+                parallel: []
+            };
+        }
         this.hooks[key][when][runName].push(boundFun);
     }
 
@@ -979,6 +1134,10 @@ export class RxCollectionBase<
                 this._subs.forEach(sub => sub.unsubscribe());
 
                 delete this.database.collections[this.name];
+                this.database.collectionsSubject$.next({
+                    collection: this.asRxCollection,
+                    type: 'CLOSED'
+                });
                 return runAsyncPluginHooks('postCloseRxCollection', this).then(() => true);
             });
     }
@@ -1030,15 +1189,6 @@ function _applyHookFunctions(
     });
 }
 
-function _incrementalUpsertUpdate<RxDocType>(
-    doc: RxDocumentBase<RxDocType>,
-    json: RxDocumentData<RxDocType>
-): Promise<RxDocumentBase<RxDocType>> {
-    return doc.incrementalModify((_innerDoc) => {
-        return json;
-    });
-}
-
 /**
  * ensures that the given document exists
  * @return promise that resolves with new doc and flag if inserted
@@ -1067,10 +1217,25 @@ function _incrementalUpsertEnsureRxDocumentExists<RxDocType>(
     return rxCollection.findOne(primary).exec()
         .then(doc => {
             if (!doc) {
-                return rxCollection.insert(json).then(newDoc => ({
-                    doc: newDoc,
-                    inserted: true
-                }));
+                return rxCollection.insert(json)
+                    .then(newDoc => ({
+                        doc: newDoc,
+                        inserted: true
+                    }))
+                    .catch((err) => {
+                        /**
+                         * If the insert fails with a conflict error,
+                         * it means another concurrent operation already
+                         * inserted a document with the same primary key
+                         * between our findOne() and insert() calls.
+                         * Re-run the whole function which will now find the
+                         * existing document via cache or query.
+                         */
+                        if ((err as any).code === 'CONFLICT') {
+                            return _incrementalUpsertEnsureRxDocumentExists(rxCollection, primary, json);
+                        }
+                        throw err;
+                    });
             } else {
                 return {
                     doc,
@@ -1097,29 +1262,33 @@ export async function createRxCollection(
         options = {},
         localDocuments = false,
         cacheReplacementPolicy = defaultCacheReplacementPolicy,
-        conflictHandler = defaultConflictHandler
+        conflictHandler = defaultConflictHandler,
+        storageInstance,
+        liveQueryUpdateThrottleTime = undefined
     }: any
 ): Promise<RxCollection> {
-    const storageInstanceCreationParams: RxStorageInstanceCreationParams<any, any> = {
-        databaseInstanceToken: database.token,
-        databaseName: database.name,
-        collectionName: name,
-        schema: schema.jsonSchema,
-        options: instanceCreationOptions,
-        multiInstance: database.multiInstance,
-        password: database.password,
-        devMode: overwritable.isDevMode()
-    };
+    if (!storageInstance) {
+        const storageInstanceCreationParams: RxStorageInstanceCreationParams<any, any> = {
+            databaseInstanceToken: database.token,
+            databaseName: database.name,
+            collectionName: name,
+            schema: schema.jsonSchema,
+            options: instanceCreationOptions,
+            multiInstance: database.multiInstance,
+            password: database.password,
+            devMode: overwritable.isDevMode()
+        };
 
-    runPluginHooks(
-        'preCreateRxStorageInstance',
-        storageInstanceCreationParams
-    );
+        runPluginHooks(
+            'preCreateRxStorageInstance',
+            storageInstanceCreationParams
+        );
 
-    const storageInstance = await createRxCollectionStorageInstance(
-        database,
-        storageInstanceCreationParams
-    );
+        storageInstance = await createRxCollectionStorageInstance(
+            database,
+            storageInstanceCreationParams
+        );
+    }
 
     const collection = new RxCollectionBase(
         database,
@@ -1133,7 +1302,8 @@ export async function createRxCollection(
         options,
         cacheReplacementPolicy,
         statics,
-        conflictHandler
+        conflictHandler,
+        liveQueryUpdateThrottleTime
     );
 
     try {

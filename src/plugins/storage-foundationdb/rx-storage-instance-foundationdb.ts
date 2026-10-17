@@ -5,7 +5,6 @@ import type {
     CategorizeBulkWriteRowsOutput,
     EventBulk,
     PreparedQuery,
-    RxAttachmentWriteData,
     RxDocumentData,
     RxJsonSchema,
     RxStorageBulkWriteResponse,
@@ -47,10 +46,8 @@ import {
     getStartIndexStringFromUpperBound
 } from '../../custom-index.ts';
 import {
-    appendToArray,
     batchArray,
     ensureNotFalsy,
-    lastOfArray,
     now,
     PROMISE_RESOLVE_VOID,
     toArray
@@ -100,13 +97,33 @@ export class RxStorageInstanceFoundationDB<RxDocType> implements RxStorageInstan
         await Promise.all(
             writeBatches.map(async (writeBatch) => {
                 let categorized: CategorizeBulkWriteRowsOutput<RxDocType> | undefined = null as any;
+
+                /**
+                 * Pre-convert all attachment Blobs to Buffers before entering the transaction.
+                 * This avoids holding the FDB transaction open during async Blob reads,
+                 * which can trigger 'Transaction exceeds byte limit' or timeout errors.
+                 */
+                const preConvertedBuffers = new Map<string, Buffer>();
+                await Promise.all(
+                    writeBatch.flatMap(row => {
+                        const docId: string = (row.document as any)[this.primaryPath];
+                        const attachments: Record<string, any> = (row.document as any)._attachments || {};
+                        return Object.entries(attachments)
+                            .filter(([, att]) => att.data instanceof Blob)
+                            .map(async ([attId, att]) => {
+                                const buffer = Buffer.from(await att.data.arrayBuffer());
+                                preConvertedBuffers.set(attachmentMapKey(docId, attId), buffer);
+                            });
+                    })
+                );
+
                 await dbs.root.doTransaction(async (tx: any) => {
                     const ids = writeBatch.map(row => (row.document as any)[this.primaryPath]);
                     const mainTx = tx.at(dbs.main.subspace);
                     const attachmentTx = tx.at(dbs.attachments.subspace);
                     const docsInDB = new Map<string, RxDocumentData<RxDocType>>();
                     /**
-                     * TODO this might be faster if fdb
+                     * This might be faster if fdb
                      * any time adds a bulk-fetch-by-key method.
                      */
                     await Promise.all(
@@ -122,7 +139,7 @@ export class RxStorageInstanceFoundationDB<RxDocType> implements RxStorageInstan
                         writeBatch,
                         context
                     );
-                    appendToArray(ret.error, categorized.errors);
+                    ret.error = ret.error.concat(categorized.errors);
 
                     // INSERTS
                     categorized.bulkInsertDocs.forEach(writeRow => {
@@ -158,18 +175,18 @@ export class RxStorageInstanceFoundationDB<RxDocType> implements RxStorageInstan
                     });
 
                     // attachments
-                    categorized.attachmentsAdd.forEach(attachment => {
-                        attachmentTx.set(
-                            attachmentMapKey(attachment.documentId, attachment.attachmentId),
-                            attachment.attachmentData
-                        );
-                    });
-                    categorized.attachmentsUpdate.forEach(attachment => {
-                        attachmentTx.set(
-                            attachmentMapKey(attachment.documentId, attachment.attachmentId),
-                            attachment.attachmentData
-                        );
-                    });
+                    // FoundationDB stores attachment data as raw binary Buffers.
+                    // Buffers were pre-converted from Blobs before the transaction started.
+                    for (const attachment of categorized.attachmentsAdd) {
+                        const key = attachmentMapKey(attachment.documentId, attachment.attachmentId);
+                        const buffer = preConvertedBuffers.get(key)!;
+                        attachmentTx.set(key, buffer);
+                    }
+                    for (const attachment of categorized.attachmentsUpdate) {
+                        const key = attachmentMapKey(attachment.documentId, attachment.attachmentId);
+                        const buffer = preConvertedBuffers.get(key)!;
+                        attachmentTx.set(key, buffer);
+                    }
                     categorized.attachmentsRemove.forEach(attachment => {
                         attachmentTx.delete(
                             attachmentMapKey(attachment.documentId, attachment.attachmentId)
@@ -237,10 +254,14 @@ export class RxStorageInstanceFoundationDB<RxDocType> implements RxStorageInstan
         };
     }
 
-    async getAttachmentData(documentId: string, attachmentId: string, _digest: string): Promise<string> {
+    async getAttachmentData(documentId: string, attachmentId: string, _digest: string): Promise<Blob> {
         const dbs = await this.internals.dbsPromise;
-        const attachment = await dbs.attachments.get(attachmentMapKey(documentId, attachmentId));
-        return attachment.data;
+        const key = attachmentMapKey(documentId, attachmentId);
+        const buffer = await dbs.attachments.get(key);
+        if (!buffer) {
+            throw new Error('attachment does not exist: ' + key);
+        }
+        return new Blob([buffer]);
     }
     changeStream(): Observable<EventBulk<RxStorageChangeEvent<RxDocType>, RxStorageDefaultCheckpoint>> {
         return this.changes$.asObservable();
@@ -368,10 +389,10 @@ export function createFoundationDBStorageInstance<RxDocType>(
             .withKeyEncoding(encoders.string)
             .withValueEncoding(encoders.json) as any;
 
-        const attachments: FoundationDBDatabase<RxAttachmentWriteData> = root
+        const attachments: FoundationDBDatabase<Buffer> = root
             .at('attachments.')
             .withKeyEncoding(encoders.string)
-            .withValueEncoding(encoders.json) as any;
+            .withValueEncoding(encoders.buffer) as any;
 
 
         const indexDBs: { [indexName: string]: FoundationDBIndexMeta<RxDocType>; } = {};

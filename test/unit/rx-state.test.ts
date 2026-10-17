@@ -2,7 +2,7 @@ import assert from 'assert';
 import { randomBoolean, randomNumber, wait, waitUntil } from 'async-test-util';
 import { Observable } from 'rxjs';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 
 import {
     createRxDatabase,
@@ -35,7 +35,7 @@ addRxPlugin(RxDBJsonDumpPlugin);
  * So we test is once with a schema validator and once without.
  */
 [true, false].forEach(useSchemaValidator => {
-    describeParallel('rx-state.test.ts (useSchemaValidator: ' + useSchemaValidator + ')', () => {
+    describe('rx-state.test.ts (useSchemaValidator: ' + useSchemaValidator + ')', () => {
         type TestState = {
             foo?: string;
             a?: number;
@@ -111,7 +111,7 @@ addRxPlugin(RxDBJsonDumpPlugin);
                 assert.ok(state1 === database.states['']);
                 assert.ok(state3 === database.states.foobar);
 
-                database.remove();
+                await database.remove();
             });
         });
         describe('write state data', () => {
@@ -450,7 +450,12 @@ addRxPlugin(RxDBJsonDumpPlugin);
                     }
                 }
                 await Promise.all(promises);
-                await wait(isFastMode() ? 100 : 300);
+                await waitUntil(() => {
+                    return state1.get('a') === amount &&
+                        state2.get('a') === amount &&
+                        state1.get('b') === amount &&
+                        state2.get('b') === amount;
+                }, 10000, 10);
 
                 assert.strictEqual(state1.get('a'), amount);
                 assert.strictEqual(state2.get('a'), amount);
@@ -553,6 +558,48 @@ addRxPlugin(RxDBJsonDumpPlugin);
 
                 state.collection.database.close();
             });
+            it('set() with empty path should pass the current state to the modifier', async () => {
+                const state = await getState();
+
+                await state.set('foo', () => 'bar');
+                await state.set('a', () => 42);
+
+                // When using empty path '', the modifier should receive the current full state
+                let receivedValue: any;
+                await state.set('', (prevState: any) => {
+                    receivedValue = prevState;
+                    return { ...prevState, b: 100 };
+                });
+
+                // The modifier should have received the current state
+                assert.deepStrictEqual(receivedValue, { foo: 'bar', a: 42 });
+
+                // The new state should include the original properties plus the new one
+                assert.deepStrictEqual(state.get(), { foo: 'bar', a: 42, b: 100 });
+
+                state.collection.database.remove();
+            });
+            it('should recover correct state from disk after full-state replacement with set(\'\')', async () => {
+                const databaseName = randomToken(10);
+
+                // Create state and do a full-state replacement via set('')
+                let state = await getState(databaseName);
+                await state.set('foo', () => 'bar');
+                await state.set('a', () => 1);
+                // Replace the entire state using empty path
+                await state.set('', () => ({ foo: 'replaced', b: 99 }));
+
+                // Verify in-memory state is correct before closing
+                assert.deepStrictEqual(state.get(), { foo: 'replaced', b: 99 });
+                await state.collection.database.close();
+
+                // Reopen the database and recover state from disk
+                state = await getState(databaseName);
+                // State should match what was set before closing
+                assert.deepStrictEqual(state.get(), { foo: 'replaced', b: 99 });
+
+                await state.collection.database.remove();
+            });
             /**
              * @link https://github.com/pubkey/rxdb/pull/6503
              */
@@ -569,6 +616,165 @@ addRxPlugin(RxDBJsonDumpPlugin);
 
                 await state._cleanup();
                 assert.deepStrictEqual(state.get(), { foo: 'bar6' });
+                state.collection.database.remove();
+            });
+            /**
+             * The $ observable should not emit duplicate values
+             * when a single write is performed.
+             * Previously, both _ownEmits$ and collection.eventBulks$
+             * would cause $ to emit for each write, resulting in
+             * duplicate emissions.
+             */
+            it('$ observable should not emit duplicate values on a single write', async () => {
+                if (isFastMode()) {
+                    return;
+                }
+                const state = await getState();
+
+                const emitted: any[] = [];
+                state.$.subscribe(v => {
+                    emitted.push(JSON.parse(JSON.stringify(v)));
+                });
+
+                // Perform a single write
+                await state.set('a', () => 1);
+
+                // Wait for any async events (like eventBulks$) to settle
+                await wait(200);
+
+                // Should have exactly 1 emission for 1 state change, not 2
+                assert.strictEqual(
+                    emitted.length,
+                    1,
+                    '$ should emit exactly once per state change but emitted ' + emitted.length + ' times: ' + JSON.stringify(emitted)
+                );
+                assert.deepStrictEqual(emitted[0], { a: 1 });
+
+                // Perform a second write
+                await state.set('b', () => 2);
+                await wait(200);
+
+                // Should have exactly 2 emissions total
+                assert.strictEqual(
+                    emitted.length,
+                    2,
+                    '$ should emit exactly twice for two state changes but emitted ' + emitted.length + ' times: ' + JSON.stringify(emitted)
+                );
+                assert.deepStrictEqual(emitted[1], { a: 1, b: 2 });
+
+                state.collection.database.remove();
+            });
+            /**
+             * The observable returned by get$()/property$ should emit the
+             * CURRENT value when subscribed, not the value that was present
+             * at the time the observable was created.
+             * Previously, startWith() was eagerly evaluated at get$() call
+             * time. If the state changed between getting the observable
+             * reference and subscribing to it, the subscriber received a
+             * stale value first and only then the current one.
+             */
+            it('get$() should emit the current value when subscribed, not a stale value from creation time', async () => {
+                if (isFastMode()) {
+                    return;
+                }
+                const state = await getState();
+                await state.set('foo', () => 'first');
+
+                // Capture the observable reference BEFORE the state change.
+                const obs = state.foo$;
+
+                // Change state AFTER getting the observable reference,
+                // but BEFORE subscribing.
+                await state.set('foo', () => 'second');
+
+                // Let any async events settle.
+                await wait(100);
+
+                // Now subscribe. Subscriber should only see the current
+                // value ('second'), not the stale one ('first').
+                const emitted: any[] = [];
+                const sub = obs.subscribe(v => emitted.push(v));
+
+                await wait(100);
+
+                assert.deepStrictEqual(
+                    emitted,
+                    ['second'],
+                    'subscriber should receive only the current value but got: ' + JSON.stringify(emitted)
+                );
+
+                sub.unsubscribe();
+                state.collection.database.remove();
+            });
+            /**
+             * _cleanup() must return true when it is done
+             * so that the cleanup plugin loop can terminate.
+             * @link https://github.com/pubkey/rxdb/issues/XXXX
+             */
+            it('_cleanup() should return true to signal completion', async () => {
+                const state = await getState();
+
+                // Write more than 5 documents so cleanup actually runs
+                await state.set('a', () => 0);
+                await state.set('a', () => 1);
+                await state.set('a', () => 2);
+                await state.set('a', () => 3);
+                await state.set('a', () => 4);
+                await state.set('a', () => 5);
+                await state.set('a', () => 6);
+
+                const docsBefore = await state.collection.find().exec();
+                assert.ok(docsBefore.length > 5, 'should have more than 5 docs before cleanup');
+
+                // First cleanup call should merge documents and return true
+                const firstResult = await state._cleanup();
+                assert.strictEqual(firstResult, true, '_cleanup() must return true after performing cleanup');
+
+                // Verify state is still correct
+                assert.strictEqual(state.a, 6);
+
+                const docsAfter = await state.collection.find().exec();
+                assert.strictEqual(docsAfter.length, 1, 'should have merged into 1 doc');
+
+                // Second cleanup call (no-op, < 5 docs) should also return true
+                const secondResult = await state._cleanup();
+                assert.strictEqual(secondResult, true, '_cleanup() must return true when no cleanup is needed');
+
+                // State must still be correct
+                assert.strictEqual(state.a, 6);
+
+                state.collection.database.remove();
+            });
+            /**
+             * When a modifier passed to set() throws, the write queue
+             * must not be permanently broken. Subsequent writes with
+             * valid modifiers should still succeed.
+             */
+            it('write queue should recover after a modifier throws', async () => {
+                const state = await getState();
+
+                await state.set('a', () => 1);
+                assert.strictEqual(state.get('a'), 1);
+
+                const thrownError = new Error('bad modifier');
+                let caughtError: any;
+                try {
+                    await state.set('a', () => {
+                        throw thrownError;
+                    });
+                } catch (err) {
+                    caughtError = err;
+                }
+                assert.ok(caughtError, 'the first set() should reject');
+
+                // a subsequent valid write must still succeed
+                await state.set('a', () => 2);
+                assert.strictEqual(state.get('a'), 2);
+
+                // and a later write should still work
+                await state.set('a', (prev: any) => prev + 1);
+                assert.strictEqual(state.get('a'), 3);
+
                 state.collection.database.remove();
             });
         });

@@ -2,7 +2,11 @@
 title: Seamless Schema Data Migration with RxDB
 slug: migration-schema.html
 description: Upgrade your RxDB collections without losing data. Learn how to seamlessly migrate schema changes and keep your apps running smoothly.
+image: /headers/migration-schema.jpg
 ---
+
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {SchemaMigrationLogo} from '@site/src/components/animations/schema-migration-logo';
 
 # Migrate Database Data on schema changes
 
@@ -13,7 +17,11 @@ Imagine you have your awesome messenger-app distributed to many users. After a w
 With RxDB you can provide migrationStrategies for your collections that automatically (or on call) transform your existing data from older to newer schemas. This assures that the client's data always matches your newest code-version.
 
 
-# Add the migration plugin
+<DocsAnimation subtitle="Stored documents migrated to a new schema version">
+<SchemaMigrationLogo />
+</DocsAnimation>
+
+## Add the migration plugin
 
 To enable the data migration, you have to add the `migration-schema` plugin.
 
@@ -60,13 +68,14 @@ myDatabase.addCollections({
        * this returns a promise which resolves with the new document-data
        */
       2: function(oldDoc){
-        // in the new schema (version: 2) we defined 'senderCountry' as required field (string)
+        // in the new schema (version: 2) we defined
+        // 'senderCountry' as required field (string)
         // so we must get the country of the message-sender from the server
         const coordinates = oldDoc.coordinates;
         return fetch('http://myserver.com/api/countryByCoordinates/'+coordinates+'/')
-          .then(response => {
-            const response = response.json();
-            oldDoc.senderCountry = response;
+          .then(response => response.json())
+          .then(country => {
+            oldDoc.senderCountry = country;
             return oldDoc;
           });
       }
@@ -88,7 +97,7 @@ myDatabase.addCollections({
         return oldDoc;
       },
       /**
-       * this removes all documents older then 2017-02-12
+       * this removes all documents older than 2017-02-12
        * they will not appear in the new collection
        */
       2: function(oldDoc){
@@ -104,6 +113,13 @@ myDatabase.addCollections({
 
 By default, the migration automatically happens when the collection is created. Calling `RxDatabase.addCollections()` returns only when the migration has finished.
 If you have lots of data or the migrationStrategies take a long time, it might be better to start the migration 'by hand' and show the migration-state to the user as a loading-bar.
+
+:::warning No writes during a running migration
+While a schema migration is running on a collection, writes to that collection are not allowed.
+Calls that would write will throw a `COL25` error until the migration finishes.
+Wait for `collection.migratePromise()` to resolve (or observe `collection.getMigrationState().$` until status is `DONE`)
+before performing writes.
+:::
 
 ```javascript
 const messageCol = await myDatabase.addCollections({
@@ -128,7 +144,9 @@ if(needed === false) {
 }
 
 // start the migration
-messageCol.startMigration(10); // 10 is the batch-size, how many docs will run at parallel
+// 10 is the batch-size, how many docs will run
+// at parallel
+messageCol.startMigration(10);
 
 const migrationState = messageCol.getMigrationState();
 
@@ -176,23 +194,57 @@ allStatesObservable.subscribe(allStates => {
 });
 ```
 
+## Default values are not auto-applied
+
+Schema `default` values are **not** automatically filled in during migration. When you insert a document through the normal RxDB API (like `insert()` or `bulkInsert()`), fields with a `default` in the schema are auto-filled. Migration does not do this. Your migration strategy has full explicit control over the document data and must set every field that the new schema needs.
+
+```js
+const messageSchemaV1 = {
+    version: 1,
+    primaryKey: 'id',
+    type: 'object',
+    properties: {
+        id: { type: 'string', maxLength: 100 },
+        text: { type: 'string' },
+        // new field in v1 with a default value
+        priority: { type: 'string', default: 'normal' }
+    },
+    required: ['id', 'text']
+};
+
+const migrationStrategies = {
+    1: function(oldDoc){
+        /**
+         * You must explicitly set 'priority' here.
+         * The schema default 'normal' will NOT be
+         * applied automatically during migration.
+         */
+        oldDoc.priority = 'normal';
+        return oldDoc;
+    }
+};
+```
+
+
 ## Migrating attachments
 
-When you store `RxAttachment`s together with your document, they can also be changed, added or removed while running the migration.
+When you store [RxAttachment](./rx-attachment.md)s together with your document, they can also be changed, added or removed while running the migration.
 You can do this by mutating the `oldDoc._attachments` property.
 
 ```js
 import { createBlob } from 'rxdb';
 const migrationStrategies = {
       1: async function(oldDoc){
-        // do nothing with _attachments to keep all attachments and have them in the new collection version.
+        // do nothing with _attachments to keep all
+        // attachments in the new collection version.
         return oldDoc;
       },
       2: async function(oldDoc){
-        // set _attachments to an empty object to delete all existing ones during the migration.
+        // set _attachments to an empty object to
+        // delete all existing ones during migration.
         oldDoc._attachments = {};
         return oldDoc;
-      }
+      },
       3: async function(oldDoc){
         // update the data field of a single attachment to change its data. 
         oldDoc._attachments.myFile.data = await createBlob(

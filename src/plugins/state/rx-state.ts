@@ -1,7 +1,9 @@
 import {
     Observable,
     Subject,
+    defer,
     distinctUntilChanged,
+    filter,
     map,
     merge,
     shareReplay,
@@ -11,6 +13,7 @@ import {
 import { overwritable } from '../../overwritable.ts';
 import { getChangedDocumentsSince } from '../../rx-storage-helper.ts';
 import type {
+    RxChangeEventBulk,
     RxCollection,
     RxDatabase,
     RxQuery,
@@ -23,11 +26,11 @@ import {
     getProperty,
     setProperty,
     PROMISE_RESOLVE_VOID,
-    appendToArray,
     clone,
     randomToken,
     deepEqual,
-    getFromMapOrCreate
+    getFromMapOrCreate,
+    promiseWait
 } from '../utils/index.ts';
 import {
     RX_STATE_COLLECTION_SCHEMA,
@@ -39,7 +42,6 @@ import {
     RxStateOperation,
     RxStateModifier
 } from './types.ts';
-import { newRxError } from '../../rx-error.ts';
 import { runPluginHooks } from '../../hooks.ts';
 
 
@@ -85,10 +87,24 @@ export class RxStateBase<T, Reactivity = unknown> {
         this.$ = merge(
             this._ownEmits$,
             this.collection.eventBulks$.pipe(
-                tap(eventBulk => {
+                /**
+                 * Filter out event bulks that do not contain
+                 * relevant events for this instance.
+                 * Only INSERT events from OTHER instances need
+                 * to be processed. Own-instance INSERTs are
+                 * already handled via _ownEmits$, and DELETE
+                 * events (e.g. from cleanup) do not change state.
+                 */
+                filter((eventBulk: RxChangeEventBulk<RxStateDocument>) => {
                     if (!this._initDone) {
-                        return;
+                        return false;
                     }
+                    return eventBulk.events.some(event =>
+                        event.operation === 'INSERT' &&
+                        event.documentData.sId !== this._instanceId
+                    );
+                }),
+                tap((eventBulk: RxChangeEventBulk<RxStateDocument>) => {
                     const events = eventBulk.events;
                     for (let index = 0; index < events.length; index++) {
                         const event = events[index];
@@ -127,7 +143,7 @@ export class RxStateBase<T, Reactivity = unknown> {
      * that would throw conflict errors and trigger a retry.
      */
     _triggerWrite() {
-        this._writeQueue = this._writeQueue.then(async () => {
+        const next = this._writeQueue.then(async () => {
             if (this._nonPersisted.length === 0) {
                 return;
             }
@@ -135,7 +151,7 @@ export class RxStateBase<T, Reactivity = unknown> {
             let done = false;
             while (!done) {
                 const lastIdDoc = await this._lastIdQuery.exec();
-                appendToArray(useWrites, this._nonPersisted);
+                useWrites = useWrites.concat(this._nonPersisted);
                 this._nonPersisted = [];
                 const nextId = nextRxStateId(lastIdDoc ? lastIdDoc.id : undefined);
                 try {
@@ -148,7 +164,7 @@ export class RxStateBase<T, Reactivity = unknown> {
                     const ops: RxStateOperation[] = [];
                     for (let index = 0; index < useWrites.length; index++) {
                         const writeRow = useWrites[index];
-                        const value = getProperty(newState, writeRow.path);
+                        const value = writeRow.path === '' ? newState : getProperty(newState, writeRow.path);
                         const newValue = writeRow.modifier(value);
                         /**
                          * Here we have to clone the value because
@@ -182,15 +198,18 @@ export class RxStateBase<T, Reactivity = unknown> {
                     if ((err as RxError).code !== 'CONFLICT') {
                         throw err;
                     }
+                    /**
+                     * Yield to the event loop so that cross-instance
+                     * change events can be processed and the _lastIdQuery
+                     * cache gets updated before retrying.
+                     */
+                    await promiseWait(0);
                 }
             }
-        }).catch(error => {
-            throw newRxError('SNH', {
-                name: 'RxState WRITE QUEUE ERROR',
-                error
-            });
         });
-        return this._writeQueue;
+        // Keep the shared queue alive so a failing write does not block subsequent ones.
+        this._writeQueue = next.catch(() => { });
+        return next;
     }
 
     mergeOperationsIntoState(
@@ -235,10 +254,18 @@ export class RxStateBase<T, Reactivity = unknown> {
         return ret;
     }
     get$(path?: Paths<T>): Observable<any> {
-        return this.$.pipe(
+        /**
+         * Use defer() so that the initial value passed to startWith()
+         * is evaluated lazily at subscription time, not at the time
+         * get$() is called. Otherwise, if the state changes between
+         * the get$() call and the subscription, the subscriber would
+         * first receive a stale value and only then the current one.
+         */
+        return defer(() => this.$.pipe(
             map(() => this.get(path)),
             startWith(this.get(path)),
             distinctUntilChanged(deepEqual),
+        )).pipe(
             shareReplay(RXJS_SHARE_REPLAY_DEFAULTS),
         );
     }
@@ -257,21 +284,21 @@ export class RxStateBase<T, Reactivity = unknown> {
      * to store space and make recreating the state from
      * disc faster.
      */
-    async _cleanup() {
+    async _cleanup(): Promise<boolean> {
         const firstWrite = await this.collection.findOne({
             sort: [{ id: 'asc' }]
         }).exec();
         const lastWrite = await this._lastIdQuery.exec();
 
         if (!firstWrite || !lastWrite) {
-            return;
+            return true;
         }
 
         const firstNr = parseInt(firstWrite.id, 10);
         const lastNr = parseInt(lastWrite.id, 10);
         if ((lastNr - 5) < firstNr) {
-            // only run if more then 5 write rows
-            return;
+            // only run if more than 5 write rows
+            return true;
         }
 
         // update whole state object
@@ -286,6 +313,7 @@ export class RxStateBase<T, Reactivity = unknown> {
                 }
             }
         }).remove();
+        return true;
     }
 }
 
@@ -328,7 +356,7 @@ export async function createRxState<T>(
         } else {
             for (let index = 0; index < documents.length; index++) {
                 const document = documents[index];
-                mergeOperationsIntoState(rxState._state, document.ops);
+                rxState._state = mergeOperationsIntoState(rxState._state, document.ops);
             }
         }
     }
@@ -378,9 +406,14 @@ export async function createRxState<T>(
 export function mergeOperationsIntoState<T>(
     state: T,
     operations: RxStateOperation[]
-) {
+): T {
     for (let index = 0; index < operations.length; index++) {
         const operation = operations[index];
-        setProperty(state, operation.k, clone(operation.v));
+        if (operation.k === '') {
+            state = clone(operation.v);
+        } else {
+            setProperty(state, operation.k, clone(operation.v));
+        }
     }
+    return state;
 }

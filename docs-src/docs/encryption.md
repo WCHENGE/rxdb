@@ -2,12 +2,21 @@
 title: Encryption
 slug: encryption.html
 description: Explore RxDB's 🔒 encryption plugin for enhanced data security in web and native apps, featuring password-based encryption and secure storage.
+image: /headers/encryption.jpg
 ---
 
 import {Steps} from '@site/src/components/steps';
+import {PremiumBlock} from '@site/src/components/premium-block';
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_ENCRYPTION, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
 
-# 🔒 Encrypted Local Storage with RxDB
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+import {IconEncryption} from '@site/src/components/icons/encryption';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {EncryptionLogo} from '@site/src/components/animations/encryption-logo';
 
+# <HeadlineWithIcon h1 icon={<IconEncryption />}>Encrypted Local Storage with RxDB</HeadlineWithIcon>
 
 <!-- keywords:
 encrypted browser storage
@@ -18,12 +27,7 @@ sqlite browser encrypted databases
 react native encrypted storage
 -->
 
-
-The RxDB encryption plugin empowers developers to fortify their applications' data security. It seamlessly integrates with [RxDB](https://rxdb.info/), allowing for the secure storage and retrieval of documents by **encrypting them with a password**. With encryption and decryption processes handled internally, it ensures that sensitive data remains confidential, making it a valuable tool for building robust, privacy-conscious applications. The encryption works on all RxDB supported devices types like the **browser**, **ReactNative** or **Node.js**.
-
-<p align="center">
-  <img src="./files/icons/with-gradient/storage-layer.svg" alt="Encryption Storage Layer" height="60" />
-</p>
+The RxDB encryption plugin empowers developers to fortify their applications' data security. It seamlessly integrates with [RxDB](https://rxdb.info/), allowing for the secure storage and retrieval of documents by **encrypting them with a password**. With encryption and decryption processes handled internally, it ensures that sensitive data remains confidential, making it a valuable tool for building robust, privacy-conscious applications. The encryption works on all RxDB supported devices types like the **[browser](./articles/browser-database.md)**, **[ReactNative](./react-native-database.md)** or **[Node.js](./nodejs-database.md)**.
 
 Encrypting client-side stored data in RxDB offers numerous advantages:
 - **Enhanced Security**: In the unfortunate event of a user's device being stolen, the encrypted data remains safeguarded on the hard drive, inaccessible without the correct password.
@@ -31,10 +35,16 @@ Encrypting client-side stored data in RxDB offers numerous advantages:
 - **Tamper proof** Other applications on the device cannot read out the stored data when the password is only kept in the process-specific memory
 
 
+<DocsAnimation subtitle="Document fields encrypted before they are stored">
+<EncryptionLogo />
+</DocsAnimation>
+
 ## Querying encrypted data
 
-RxDB handles the encryption and decryption of data internally. This means that when you work with a RxDocument, you can access the properties of the document just like you would with normal, unencrypted data. RxDB automatically decrypts the data for you when you retrieve it, making it transparent to your application code.
-This means the encryption works with all [RxStorage](./rx-storage.md) like **SQLite**, **IndexedDB**, **OPFS** and so on.
+RxDB handles the encryption and decryption of data internally. This means that when you work with a [RxDocument](./rx-document.md), you can access the properties of the document just like you would with normal, unencrypted data. RxDB automatically decrypts the data for you when you retrieve it, making it transparent to your application code.
+This means the encryption works with all [RxStorage](./rx-storage.md) like **[SQLite](./rx-storage-sqlite.md)**, **[IndexedDB](./rx-storage-indexeddb.md)**, **[OPFS](./rx-storage-opfs.md)** and so on.
+
+Keep in mind that everything which reads the documents through the collection sees the decrypted values. A [JSON dump](./json-import-export.md) therefore contains your encrypted fields in plain text, so treat such a dump as sensitive data.
 
 However, there's a limitation when it comes to querying encrypted fields. **Encrypted fields cannot be used as operators in queries**. This means you cannot perform queries like "find all documents where the encrypted field equals a certain value." RxDB does not expose the encrypted data in a way that allows direct querying based on the encrypted content. To filter or search for documents based on the contents of encrypted fields, you would need to first decrypt the data and then perform the query, which might not be efficient or practical in some cases.
 You could however use the [memory mapped](./rx-storage-memory-mapped.md) RxStorage to replicate the encrypted documents into a non-encrypted in-memory storage and then query them like normal.
@@ -55,7 +65,7 @@ It is not able to do **Asymmetric encryption** by itself. If you need Asymmetric
 RxDB currently has two plugins for encryption:
 
 - The free `encryption-crypto-js` plugin that is based on the `AES` algorithm of the [crypto-js](https://www.npmjs.com/package/crypto-js) library
-- The [👑 premium](/premium/) `encryption-web-crypto` plugin that is based on the native [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) which makes it faster and more secure to use. Document inserts are about 10x faster compared to `crypto-js` and it has a smaller build size because it uses the browsers API instead of bundling an npm module.
+- `encryption-web-crypto` plugin that is based on the native [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) which makes it faster and more secure to use. Document inserts are about 10x faster compared to `crypto-js` and it has a smaller build size because it uses the browsers API instead of bundling an npm module.
 
 An RxDB encryption plugin is a wrapper around any other [RxStorage](./rx-storage.md). 
 
@@ -108,7 +118,7 @@ const schema = {
           type: 'string'
       },
   },
-  required: ['id']
+  required: ['id'],
   encrypted: ['secret']
 };
 
@@ -120,9 +130,9 @@ await db.addCollections({
 ```
 </Steps>
 
-## Using Web-Crypto API
+## Using the WebCrypto API
 
-For professionals, we have the `web-crypto` [👑 premium](/premium/) plugin which is faster and more secure:
+<PremiumBlock />
 
 ```ts
 import {
@@ -170,7 +180,9 @@ const mySchema = {
         /* ... */
     },
     attachments: {
-        encrypted: true // if true, the attachment-data will be encrypted with the db-password
+        // if true, the attachment-data will be
+        // encrypted with the db-password
+        encrypted: true
     }
 };
 ```
@@ -180,3 +192,72 @@ const mySchema = {
 If you are using [Worker RxStorage](./rx-storage-worker.md) or [SharedWorker RxStorage](./rx-storage-shared-worker.md) with encryption, it's recommended to run encryption inside of the worker. Encryption can be very cpu intensive and would take away CPU-power from the main thread which is the main reason to use workers.
 
 You do not need to worry about setting the password inside of the worker. The password will be set when calling createRxDatabase from the main thread, and will be passed internally to the storage in the worker automatically.
+
+### Using encryption inside the worker with OPFS
+
+When you wrap a storage like [OPFS](./rx-storage-opfs.md) with encryption inside of a worker, you have to set the `usesRxDatabaseInWorker` option on the OPFS storage. Without this option, the OPFS storage returns raw JSON strings instead of parsed objects as a performance optimization. The encryption wrapper cannot process these strings and will throw an error.
+
+```ts
+// inside of the worker.js file
+import { getRxStorageOPFS } from 'rxdb-premium/plugins/storage-opfs';
+import {
+    wrappedKeyEncryptionWebCryptoStorage
+} from 'rxdb-premium/plugins/encryption-web-crypto';
+
+const storage = wrappedKeyEncryptionWebCryptoStorage({
+    storage: getRxStorageOPFS({
+        // Required when wrapping OPFS with encryption inside a worker
+        usesRxDatabaseInWorker: true
+    })
+});
+```
+
+## Encryption Performance
+
+As shown in the chart, the WebCrypto based encryption plugins are generally **5 times faster** than the `crypto-js` plugin.
+
+
+<PerformanceChart title="RxDB Encryption Plugins Performance (on Memory RxStorage)" data={PERFORMANCE_DATA_ENCRYPTION} metrics={PERFORMANCE_METRICS} logScale={false} />
+<br />
+
+## FAQ
+
+<Faq>
+<FaqItem question="What are some JavaScript libraries for client side field encryption?">
+
+RxDB provides robust plugins for client side field encryption directly within your javascript database. You encrypt sensitive document properties transparently before they save to local storage. The `encryption-crypto-js` plugin utilizes AES algorithms for dependable security. The `encryption-web-crypto` plugin employs native browser APIs to achieve superior performance. You maintain data confidentiality across Web, React Native, and Node.js environments.
+
+</FaqItem>
+<FaqItem question="What options exist for encrypting individual document fields and keys in JavaScript?">
+
+You can implement encryption in JavaScript by manually encrypting fields with the native `WebCrypto API` before storing them, but this breaks standard querying. Advanced databases like **[RxDB](./rx-database.md)** simplify this through schema-level encryption plugins (`encryption-web-crypto`). By flagging specific document fields as `encrypted: true` in your JSON Schema, RxDB automatically encrypts the data before writing to the storage engine (like IndexedDB or SQLite) and decrypts it instantly upon retrieval.
+
+</FaqItem>
+<FaqItem question="Is chrome.storage.local encrypted at rest by default?">
+
+No, `chrome.storage.local` (and standard `IndexedDB` in the browser) is **not** encrypted at rest by default. Any user or potentially malicious extension with adequate local machine access can read the underlying data files. To properly secure sensitive data at rest in a browser extension or Web App, you must explicitly encrypt strings before saving them, a process seamlessly automated by using an encrypted [RxStorage](./rx-storage.md) wrapper. See [IndexedDB Encryption](./articles/indexeddb/indexeddb-encryption.md) for the details.
+
+</FaqItem>
+<FaqItem question="Are there open-source libraries for encrypting personal user data natively?">
+
+Yes, libraries like `crypto-js` or wrappers over the native WebCrypto API provide robust open-source encryption. For developers building native mobile apps (React Native, Expo, Ionic) or browser applications, utilizing a database that ships with native encryption wrappers like **[RxDB's Encryption Plugins](https://rxdb.info/encryption.html)** is the most reliable method. It ensures data is never written to disk in plain text while allowing you to effortlessly swap underlying storage layers without rewriting your cryptography logic.
+
+</FaqItem>
+<FaqItem question="Can I encrypt a child field when the parent field is already encrypted?">
+
+No. When you encrypt a parent field, the entire object at that path is encrypted as a single string. You cannot also encrypt a child path of an already-encrypted parent. For example, if you encrypt `nested`, you must **not** also add `nested.secret` to the `encrypted` array. Doing so will throw an error in [dev-mode](./dev-mode.md).
+
+```ts
+// NOT ALLOWED - 'nested.secret' is a child of 'nested'
+const schema = {
+    encrypted: ['nested', 'nested.secret']
+};
+
+// CORRECT - only encrypt the parent
+const schema = {
+    encrypted: ['nested']
+};
+```
+
+</FaqItem>
+</Faq>

@@ -2,19 +2,27 @@
 title: Backup
 slug: backup.html
 description: Easily back up your RxDB database to JSON files and attachments on the filesystem with the Backup Plugin - ensuring reliable Node.js data protection.
+image: /headers/backup.jpg
 ---
+
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {BackupCopy} from '@site/src/components/animations/backup-copy';
 
 
 # 📥 Backup Plugin
 
 With the backup plugin you can write the current database state and ongoing changes into folders on the filesystem.
-The files are written in plain json together with their attachments so that you can read them out with any software or tools, without being bound to RxDB.
+The files are written in plain json together with their [attachments](./rx-attachment.md) so that you can read them out with any software or tools, without being bound to RxDB.
 
 This is useful to:
   - Consume the database content with other software that cannot replicate with RxDB
   - Write a backup of the database to a remote server by mounting the backup folder on the other server.
 
-The backup plugin works only in node.js, not in a browser. It is intended to have a backup strategy when using RxDB on the server side like with the [RxServer](./rx-server.md). To run backups on the client side, you should use one of the [replication](./replication.md) plugins instead.
+The backup plugin works only in [node.js](./nodejs-database.md), not in a browser. It is intended to have a backup strategy when using RxDB on the server side like with the [RxServer](./rx-server.md). To run backups on the client side, you should use one of the [replication](./replication.md) plugins instead, or write the data into a single [JSON dump](./json-import-export.md) that you can store or hand to the user.
+
+<DocsAnimation subtitle="Database documents copied into backup files">
+<BackupCopy />
+</DocsAnimation>
 
 ## Installation
 
@@ -61,7 +69,8 @@ const backupOptions = {
 }
 const backupState = myDatabase.backup(backupOptions);
 
-// you can still await the initial backup write, but further changes will still be processed.
+// you can still await the initial backup write,
+// but further changes will still be processed.
 await backupState.awaitInitialBackup();
 ```
 
@@ -77,7 +86,10 @@ const backupOptions = {
 }
 const backupState = myDatabase.backup(backupOptions);
 
-const subscription = backupState.writeEvents$.subscribe(writeEvent => console.dir(writeEvent));
+const subscription = backupState.writeEvents$
+    .subscribe(writeEvent =>
+        console.dir(writeEvent)
+    );
 /*
 > {
     collectionName: 'humans',

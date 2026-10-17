@@ -1,6 +1,7 @@
 import type {
     HashFunction,
     InternalStoreDocType,
+    RxAttachmentWriteData,
     RxCollection,
     RxDatabase,
     RxDocumentData,
@@ -12,8 +13,6 @@ import type {
 import {
     createRevision,
     flatClone,
-    getDefaultRevision,
-    getDefaultRxDocumentMeta,
     now
 } from './plugins/utils/index.ts';
 import {
@@ -34,28 +33,103 @@ import { newRxError } from './rx-error.ts';
  */
 export function fillObjectDataBeforeInsert<RxDocType>(
     schema: RxSchema<RxDocType>,
-    data: Partial<RxDocumentData<RxDocType>> | any
+    data: Partial<RxDocumentData<RxDocType>> | any,
+    skipPrimaryKeyFill: boolean = false
 ): RxDocumentData<RxDocType> {
     data = flatClone(data);
     data = fillObjectWithDefaults(schema, data);
-    if (typeof schema.jsonSchema.primaryKey !== 'string') {
+    if (!skipPrimaryKeyFill && typeof schema.jsonSchema.primaryKey !== 'string') {
         data = fillPrimaryKey(
             schema.primaryPath,
             schema.jsonSchema,
             data
         );
     }
-    data._meta = getDefaultRxDocumentMeta();
-    if (!Object.prototype.hasOwnProperty.call(data, '_deleted')) {
+    /**
+     * _meta and _rev are not set here because
+     * they are always overwritten by the wrapped storage instance
+     * in getWrappedStorageInstance() before the actual write.
+     * Skipping them here avoids unnecessary object allocations on the hot path.
+     *
+     * _deleted and _attachments still need to be initialized here because
+     * the wrapped storage does NOT set them, and they are required
+     * for the document to be valid before the storage write
+     * (e.g. _attachments is checked during attachment normalization in bulkInsert).
+     */
+    if (!('_deleted' in data)) {
         data._deleted = false;
     }
-    if (!Object.prototype.hasOwnProperty.call(data, '_attachments')) {
+    if (!('_attachments' in data)) {
         data._attachments = {};
     }
-    if (!Object.prototype.hasOwnProperty.call(data, '_rev')) {
-        data._rev = getDefaultRevision();
-    }
     return data;
+}
+
+/**
+ * Normalizes inline attachment inputs on a document's _attachments.
+ * Accepts an array of { id, type, data } objects (aligned with putAttachment API)
+ * and converts to the internal map format { [id]: { type, data, digest, length } }.
+ * For each entry where data is a Blob and digest is missing,
+ * computes digest via hashFunction and sets length from Blob.size.
+ * Already-complete RxAttachmentWriteData entries are left untouched.
+ */
+export async function normalizeInlineAttachments(
+    hashFunction: HashFunction,
+    attachments: Array<{ id: string; type: string; data: Blob; }> | { [attachmentId: string]: any; }
+): Promise<{ [attachmentId: string]: RxAttachmentWriteData; }> {
+    // Guard against null/undefined/non-object values
+    if (attachments == null || typeof attachments !== 'object') {
+        throw newRxError('COL24', { data: attachments });
+    }
+
+    let entries: [string, any][];
+    // Only accept array format for inline attachments.
+    // An empty object {} (set by fillObjectDataBeforeInsert) is also valid.
+    if (Array.isArray(attachments)) {
+        const attachmentMap: { [attachmentId: string]: any; } = {};
+        for (const att of attachments) {
+            if (
+                !att ||
+                typeof att.id !== 'string' || att.id.length === 0 ||
+                typeof att.type !== 'string' || att.type.length === 0 ||
+                !(att.data instanceof Blob)
+            ) {
+                throw newRxError('AT2', { obj: att });
+            }
+            if (Object.prototype.hasOwnProperty.call(attachmentMap, att.id)) {
+                throw newRxError('AT3', { obj: att });
+            }
+            attachmentMap[att.id] = {
+                type: att.type,
+                data: att.data
+            };
+        }
+        entries = Object.entries(attachmentMap);
+        await Promise.all(
+            entries.map(async ([, att]) => {
+                if (att.data instanceof Blob && !att.digest) {
+                    att.digest = await hashFunction(att.data);
+                    att.length = att.data.size;
+                }
+            })
+        );
+        return attachmentMap;
+    }
+
+    // Empty object from fillObjectDataBeforeInsert — pass through
+    if (typeof attachments === 'object' && Object.keys(attachments).length === 0) {
+        return attachments;
+    }
+
+    // Already-normalized map (from internal paths like bulkUpsert's 409 handler)
+    // where entries already have digest/length — pass through
+    entries = Object.entries(attachments);
+    const allNormalized = entries.every(([, att]) => att.digest);
+    if (allNormalized) {
+        return attachments;
+    }
+
+    throw newRxError('COL24', { data: attachments });
 }
 
 /**
@@ -186,6 +260,35 @@ export function ensureRxCollectionIsNotClosed(
     if (collection.closed) {
         throw newRxError(
             'COL21',
+            {
+                collection: collection.name,
+                version: collection.schema.version
+            }
+        );
+    }
+}
+
+/**
+ * Asserts that a write to the given collection is currently allowed.
+ * Throws if the collection is closed or if a schema migration is
+ * pending or running, in which cases external writes would either
+ * fail or conflict with the migration replication.
+ */
+export function isWriteAllowed(
+    collection: RxCollection | RxCollectionBase<any, any, any, any, any>
+) {
+    if (collection.closed) {
+        throw newRxError(
+            'COL21',
+            {
+                collection: collection.name,
+                version: collection.schema.version
+            }
+        );
+    }
+    if (collection.migrationInProgress) {
+        throw newRxError(
+            'COL25',
             {
                 collection: collection.name,
                 version: collection.schema.version

@@ -2,13 +2,18 @@
 title: RxDB Dexie.js Database - Fast, Reactive, Sync with Any Backend
 slug: rx-storage-dexie.html
 description: Use Dexie.js to power RxDB in the browser. Enjoy quick setup, Dexie addons, and reliable storage for small apps or prototypes.
+image: /headers/rx-storage-dexie.jpg
 ---
 
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_BROWSER, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
+
 import {Steps} from '@site/src/components/steps';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # RxStorage Dexie.js
 
-To store the data inside of and RxDB Database in IndexedDB in the [browser](./articles/browser-database.md), you can use the [Dexie.js](https://github.com/dexie/Dexie.js) based [RxStorage](./rx-storage.md). Dexie.js is a minimal wrapper around IndexedDB and the Dexie.js RxStorage wraps that again to use it for an RxDB database in the browser. For side projects and prototypes that run in a browser, you should use the dexie RxStorage as a default.
+To store the data inside of and [RxDB Database](./rx-database.md) in IndexedDB in the [browser](./articles/browser-database.md), you can use the [Dexie.js](https://github.com/dexie/Dexie.js) based [RxStorage](./rx-storage.md). Dexie.js is a minimal wrapper around IndexedDB and the Dexie.js RxStorage wraps that again to use it for an RxDB database in the browser. For side projects and prototypes that run in a browser, you should use the dexie RxStorage as a default.
 
 ## Dexie.js vs IndexedDB Storage
 
@@ -16,6 +21,7 @@ While Dexie.js [RxStorage](./rx-storage.md) can be used for free, most professio
 
 - It is faster and reduces build size by up to **36%**.
 - It has a way [better performance](./rx-storage-performance.md) on reads and writes.
+- It stores [attachments](./rx-attachment.md) data as binary instead of base64 which reduces used space by 33%.
 - It does not use a [Batched Cursor](./slow-indexeddb.md#batched-cursor) or [custom indexes](./slow-indexeddb.md#custom-indexes) which makes queries slower compared to the [IndexedDB RxStorage](./rx-storage-indexeddb.md).
 - It supports **non-required indexes** which is [not possible](https://github.com/pubkey/rxdb/pull/6643#issuecomment-2505310082) with Dexie.js.
 - It runs in a **WAL-like mode** (similar to SQLite) for faster writes and improved responsiveness.
@@ -40,7 +46,6 @@ const db = await createRxDatabase({
 ```
 </Steps>
 
-
 ## Overwrite/Polyfill the native IndexedDB API with an in-memory version
 
 Node.js has no IndexedDB API. To still run the Dexie `RxStorage` in Node.js, for example to run unit tests, you have to polyfill it.
@@ -64,10 +69,9 @@ const db = await createRxDatabase({
 
 ```
 
-
 ## Using Dexie Addons
 
-Dexie.js has its own plugin system with [many plugins](https://dexie.org/docs/DerivedWork#known-addons) for encryption, replication or other use cases. With the Dexie.js `RxStorage` you can use the same plugins by passing them to the `getRxStorageDexie()` function.
+Dexie.js has its own plugin system with [many plugins](https://dexie.org/docs/DerivedWork#known-addons) for [encryption](./encryption.md), replication or other use cases. With the Dexie.js `RxStorage` you can use the same plugins by passing them to the `getRxStorageDexie()` function.
 
 ```ts
 const db = await createRxDatabase({
@@ -78,7 +82,6 @@ const db = await createRxDatabase({
 });
 ```
 
-
 ## Sync Dexie.js with your Backend in RxDB
 
 Having your local data in sync with a remote backend is a key feature of RxDB. Here are two approaches to achieve this when using the Dexie.js RxStorage:
@@ -88,7 +91,6 @@ Having your local data in sync with a remote backend is a key feature of RxDB. H
 
 Choose the approach that best suits your needs - whether you want to get started quickly with Dexie Cloud or require the adaptability and autonomy of RxDB's native replication.
 
-
 ### A. Use Dexie Cloud Sync
 
 **Dexie Cloud** is an official SaaS solution provided by the Dexie team. It offers automatic synchronization, user management, and conflict resolution out of the box. The primary benefits are:
@@ -96,7 +98,6 @@ Choose the approach that best suits your needs - whether you want to get started
 - **Automatic Sync**: Dexie Cloud keeps your local IndexedDB in sync with its cloud-based backend.
 - **User Authentication**: Built-in user management (auth, roles, permissions).
 - **Conflict Resolution**: Automated resolution logic on the server side.
-
 
 <Steps>
 
@@ -202,11 +203,9 @@ const replicationState = replicateCouchDB({
 
 </Steps>
 
-
 ## liveQuery - Realtime Queries
 
 Dexie.js offers a feature called `liveQuery` which automatically updates query results as data changes, allowing you to react to these changes in real-time. However, because RxDB intrinsically provides [reactive queries](./rx-query.md#observe), you typically do **not** need to enable live queries through Dexie. Once you have created your database and collections with RxDB, any query you perform can be observed by subscribing to it, for example via `collection.find().$.subscribe(results => { /*... */ })`. This means RxDB takes care of listening for changes and automatically emitting new results - ensuring your UI stays in sync with the underlying data without requiring extra plugins or manual polling.
-
 
 ## Disabling the non-premium console log
 
@@ -223,6 +222,14 @@ setPremiumFlag();
 
 The performance of the Dexie.js RxStorage is good enough for most use cases but other storages can have way better performance metrics:
 
-<p align="center">
-  <img src="./files/rx-storage-performance-browser.png" alt="RxStorage performance - browser Dexie.js" width="700" />
-</p>
+<PerformanceChart title="Browser Storages" data={PERFORMANCE_DATA_BROWSER} metrics={PERFORMANCE_METRICS} />
+
+## FAQ
+
+<Faq>
+<FaqItem question="What is Dexie.js and what advantages does it offer over raw IndexedDB?">
+
+Dexie.js is a minimalist, Promise-based wrapper engineered specifically to resolve the notoriously complex callback-driven API of standard IndexedDB. It offers significant advantages over raw IndexedDB by providing an intuitive chainable query API, a far simpler database schema definition process, and extremely robust transaction management. However, Dexie lacks advanced querying capabilities found in Document-oriented NoSQL databases, such as deep-nested JSON querying and comprehensive MongoDB-style selectors. **[RxDB](./rx-database.md)**, which can use Dexie securely as its underlying storage engine, compensates for these limitations by providing a fully reactive advanced NoSQL query engine, robust cross-platform offline replication protocols, and built-in field encryption features that Dexie inherently lacks.
+
+</FaqItem>
+</Faq>

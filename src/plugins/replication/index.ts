@@ -15,6 +15,7 @@ import {
     Subscription
 } from 'rxjs';
 import type {
+    BulkWriteRow,
     ReplicationOptions,
     ReplicationPullHandlerResult,
     ReplicationPullOptions,
@@ -22,7 +23,9 @@ import type {
     RxCollection,
     RxDocumentData,
     RxError,
+    RxDocument,
     RxJsonSchema,
+    RxReplicationConflict,
     RxReplicationPullStreamItem,
     RxReplicationWriteToMasterRow,
     RxStorageInstance,
@@ -48,8 +51,10 @@ import {
     awaitRxStorageReplicationFirstInSync,
     awaitRxStorageReplicationInSync,
     cancelRxStorageReplication,
+    getAssumedMasterState,
     getRxReplicationMetaInstanceSchema,
-    replicateRxStorageInstance
+    replicateRxStorageInstance,
+    writeDocToDocState
 } from '../../replication-protocol/index.ts';
 import { newRxError } from '../../rx-error.ts';
 import {
@@ -77,10 +82,11 @@ export class RxReplicationState<RxDocType, CheckpointType> {
     public readonly subs: Subscription[] = [];
     public readonly subjects = {
         received: new Subject<RxDocumentData<RxDocType>>(), // all documents that are received from the endpoint
-        sent: new Subject<WithDeleted<RxDocType>>(), // all documents that are send to the endpoint
+        sent: new Subject<WithDeleted<RxDocType>>(), // all documents that are sent to the endpoint
         error: new Subject<RxError | RxTypeError>(), // all errors that are received from the endpoint, emits new Error() objects
         canceled: new BehaviorSubject<boolean>(false), // true when the replication was canceled
-        active: new BehaviorSubject<boolean>(false) // true when something is running, false when not
+        active: new BehaviorSubject<boolean>(false), // true when something is running, false when not
+        conflict: new Subject<RxReplicationConflict<RxDocType>>() // all conflicts that are reported by the remote on pushes, together with the conflictHandler output
     };
 
     readonly received$: Observable<RxDocumentData<RxDocType>> = this.subjects.received.asObservable();
@@ -88,6 +94,7 @@ export class RxReplicationState<RxDocType, CheckpointType> {
     readonly error$: Observable<RxError | RxTypeError> = this.subjects.error.asObservable();
     readonly canceled$: Observable<any> = this.subjects.canceled.asObservable();
     readonly active$: Observable<boolean> = this.subjects.active.asObservable();
+    readonly conflict$: Observable<RxReplicationConflict<RxDocType>> = this.subjects.conflict.asObservable();
 
     wasStarted: boolean = false;
 
@@ -164,10 +171,24 @@ export class RxReplicationState<RxDocType, CheckpointType> {
 
 
     public start(): Promise<void> {
-        this.startQueue = this.startQueue.then(() => {
+        const startPromise = this.startQueue.then(() => {
             return this._start();
         });
-        return this.startQueue;
+        /**
+         * A failed start must not leave the startQueue rejected,
+         * otherwise every later start(), pause() and remove() rejects
+         * with the same error and the replication can never be started again.
+         * The error is emitted on error$ instead.
+         */
+        this.startQueue = startPromise.catch((err: any) => {
+            if (!this.internalReplicationState) {
+                this.wasStarted = false;
+            }
+            this.subjects.error.next(newRxError('RC_START', {
+                errors: toArray(err).map(er => errorToPlainJson(er))
+            }));
+        });
+        return startPromise;
     }
 
     public async _start(): Promise<void> {
@@ -201,7 +222,7 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         const database = this.collection.database;
         const metaInfo = await this.metaInfoPromise;
 
-        const [metaInstance] = await Promise.all([
+        const [metaInstanceResult, connectedStorageResult] = await Promise.allSettled([
             this.collection.database.storage.createStorageInstance<RxStorageReplicationMeta<RxDocType, CheckpointType>>({
                 databaseName: database.name,
                 collectionName: metaInfo.collectionName,
@@ -218,7 +239,17 @@ export class RxReplicationState<RxDocType, CheckpointType> {
                 metaInfo.schema
             )
         ]);
-        this.metaInstance = metaInstance;
+        if (metaInstanceResult.status === 'rejected' || connectedStorageResult.status === 'rejected') {
+            /**
+             * Close the meta instance if only the other part failed,
+             * so that a later start() can open it again.
+             */
+            if (metaInstanceResult.status === 'fulfilled') {
+                await metaInstanceResult.value.close();
+            }
+            throw metaInstanceResult.status === 'rejected' ? metaInstanceResult.reason : (connectedStorageResult as PromiseRejectedResult).reason;
+        }
+        this.metaInstance = metaInstanceResult.value;
 
         this.internalReplicationState = replicateRxStorageInstance({
             pushBatchSize: this.push && this.push.batchSize ? this.push.batchSize : 100,
@@ -230,19 +261,21 @@ export class RxReplicationState<RxDocType, CheckpointType> {
             forkInstance: this.collection.storageInstance,
             metaInstance: this.metaInstance,
             hashFunction: database.hashFunction,
+            skipStoringPullMeta: this.push ? false : true,
             identifier: 'rxdbreplication' + this.replicationIdentifier,
             conflictHandler: this.collection.conflictHandler,
+            waitBeforePersist: this.push ? this.push.waitBeforePersist : undefined,
             replicationHandler: {
                 masterChangeStream$: this.remoteEvents$.asObservable().pipe(
-                    filter(_v => !!this.pull),
-                    mergeMap(async (ev) => {
+                    filter((_v: RxReplicationPullStreamItem<RxDocType, CheckpointType>) => !!this.pull || _v === 'RESYNC'),
+                    mergeMap(async (ev: RxReplicationPullStreamItem<RxDocType, CheckpointType>) => {
                         if (ev === 'RESYNC') {
                             return ev;
                         }
                         const useEv = flatClone(ev);
                         useEv.documents = handlePulledDocuments(this.collection, this.deletedField, useEv.documents);
                         useEv.documents = await Promise.all(
-                            useEv.documents.map(d => pullModifier(d))
+                            useEv.documents.map((d: WithDeleted<RxDocType>) => pullModifier(d))
                         );
                         return useEv;
                     })
@@ -318,11 +351,22 @@ export class RxReplicationState<RxDocType, CheckpointType> {
                             if (row.assumedMasterState) {
                                 row.assumedMasterState = await pushModifier(row.assumedMasterState);
                             }
+                            /**
+                             * The deletedField swap must not mutate the original row,
+                             * because that row is later forwarded to processed.up
+                             * which feeds sent$. sent$ is typed as
+                             * Observable<WithDeleted<RxDocType>> and must always emit
+                             * documents in the WithDeleted format with `_deleted: boolean`,
+                             * never the master-format `deletedField`.
+                             */
                             if (this.deletedField !== '_deleted') {
-                                row.newDocumentState = swapDefaultDeletedTodeletedField(this.deletedField, row.newDocumentState) as any;
-                                if (row.assumedMasterState) {
-                                    row.assumedMasterState = swapDefaultDeletedTodeletedField(this.deletedField, row.assumedMasterState) as any;
-                                }
+                                return {
+                                    ...row,
+                                    newDocumentState: swapDefaultDeletedTodeletedField(this.deletedField, row.newDocumentState) as any,
+                                    assumedMasterState: row.assumedMasterState
+                                        ? swapDefaultDeletedTodeletedField(this.deletedField, row.assumedMasterState) as any
+                                        : undefined
+                                };
                             }
                             return row;
                         })
@@ -383,19 +427,23 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         });
 
         this.subs.push(
-            this.internalReplicationState.events.error.subscribe(err => {
+            this.internalReplicationState.events.error.subscribe((err: RxError | RxTypeError) => {
                 this.subjects.error.next(err);
             }),
             this.internalReplicationState.events.processed.down
-                .subscribe(row => this.subjects.received.next(row.document as any)),
+                .subscribe((row: BulkWriteRow<RxDocType>) => this.subjects.received.next(row.document as any)),
             this.internalReplicationState.events.processed.up
-                .subscribe(writeToMasterRow => {
+                .subscribe((writeToMasterRow: RxReplicationWriteToMasterRow<RxDocType>) => {
                     this.subjects.sent.next(writeToMasterRow.newDocumentState);
+                }),
+            this.internalReplicationState.events.resolvedConflicts
+                .subscribe((conflict: RxReplicationConflict<RxDocType>) => {
+                    this.subjects.conflict.next(conflict);
                 }),
             combineLatest([
                 this.internalReplicationState.events.active.down,
                 this.internalReplicationState.events.active.up
-            ]).subscribe(([down, up]) => {
+            ]).subscribe(([down, up]: [boolean, boolean]) => {
                 const isActive = down || up;
                 this.subjects.active.next(isActive);
             })
@@ -408,12 +456,12 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         ) {
             this.subs.push(
                 this.pull.stream$.subscribe({
-                    next: ev => {
+                    next: (ev: RxReplicationPullStreamItem<RxDocType, CheckpointType>) => {
                         if (!this.isStoppedOrPaused()) {
                             this.remoteEvents$.next(ev);
                         }
                     },
-                    error: err => {
+                    error: (err: any) => {
                         this.subjects.error.next(err);
                     }
                 })
@@ -469,7 +517,7 @@ export class RxReplicationState<RxDocType, CheckpointType> {
      * - All local data is replicated with the remote
      * - No replication cycle is running or in retry-state
      *
-     * WARNING: USing this function directly in a multi-tab browser application
+     * WARNING: Using this function directly in a multi-tab browser application
      * is dangerous because only the leading instance will ever be replicated,
      * so this promise will not resolve in the other tabs.
      * For multi-tab support you should set and observe a flag in a local document.
@@ -502,6 +550,136 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         }
 
         return true;
+    }
+
+    /**
+     * Returns a promise that resolves when the given RxDocument instance
+     * was successfully pushed to the server.
+     *
+     * It resolves either when the document is emitted on sent$ (the live
+     * push case) or, for documents that were already pushed before this was
+     * called, when the assumed master state in the replication meta instance
+     * already contains the given document state.
+     *
+     * If the document was overwritten by a newer local write before it could
+     * be pushed, the promise resolves as soon as any later state of the
+     * document has been pushed, because that also proves the given state
+     * reached the server.
+     */
+    async awaitDocumentPushed(doc: RxDocument<RxDocType>): Promise<void> {
+        if (!this.push) {
+            throw newRxError('RC_PUSH_AWAIT', {
+                id: doc.primary,
+                args: { replicationIdentifier: this.replicationIdentifier }
+            });
+        }
+        await this.startPromise;
+        const internalReplicationState = ensureNotFalsy(this.internalReplicationState);
+        const primaryPath = this.collection.schema.primaryPath;
+        const docId: string = doc.primary;
+        const docLwt: number = doc._data._meta.lwt;
+
+        /**
+         * Detects documents that were already pushed before
+         * awaitDocumentPushed() was called, by comparing the given document
+         * state with the assumed master state from the replication meta
+         * instance. The meta instance stores the last document state that
+         * was successfully written to the master, so this check works
+         * independent of the storage specific checkpoint format.
+         * (For example the sharding RxStorage stacks up partial checkpoints
+         * that do not contain a top level lwt, so the checkpoint cannot
+         * be used for this detection.)
+         */
+        const isAlreadyPushed = async (): Promise<boolean> => {
+            /**
+             * Await the upstream queue first because inside of a push cycle,
+             * the meta instance write happens after the sent$ emission,
+             * so without waiting we could miss the meta state
+             * of a push that just completed.
+             */
+            await internalReplicationState.streamQueue.up;
+            const assumedMasterState = await getAssumedMasterState(
+                internalReplicationState,
+                [docId]
+            );
+            const assumedMasterDoc = assumedMasterState[docId];
+            if (!assumedMasterDoc) {
+                return false;
+            }
+            const isEqual = internalReplicationState.input.conflictHandler.isEqual;
+            const givenDocState = writeDocToDocState(
+                doc._data,
+                internalReplicationState.hasAttachments,
+                !!internalReplicationState.input.keepMeta
+            );
+            if (isEqual(assumedMasterDoc.docData, givenDocState, 'replication-await-document-pushed')) {
+                return true;
+            }
+            /**
+             * If the document was overwritten by a newer local write
+             * before it could be pushed, it is enough when a later state
+             * of the document has reached the master.
+             */
+            const currentForkState = (
+                await internalReplicationState.input.forkInstance.findDocumentsById([docId], true)
+            )[0];
+            if (
+                currentForkState &&
+                currentForkState._meta.lwt > docLwt
+            ) {
+                return isEqual(
+                    assumedMasterDoc.docData,
+                    writeDocToDocState(
+                        currentForkState,
+                        internalReplicationState.hasAttachments,
+                        !!internalReplicationState.input.keepMeta
+                    ),
+                    'replication-await-document-pushed'
+                );
+            }
+            return false;
+        };
+
+        return new Promise<void>((resolve, reject) => {
+            /**
+             * Every successfully pushed document is emitted on sent$,
+             * so an emission with our primary key proves that this document
+             * reached the master.
+             */
+            const sub = this.sent$.subscribe({
+                next: (sentDocData) => {
+                    if ((sentDocData as any)[primaryPath] === docId) {
+                        sub.unsubscribe();
+                        resolve();
+                    }
+                }
+            });
+            this.onCancel.push(() => {
+                sub.unsubscribe();
+                /**
+                 * Run a final check so that a document which was pushed
+                 * in the last cycle before a (non-live) cancel still resolves.
+                 * If it was not pushed before the cancel, the promise stays
+                 * pending, which matches the behavior of awaitInitialReplication().
+                 */
+                isAlreadyPushed().then(pushed => {
+                    if (pushed) {
+                        resolve();
+                    }
+                }).catch(reject);
+            });
+            /**
+             * Run the initial check after subscribing so that documents that
+             * were already pushed resolve immediately, without missing a
+             * sent$ emission that could happen between check and subscribe.
+             */
+            isAlreadyPushed().then(pushed => {
+                if (pushed) {
+                    sub.unsubscribe();
+                    resolve();
+                }
+            }).catch(reject);
+        });
     }
 
     reSync() {
@@ -544,6 +722,21 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         this.subjects.error.complete();
         this.subjects.received.complete();
         this.subjects.sent.complete();
+        this.subjects.conflict.complete();
+
+        /**
+         * Remove from the REPLICATION_STATE_BY_COLLECTION registry
+         * so that the cleanup plugin does not try to access a stopped
+         * replication's meta instance, and to prevent memory leaks
+         * from accumulating canceled replication state objects.
+         */
+        const states = REPLICATION_STATE_BY_COLLECTION.get(this.collection as any);
+        if (states) {
+            const idx = states.indexOf(this);
+            if (idx !== -1) {
+                states.splice(idx, 1);
+            }
+        }
 
         return Promise.all(promises);
     }
@@ -552,8 +745,32 @@ export class RxReplicationState<RxDocType, CheckpointType> {
         this.startQueue = this.startQueue.then(async () => {
             const metaInfo = await this.metaInfoPromise;
             await this._cancel(true);
-            await ensureNotFalsy(this.internalReplicationState).checkpointQueue
-                .then(() => ensureNotFalsy(this.metaInstance).remove());
+
+            /**
+             * If the replication was never started (e.g. autoStart: false
+             * and start() was never called), we still have to
+             * create the meta storage instance and then remove its data.
+             * This is required so that old meta data from a previous
+             * replication with the same identifier is properly deleted.
+             */
+            if (!this.metaInstance) {
+                const database = this.collection.database;
+                this.metaInstance = await database.storage.createStorageInstance<RxStorageReplicationMeta<RxDocType, CheckpointType>>({
+                    databaseName: database.name,
+                    collectionName: metaInfo.collectionName,
+                    databaseInstanceToken: database.token,
+                    multiInstance: database.multiInstance,
+                    options: {},
+                    schema: metaInfo.schema,
+                    password: database.password,
+                    devMode: overwritable.isDevMode()
+                });
+            }
+
+            if (this.internalReplicationState) {
+                await this.internalReplicationState.checkpointQueue;
+            }
+            await ensureNotFalsy(this.metaInstance).remove();
             await removeConnectedStorageFromCollection(
                 this.collection,
                 metaInfo.collectionName,
@@ -576,7 +793,7 @@ export function replicateRxCollection<RxDocType, CheckpointType>(
         retryTime = 1000 * 5,
         waitForLeadership = true,
         autoStart = true,
-        toggleOnDocumentVisible = false
+        toggleOnDocumentVisible = true
     }: ReplicationOptions<RxDocType, CheckpointType>
 ): RxReplicationState<RxDocType, CheckpointType> {
     addRxPlugin(RxDBLeaderElectionPlugin);
@@ -620,7 +837,8 @@ export function replicateRxCollection<RxDocType, CheckpointType>(
             }
             const isVisible = document.visibilityState === 'visible';
             if (isVisible) {
-                replicationState.start();
+                // errors of start() are emitted on error$
+                replicationState.start().catch(() => { });
             } else {
                 /**
                  * Only pause if not the current leader.
@@ -659,7 +877,8 @@ export function startReplicationOnLeaderShip(
             return;
         }
         if (replicationState.autoStart) {
-            replicationState.start();
+            // errors of start() are emitted on error$
+            replicationState.start().catch(() => { });
         }
     });
 }

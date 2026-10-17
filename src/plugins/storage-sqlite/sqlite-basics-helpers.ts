@@ -3,7 +3,8 @@ import {
     PROMISE_RESOLVE_VOID,
     getFromMapOrCreate,
     randomToken,
-    promiseWait
+    promiseWait,
+    errorToPlainJson
 } from '../../index.ts';
 import type {
     Sqlite3Type,
@@ -27,7 +28,7 @@ export function getSQLiteBasicsNode(
                 queryWithParams: SQLiteQueryWithParams
             ) {
                 if (!Array.isArray(queryWithParams.params)) {
-                    console.dir(queryWithParams);
+                    console.log(JSON.stringify(queryWithParams));
                     throw new Error('no params array given for query: ' + queryWithParams.query);
                 }
                 await execSqlSQLiteNode(
@@ -155,8 +156,8 @@ export function execSqlSQLiteNode(
                     if (debug) {
                         console.log('---- ERROR RUNNING SQL:');
                         console.log(queryWithParams.query);
-                        console.dir(queryWithParams.params);
-                        console.dir(err);
+                        console.log(JSON.stringify(queryWithParams.params));
+                        console.log(JSON.stringify(errorToPlainJson(err)));
                         console.log('----');
                     }
                     rej(err);
@@ -164,10 +165,10 @@ export function execSqlSQLiteNode(
                     if (debug) {
                         console.log('execSql() result: ' + database.eventNames());
                         console.log(queryWithParams.query);
-                        console.dir(result);
+                        console.log(JSON.stringify(result));
                         console.log('execSql() result:');
                         console.log(queryWithParams.query);
-                        console.dir(queryWithParams.params);
+                        console.log(JSON.stringify(queryWithParams.params));
                         console.log('execSql() result -------------------------');
                     }
                     res(result);
@@ -546,9 +547,9 @@ export function webSQLExecuteQuery(
 
 
 /**
- * TODO the wa-sqlite module has problems
+ * The wa-sqlite module has problems
  * when running prepared statements with params
- * in parallel. So we de-parrallel the runs here.
+ * in parallel. So we de-parallel the runs here.
  * This is bad for performance and should be fixed at the
  * wa-sqlite repo.
  */

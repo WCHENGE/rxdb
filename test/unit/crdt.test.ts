@@ -5,7 +5,8 @@ import { wrappedValidateAjvStorage } from '../../plugins/validate-ajv/index.mjs'
 import {
     schemaObjects,
     schemas,
-    HumanDocumentType
+    HumanDocumentType,
+    ensureReplicationHasNoErrors
 } from '../../plugins/test-utils/index.mjs';
 import {
     createRxDatabase,
@@ -31,12 +32,14 @@ import {
     RxDBcrdtPlugin,
     getCRDTConflictHandler
 } from '../../plugins/crdt/index.mjs';
+import { RxDBUpdatePlugin } from '../../plugins/update/index.mjs';
+addRxPlugin(RxDBUpdatePlugin);
 addRxPlugin(RxDBcrdtPlugin);
-import config, { describeParallel } from './config.ts';
-import { replicateRxCollection, RxReplicationState } from '../../plugins/replication/index.mjs';
+import config from './config.ts';
+import { replicateRxCollection } from '../../plugins/replication/index.mjs';
 import { ReplicationPullHandler, ReplicationPushHandler } from '../../plugins/core/index.mjs';
 
-describeParallel('crdt.test.ts', () => {
+describe('crdt.test.ts', () => {
     type WithCRDTs<RxDocType> = RxDocType & {
         crdts?: CRDTDocumentField<RxDocType>;
     };
@@ -255,7 +258,7 @@ describeParallel('crdt.test.ts', () => {
      * when the operations are not CRDTs.
      */
     describe('disallowed methods', () => {
-        it('should throw the correct errors', async () => {
+        it('should throw on incrementalModify', async () => {
             const collection = await getCRDTCollection();
             const doc = await collection.insert(schemaObjects.humanData('foobar', 1));
 
@@ -264,6 +267,59 @@ describeParallel('crdt.test.ts', () => {
                 'RxError',
                 'CRDT2'
             );
+
+            collection.database.close();
+        });
+        it('should throw on modify', async () => {
+            const collection = await getCRDTCollection();
+            const doc = await collection.insert(schemaObjects.humanData('foobar', 1));
+
+            await AsyncTestUtil.assertThrows(
+                () => doc.modify(d => d),
+                'RxError',
+                'CRDT4'
+            );
+
+            collection.database.close();
+        });
+    });
+
+    describe('redirected methods', () => {
+        it('should redirect patch through updateCRDT', async () => {
+            const collection = await getCRDTCollection();
+            const doc = await collection.insert(schemaObjects.humanData('foobar', 1));
+
+            await doc.patch({ age: 50 });
+            const latest = doc.getLatest();
+            assert.strictEqual(latest.age, 50);
+
+            const crdts = latest.toJSON().crdts;
+            assert.ok(crdts);
+            assert.ok(crdts.operations.length > 1);
+
+            collection.database.close();
+        });
+        it('should redirect incrementalRemove through updateCRDT', async () => {
+            const collection = await getCRDTCollection();
+            const doc = await collection.insert(schemaObjects.humanData('foobar', 1));
+
+            await doc.incrementalRemove();
+            const latest = doc.getLatest();
+            assert.strictEqual(latest.deleted, true);
+
+            collection.database.close();
+        });
+        it('should redirect update through updateCRDT', async () => {
+            const collection = await getCRDTCollection();
+            const doc = await collection.insert(schemaObjects.humanData('foobar', 1));
+
+            await doc.update({ $set: { age: 99 } });
+            const latest = doc.getLatest();
+            assert.strictEqual(latest.age, 99);
+
+            const crdts = latest.toJSON().crdts;
+            assert.ok(crdts);
+            assert.ok(crdts.operations.length > 1);
 
             collection.database.close();
         });
@@ -353,6 +409,140 @@ describeParallel('crdt.test.ts', () => {
                 doc1.collection.database.close();
                 doc2.collection.database.close();
             });
+            it('should preserve schema default values during conflict resolution', async () => {
+                /**
+                 * When a schema has default values and a document is inserted
+                 * without providing those fields, the default values must be
+                 * included in the CRDT operations. Otherwise, rebuildFromCRDT
+                 * (used during conflict resolution) will lose the default values.
+                 */
+                type DocType = {
+                    passportId: string;
+                    firstName: string;
+                    lastName: string;
+                    age: number;
+                    score?: number;
+                };
+                const schemaWithDefault: RxJsonSchema<DocType> = {
+                    version: 0,
+                    primaryKey: 'passportId',
+                    type: 'object',
+                    properties: {
+                        passportId: { type: 'string', maxLength: 100 },
+                        firstName: { type: 'string', maxLength: 100 },
+                        lastName: { type: 'string' },
+                        age: { type: 'integer', minimum: 0, maximum: 150 },
+                        score: { type: 'integer', minimum: 0, maximum: 1000, default: 0 }
+                    },
+                    required: ['firstName', 'lastName', 'passportId', 'age']
+                };
+
+                // Insert on two separate databases (simulating two clients)
+                async function getDocFromNewDb() {
+                    const c = await getCRDTCollection<DocType>(schemaWithDefault);
+                    const doc = await c.insert({
+                        passportId: 'foobar',
+                        firstName: 'Alice',
+                        lastName: 'Smith',
+                        age: 25
+                        // score is NOT provided, should use default: 0
+                    });
+                    return doc;
+                }
+                const doc1 = await getDocFromNewDb();
+                const doc2 = await getDocFromNewDb();
+
+                // Both should have score=0 from the default
+                assert.strictEqual(doc1.getLatest().score, 0);
+                assert.strictEqual(doc2.getLatest().score, 0);
+
+                // Resolve a conflict between the two versions
+                const schemaFilled = enableCRDTinSchema(fillWithDefaultSettings(schemaWithDefault));
+                const handler = getCRDTConflictHandler<WithCRDTs<DocType>>(
+                    defaultHashSha256,
+                    schemaFilled
+                );
+
+                const resolved = await handler.resolve({
+                    newDocumentState: doc1.toMutableJSON(true) as any,
+                    realMasterState: doc2.toMutableJSON(true) as any
+                }, 'test-defaults');
+
+                // After conflict resolution, the default value must be preserved
+                assert.strictEqual((resolved as any).score, 0,
+                    'Default value "score" was lost during conflict resolution rebuild');
+
+                doc1.collection.database.close();
+                doc2.collection.database.close();
+            });
+            it('should preserve the composite primary key during conflict resolution', async () => {
+                /**
+                 * When a schema uses a composite primary key, the value of the
+                 * primary key field is computed from the other fields by RxDB
+                 * and is not provided by the user during insert.
+                 * The CRDT operation must include the computed primary key,
+                 * otherwise rebuildFromCRDT (used during conflict resolution)
+                 * will produce a document with a missing primary key field.
+                 */
+                type CompositeDocType = {
+                    id: string;
+                    firstName: string;
+                    lastName: string;
+                    age: number;
+                };
+                const compositeSchema: RxJsonSchema<CompositeDocType> = {
+                    version: 0,
+                    primaryKey: {
+                        key: 'id',
+                        fields: ['firstName', 'age'],
+                        separator: '|'
+                    },
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', maxLength: 100 },
+                        firstName: { type: 'string', maxLength: 100 },
+                        lastName: { type: 'string' },
+                        age: { type: 'integer', minimum: 0, maximum: 150 }
+                    },
+                    required: ['id', 'firstName', 'lastName', 'age']
+                };
+
+                async function getDocFromNewDb() {
+                    const c = await getCRDTCollection<CompositeDocType>(compositeSchema);
+                    const doc = await c.insert({
+                        firstName: 'Alice',
+                        lastName: 'Smith',
+                        age: 25
+                        // id is NOT provided, must be auto-computed by RxDB
+                    } as CompositeDocType);
+                    return doc;
+                }
+                const doc1 = await getDocFromNewDb();
+                const doc2 = await getDocFromNewDb();
+
+                // Both must have the auto-computed composite primary key
+                assert.strictEqual(doc1.getLatest().id, 'Alice|25');
+                assert.strictEqual(doc2.getLatest().id, 'Alice|25');
+
+                // Resolve a conflict between the two versions.
+                const schemaFilled = enableCRDTinSchema(fillWithDefaultSettings(compositeSchema));
+                const handler = getCRDTConflictHandler<WithCRDTs<CompositeDocType>>(
+                    defaultHashSha256,
+                    schemaFilled
+                );
+
+                const resolved = await handler.resolve({
+                    newDocumentState: doc1.toMutableJSON(true) as any,
+                    realMasterState: doc2.toMutableJSON(true) as any
+                }, 'test-composite-primary');
+
+                // After conflict resolution, the composite primary key must be preserved.
+                assert.strictEqual((resolved as any).id, 'Alice|25',
+                    'Composite primary key "id" was lost during conflict resolution rebuild');
+
+                doc1.collection.database.close();
+                doc2.collection.database.close();
+            });
         });
         describe('conflicts during replication', () => {
             if (!config.storage.hasReplication) {
@@ -393,13 +583,6 @@ describeParallel('crdt.test.ts', () => {
                     return result;
                 };
                 return handler;
-            }
-            function ensureReplicationHasNoErrors(replicationState: RxReplicationState<any, any>) {
-                replicationState.error$.subscribe(err => {
-                    console.error('ensureReplicationHasNoErrors() has error:');
-                    console.dir(err);
-                    throw err;
-                });
             }
             async function replicateOnce(
                 clientCollection: RxCollection<TestDocType>,

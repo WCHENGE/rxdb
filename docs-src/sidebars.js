@@ -28,7 +28,14 @@ const sidebars = {
           id: 'overview',
           label: 'Overview'
         },
-        'quickstart',
+        {
+          type: 'doc',
+          id: 'quickstart',
+          label: 'Quickstart',
+          customProps: {
+            icon: 'quickstart'
+          }
+        },
         'install',
         'dev-mode',
         'tutorials/typescript',
@@ -68,7 +75,10 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: '💾 Storages',
+      label: 'Storages',
+      customProps: {
+        icon: 'storage'
+      },
       items: [
         {
           type: 'doc',
@@ -83,12 +93,18 @@ const sidebars = {
         {
           type: 'doc',
           id: 'rx-storage-indexeddb',
-          label: 'IndexedDB 👑 (Browser, Capacitor)'
+          label: 'IndexedDB (Browser, Capacitor)',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-opfs',
-          label: 'OPFS 👑 (Browser)'
+          label: 'OPFS (Browser)',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
@@ -98,12 +114,23 @@ const sidebars = {
         {
           type: 'doc',
           id: 'rx-storage-filesystem-node',
-          label: 'Filesystem Node 👑 (Node.js)'
+          label: 'Filesystem Node (Node.js)',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-sqlite',
           label: 'SQLite (Capacitor, React-Native, Expo, Tauri, Electron, Node.js)'
+        },
+        {
+          type: 'doc',
+          id: 'rx-storage-filesystem-expo',
+          label: 'Expo Filesystem (React Native, Expo)',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'category',
@@ -155,7 +182,10 @@ const sidebars = {
         {
           type: 'doc',
           id: 'logger',
-          label: 'Logger 👑'
+          label: 'Logger',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
@@ -165,27 +195,42 @@ const sidebars = {
         {
           type: 'doc',
           id: 'rx-storage-worker',
-          label: 'Worker RxStorage 👑'
+          label: 'Worker RxStorage',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-shared-worker',
-          label: 'SharedWorker RxStorage 👑'
+          label: 'SharedWorker',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-memory-mapped',
-          label: 'Memory Mapped RxStorage 👑'
+          label: 'Memory Mapped',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-sharding',
-          label: 'Sharding 👑'
+          label: 'Sharding',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
           id: 'rx-storage-localstorage-meta-optimizer',
-          label: 'Localstorage Meta Optimizer 👑'
+          label: 'Localstorage Meta Optimizer',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
@@ -196,12 +241,18 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: '🔄 Replication',
+      label: 'Replication',
+      customProps: {
+        icon: 'replication'
+      },
       items: [
         {
           type: 'doc',
           id: 'replication',
-          label: '⚙️ Sync Engine'
+          label: 'Sync Engine',
+          customProps: {
+            icon: 'gear'
+          }
         },
         {
           type: 'doc',
@@ -250,6 +301,16 @@ const sidebars = {
         },
         {
           type: 'doc',
+          id: 'replication-google-drive',
+          label: 'Google Drive Replication'
+        },
+        {
+          type: 'doc',
+          id: 'replication-microsoft-onedrive',
+          label: 'Microsoft OneDrive Replication'
+        },
+        {
+          type: 'doc',
           id: 'replication-nats',
           label: 'NATS Replication'
         },
@@ -257,6 +318,11 @@ const sidebars = {
           type: 'doc',
           id: 'replication-appwrite',
           label: 'Appwrite Replication'
+        },
+        {
+          type: 'doc',
+          id: 'partial-sync',
+          label: 'Partial Sync'
         },
       ],
     },
@@ -305,6 +371,11 @@ const sidebars = {
       type: 'category',
       label: 'Advanced Features',
       items: [
+        {
+          type: 'doc',
+          id: 'testing',
+          label: 'Testing'
+        },
         {
           type: 'category',
           label: 'Migration',
@@ -358,6 +429,12 @@ const sidebars = {
 
         {
           type: 'doc',
+          id: 'json-import-export',
+          label: 'JSON Import/Export'
+        },
+
+        {
+          type: 'doc',
           id: 'backup',
           label: 'Backup'
         },
@@ -393,7 +470,10 @@ const sidebars = {
         {
           type: 'doc',
           id: 'fulltext-search',
-          label: 'Fulltext Search 👑'
+          label: 'Fulltext Search',
+          customProps: {
+            iconAfter: 'premium'
+          }
         },
         {
           type: 'doc',
@@ -403,7 +483,15 @@ const sidebars = {
         {
           type: 'doc',
           id: 'query-optimizer',
-          label: 'Query Optimizer 👑'
+          label: 'Query Optimizer',
+          customProps: {
+            iconAfter: 'premium'
+          }
+        },
+        {
+          type: 'doc',
+          id: 'webmcp',
+          label: 'WebMCP'
         },
         {
           type: 'doc',
@@ -411,6 +499,22 @@ const sidebars = {
           label: 'Third Party Plugins'
         }
       ],
+    },
+    {
+      type: 'category',
+      label: 'Integrations',
+      items: [
+        {
+          type: 'doc',
+          id: 'react',
+          label: 'React'
+        },
+        {
+          type: 'ref',
+          id: 'articles/tanstack-db/rxdb-collection-for-tanstack-db',
+          label: 'TanStack DB'
+        }
+      ]
     },
     {
       type: 'category',
@@ -443,6 +547,11 @@ const sidebars = {
       label: 'Releases',
       // label: '🆕 Releases',
       items: [
+        {
+          type: 'doc',
+          id: 'releases/17.0.0',
+          label: '🆕 17.0.0'
+        },
         {
           type: 'doc',
           id: 'releases/16.0.0',
@@ -494,6 +603,31 @@ const sidebars = {
       type: 'category',
       label: 'Articles',
       items: [
+        {
+          type: 'category',
+          label: 'TanStack DB',
+          items: [
+            'articles/tanstack-db/rxdb-collection-for-tanstack-db',
+            'articles/tanstack-db/what-is-tanstack-db',
+            'articles/tanstack-db/persist-tanstack-db-indexeddb',
+            'articles/tanstack-db/tanstack-db-sqlite',
+            'articles/tanstack-db/tanstack-db-pglite',
+            'articles/tanstack-db/tanstack-db-offline-first',
+            'articles/tanstack-db/sync-tanstack-db',
+            'articles/tanstack-db/tanstack-db-graphql',
+            'articles/tanstack-db/tanstack-db-supabase-offline',
+            'articles/tanstack-db/tanstack-db-couchdb-sync',
+            'articles/tanstack-db/tanstack-db-p2p-webrtc',
+            'articles/tanstack-db/tanstack-db-conflict-resolution',
+            'articles/tanstack-db/tanstack-db-multi-tab',
+            'articles/tanstack-db/tanstack-db-encryption',
+            'articles/tanstack-db/tanstack-db-react-native',
+            'articles/tanstack-db/tanstack-db-electron',
+            'articles/tanstack-db/tanstack-db-capacitor',
+            'articles/tanstack-db/tanstack-db-pwa',
+            'articles/tanstack-db/tanstack-query-offline-persistence-upgrade'
+          ],
+        },
         'articles/browser-database',
         'articles/local-first-future',
         'why-nosql',
@@ -531,10 +665,22 @@ const sidebars = {
         'articles/firestore-alternative',
         'articles/firebase-realtime-database-alternative',
         'articles/offline-database',
+        'articles/ddil-database',
         'articles/zero-latency-local-first',
         'articles/indexeddb-max-storage-limit',
         'articles/json-based-database',
-        'articles/reactjs-storage'
+        'articles/reactjs-storage',
+        'articles/indexeddb-alternative',
+        'articles/indexeddb/indexeddb-tutorial',
+        'articles/indexeddb/best-indexeddb-wrapper',
+        'articles/indexeddb/indexeddb-sync',
+        'articles/indexeddb/indexeddb-typescript',
+        'articles/indexeddb/indexeddb-encryption',
+        'articles/indexeddb/indexeddb-relationships',
+        'articles/indexeddb/indexeddb-query',
+        'articles/generic-prompts',
+        'articles/electron-sqlite',
+        'articles/realm-to-rxdb-migration'
       ],
     },
     'contribute',

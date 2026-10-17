@@ -2,23 +2,22 @@
 title: Supabase Replication Plugin for RxDB - Real-Time, Offline-First Sync
 slug: replication-supabase.html
 description: Build real-time, offline-capable apps with RxDB + Supabase. Push/pull changes via PostgREST, stream updates with Realtime, and keep data in sync across devices.
+image: /headers/replication-supabase.jpg
 ---
 
 import {Tabs} from '@site/src/components/tabs';
 import {Steps} from '@site/src/components/steps';
 import {VideoBox} from '@site/src/components/video-box';
-import {RxdbMongoDiagramPlain} from '@site/src/components/mongodb-sync';
+import {SyncDiagram} from '@site/src/components/sync-diagram';
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 
-# Supabase Replication Plugin for RxDB - Real-Time, Offline-First Sync
-
-<p align="center">
-  <img src="./files/icons/supabase.svg" alt="Supabase" height="60" className="img-padding img-in-text-right" />
-</p>
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/supabase.svg" alt="Supabase" />} subtitle="Real-Time, Offline-First Sync">Supabase Replication Plugin</HeadlineWithIcon>
 
 The **Supabase Replication Plugin** for RxDB delivers seamless, two-way synchronization between your RxDB collections and a Supabase (Postgres) table. It uses **PostgREST** for pull/push and **Supabase Realtime** (logical replication) to stream live updates, so your data stays consistent across devices with first-class [local-first](./articles/local-first-future.md), offline-ready support.
 
-Under the hood, the plugin is powered by the RxDB [Sync Engine](./replication.md). It handles checkpointed incremental pulls, robust retry logic, and [conflict detection/resolution](./transactions-conflicts-revisions.md) for you. You focus on features—RxDB takes care of sync.
+Under the hood, the plugin is powered by the RxDB [Sync Engine](./replication.md). It handles checkpointed incremental pulls, robust retry logic, and [conflict detection/resolution](./transactions-conflicts-revisions.md) for you. You focus on features, and RxDB takes care of sync.
 
 <center>
     <VideoBox videoId="zBZgdTb-dns" title="Supabase in 100 Seconds" duration="2:36" />
@@ -36,7 +35,7 @@ Under the hood, the plugin is powered by the RxDB [Sync Engine](./replication.md
 
 ## Architecture Overview
 
-<RxdbMongoDiagramPlain showServer={false} dbIcon="/files/icons/supabase.svg" dbLabel="Supabase" />
+<SyncDiagram server={false} backend={{ label: "Supabase", icon: "/files/icons/supabase.svg" }} clientConnectionLabel="PostgREST + Realtime" simulateOffline />
 
 
 <br />
@@ -127,7 +126,7 @@ await db.addCollections({
 
 ### Create the Supabase Client
 
-Make a single Supabase client and reuse it across your app. In the browser, use the anon key (RLS-protected). On trusted servers you may use the service role key—but never ship that to clients.
+Make a single Supabase client and reuse it across your app. In the browser, use the anon key (RLS-protected). On trusted servers you may use the service role key, but never ship that to clients.
 
 
 <Tabs>
@@ -222,6 +221,26 @@ Supabase returns `null` for nullable columns, but in RxDB you often model those 
 :::
 
 
+## Using Joins
+
+You can use the `pull.queryBuilder` to use joins and also pull data from related tables.
+To do that, you have to create a **new** query object in the `pull.queryBuilder` with the `.select()` method and return it.
+
+```ts
+const replication = replicateSupabase({
+    pull: {
+        queryBuilder: (/* ignore the passed query instance from here */) => {
+            /**
+             * Create a totally new query instance
+             * and return that.
+             */
+            return supabase.from('humans').select('*, pets(*), toys(*)');
+        }
+    }
+});
+```
+
+
 ### Do other things with the replication state
 
 The `RxSupabaseReplicationState` which is returned from `replicateSupabase()` allows you to run all functionality of the normal [RxReplicationState](./replication.md).
@@ -231,18 +250,45 @@ The `RxSupabaseReplicationState` which is returned from `replicateSupabase()` al
 </Steps>
 
 
-:::note Beta
-The Supabase Replication Plugin for RxDB is currently in **beta**.  
-While it is production-capable, the API and internal behavior may change before the stable release. We recommend thoroughly testing your integration and reviewing the changelog when upgrading to newer versions.
-:::
 
+
+
+## FAQ
+
+<Faq>
+<FaqItem question="Why use Supabase and RxDB as a cloud document database for Node.js and TypeScript?">
+
+Supabase and RxDB offer the best of both worlds for Node.js and TypeScript applications. Supabase provides a powerful PostgreSQL backend. You can use PostgreSQL as a document database by storing JSON data. RxDB provides a reactive local document store. You achieve real-time synchronization between the local document store and the Supabase backend. You benefit from strong TypeScript typing on the client and robust SQL querying on the server.
+
+</FaqItem>
+<FaqItem question="How to connect an anonymous key to a Supabase project?">
+
+You connect an anonymous key to a Supabase project by initializing the official `@supabase/supabase-js` client utilizing your project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`. In frontend applications interacting with the **[RxDB Supabase Replication](./replication.md)** plugin, you must inject the `anon` key, while simultaneously configuring strict Row Level Security (RLS) policies within your Supabase PostgreSQL backend to prevent unauthorized data manipulation.
+
+</FaqItem>
+<FaqItem question="Does Supabase support full offline sync and CRDT capabilities?">
+
+Natively, the Supabase JavaScript client does not support advanced [offline-first](./offline-first.md) synchronization pipelines or complex Conflict-free Replicated Data Type (CRDT) architectures. To implement full offline sync capable of continuous background disconnected writes, you must attach the **[RxDB](./rx-database.md)** Supabase Replication Plugin. RxDB acts as the offline-first local CRDT-like cache, deferring all local mutations into a unified outbound queue until the Supabase TCP connection is restored.
+
+</FaqItem>
+<FaqItem question="Should Row Level Security (RLS) be enabled when using Supabase real-time sync?">
+
+Yes, Row Level Security (RLS) is strictly mandatory whenever you expose a Supabase database directly to the frontend. Without RLS, the anonymous `anon` key used by the **[RxDB](./rx-database.md)** client grants full read and write access to your entire PostgreSQL cluster. You must configure RLS policies that enforce `auth.uid() = user_id` checks to guarantee clients only replicate and mutate their own specific documents.
+
+</FaqItem>
+<FaqItem question="How does Supabase Realtime architecture work?">
+
+Supabase Realtime acts as an Elixir-based WebSocket broadcasting server that taps directly into PostgreSQL's logical replication stream. When a row changes on the database, the Realtime server parses the WAL (Write-Ahead Log) and pushes the event down to subscribed clients. The **[RxDB Supabase Replication](./replication.md)** plugin leverages this WebSocket channel strictly for live change detection, triggering rapid localized pulls over PostgREST to guarantee no data is dropped during connection turbulence.
+
+</FaqItem>
+</Faq>
 
 ## Follow Up
 
-- **Replication API Reference:** Learn the core concepts and lifecycle hooks — [Replication](./replication.md)
-- **Offline-First Guide:** Caching, retries, and conflict strategies — [Local-First](./articles/local-first-future.md)
-- **Supabase Essentials:**
-  - Row Level Security (RLS) — https://supabase.com/docs/guides/auth/row-level-security
-  - Realtime — https://supabase.com/docs/guides/realtime
-  - Local dev with the Supabase CLI — https://supabase.com/docs/guides/cli
-- **Community:** Questions or feedback? Join our Discord — [Chat](./chat)
+- **Replication API Reference:** Learn the core concepts and lifecycle hooks - [Replication](./replication.md)
+- **Offline-First Guide:** Caching, retries, and conflict strategies - [Local-First](./articles/local-first-future.md)
+- **Supabase Crash Course:** Build a React Native app with RxDB - [Webinar Video](https://www.youtube.com/watch?v=F051fX1z6lE)
+- Row Level Security (RLS) - https://supabase.com/docs/guides/auth/row-level-security
+- Realtime - https://supabase.com/docs/guides/realtime
+- Local dev with the Supabase CLI - https://supabase.com/docs/guides/cli
+- **Community:** Questions or feedback? Join our Discord - [Chat](./chat)

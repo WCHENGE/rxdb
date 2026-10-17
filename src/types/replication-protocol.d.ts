@@ -1,7 +1,7 @@
 import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import type {
     RxConflictHandler,
-    RxConflictHandlerInput
+    RxReplicationConflict
 } from './conflict-handling.d.ts';
 import type { RxError, RxTypeError } from './rx-error.d.ts';
 import type {
@@ -165,6 +165,7 @@ export type RxStorageInstanceReplicationInput<RxDocType> = {
     waitBeforePersist?: () => Promise<any>;
 
     hashFunction: HashFunction;
+    skipStoringPullMeta: boolean;
 
     initialCheckpoint?: {
         upstream?: any;
@@ -177,7 +178,6 @@ export type RxStorageInstanceReplicationState<RxDocType> = {
     primaryPath: string;
     hasAttachments: boolean;
     input: RxStorageInstanceReplicationInput<RxDocType>;
-
     events: {
         /**
          * Streams all document writes that have successfully
@@ -187,10 +187,12 @@ export type RxStorageInstanceReplicationState<RxDocType> = {
             up: Subject<RxReplicationWriteToMasterRow<RxDocType>>;
             down: Subject<BulkWriteRow<RxDocType>>;
         };
-        resolvedConflicts: Subject<{
-            input: RxConflictHandlerInput<RxDocType>;
-            output: WithDeleted<RxDocType>;
-        }>;
+        /**
+         * Streams all conflicts that were reported by the remote
+         * on masterWrite() calls together with the output
+         * of the conflictHandler that resolved them.
+         */
+        resolvedConflicts: Subject<RxReplicationConflict<RxDocType>>;
         /**
          * Contains the cancel state.
          * Emit true here to cancel the replication.
@@ -256,6 +258,14 @@ export type RxStorageInstanceReplicationState<RxDocType> = {
      * to upstream these documents again.
      */
     downstreamBulkWriteFlag: Promise<string>;
+
+    /**
+     * If this is set to true, we do not store the documents
+     * assumed server state. This is set on pull-only replications
+     * we because when we do not push anyway, we do not have to store
+     * the server state of any document.
+     */
+    skipStoringPullMeta: boolean;
 
     /**
      * Tracks if the streams have been in sync

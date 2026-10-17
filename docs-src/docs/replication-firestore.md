@@ -2,21 +2,21 @@
 title: Smooth Firestore Sync for Offline Apps
 slug: replication-firestore.html
 description: Leverage RxDB to enable real-time, offline-first replication with Firestore. Cut cloud costs, resolve conflicts, and speed up your app.
+image: /headers/replication-firestore.jpg
 ---
 
-# Replication with Firestore from Firebase
+import {Steps} from '@site/src/components/steps';
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/firebase.svg" alt="Firebase" />}>Replication with Firestore from Firebase</HeadlineWithIcon>
 
 With the `replication-firestore` plugin you can do a two-way realtime replication
-between your client side [RxDB](./) Database and a [Cloud Firestore](https://firebase.google.com/docs/firestore) database that is hosted on the Firebase platform. It will use the [RxDB Sync Engine](./replication.md) to manage the replication streams, error- and conflict handling.
-
-<p align="center">
-  <img src="./files/alternatives/firebase.svg" alt="Firebase" height="40" />
-</p>
+between your client side [RxDB](./) Database and a [Cloud Firestore](https://firebase.google.com/docs/firestore) database that is hosted on the Firebase platform. It will use the [RxDB Sync Engine](./replication.md) to manage the replication streams, error- and [conflict handling](./transactions-conflicts-revisions.md).
 
 
 Replicating your Firestore state to RxDB can bring multiple benefits compared to using the Firestore directly:
 - It can reduce your cloud fees because your queries run against the local state of the documents without touching a server and writes can be batched up locally and send to the backend in bulks. This is mostly the case for read heavy applications.
-- You can run complex [NoSQL queries](./why-nosql.md) on your documents because you are not bound to the [Firestore Query](https://firebase.google.com/docs/firestore/query-data/queries) handling. You can also use local indexes, [compression](./key-compression.md) and [encryption](./encryption.md) and do things like fulltext search, fully locally.
+- You can run complex [NoSQL queries](./why-nosql.md) on your documents because you are not bound to the [Firestore Query](https://firebase.google.com/docs/firestore/query-data/queries) handling. You can also use local indexes, [compression](./key-compression.md) and [encryption](./encryption.md) and do things like [fulltext search](./fulltext-search.md), fully locally.
 - Your application can be truly [Offline-First](./offline-first.md) because your data is stored in a client side database. In contrast Firestore by itself only provides options to support [offline also](https://cloud.google.com/firestore/docs/manage-data/enable-offline) which more works like a cache and requires the user to be online at application start to run authentication.
 - It reduces the vendor lock in because you can switch out the backend server afterwards without having to rebuild big parts of the application. RxDB supports replication plugins with multiple technologies and it is even easy to set up with your [custom backend](./replication.md).
 - You can use sophisticated [conflict resolution strategies](./replication.md#conflict-handling) so you are not bound to the Firestore [last-write-wins](https://stackoverflow.com/a/47781502/3443137) strategy which is not suitable for many applications.
@@ -25,8 +25,15 @@ Replicating your Firestore state to RxDB can bring multiple benefits compared to
 
 ## Usage
 
+<Steps>
 
-First initialize your Firestore database like you would do without RxDB.
+### Install the firebase package
+
+```bash
+npm install firebase
+```
+
+### Initialize your Firestore Database
 
 ```ts
 import * as firebase from 'firebase/app';
@@ -45,48 +52,54 @@ const firestoreDatabase = getFirestore(app);
 const firestoreCollection = collection(firestoreDatabase, 'my-collection-name');
 ```
 
-Then you can start the replication by calling `replicateFirestore()` on your [RxCollection](./rx-collection.md).
+### Start the Replication
+
+Start the replication by calling `replicateFirestore()` on your [RxCollection](./rx-collection.md).
 
 ```ts
-const replicationState = replicateFirestore(
-    {
-        replicationIdentifier: `https://firestore.googleapis.com/${projectId}`,
-        collection: myRxCollection,
-        firestore: {
-            projectId,
-            database: firestoreDatabase,
-            collection: firestoreCollection
-        },
-        /**
-         * (required) Enable push and pull replication with firestore by
-         * providing an object with optional filter for each type of replication desired.
-         * [default=disabled]
-         */
-        pull: {},
-        push: {},
-        /**
-         * Either do a live or a one-time replication
-         * [default=true]
-         */
-        live: true,
-        /**
-         * (optional) likely you should just use the default.
-         *
-         * In firestore it is not possible to read out
-         * the internally used write timestamp of a document.
-         * Even if we could read it out, it is not indexed which
-         * is required for fetch 'changes-since-x'.
-         * So instead we have to rely on a custom user defined field
-         * that contains the server time which is set by firestore via serverTimestamp()
-         * Notice that the serverTimestampField MUST NOT be part of the collections RxJsonSchema!
-         * [default='serverTimestamp']
-         */
-        serverTimestampField: 'serverTimestamp'
-    }
-);
+const replicationState = replicateFirestore({
+    replicationIdentifier: `https://firestore.googleapis.com/${projectId}`,
+    collection: myRxCollection,
+    firestore: {
+        projectId,
+        database: firestoreDatabase,
+        collection: firestoreCollection
+    },
+    /**
+     * (required) Enable push and pull replication with firestore by
+     * providing an object with optional filter
+     * for each type of replication desired.
+     * [default=disabled]
+     */
+    pull: {},
+    push: {},
+    /**
+     * Either do a live or a one-time replication
+     * [default=true]
+     */
+    live: true,
+    /**
+     * (optional) likely you should just use the default.
+     *
+     * In firestore it is not possible to read out
+     * the internally used write timestamp of a document.
+     * Even if we could read it out, it is not indexed which
+     * is required for fetch 'changes-since-x'.
+     * So instead we have to rely on a custom user defined field
+     * that contains the server time
+     * which is set by firestore via serverTimestamp()
+     * Notice that the serverTimestampField MUST NOT be
+     * part of the collections RxJsonSchema!
+     * [default='serverTimestamp']
+     */
+    serverTimestampField: 'serverTimestamp'
+});
 ```
 
 To observe and cancel the replication, you can use any other methods from the [ReplicationState](./replication.md) like `error$`, `cancel()` and `awaitInitialReplication()`.
+
+
+</Steps>
 
 ## Handling deletes
 
@@ -94,7 +107,7 @@ RxDB requires you to never [fully delete documents](./replication.md#data-layout
 
 ## Do not set `enableIndexedDbPersistence()`
 
-Firestore has the `enableIndexedDbPersistence()` feature which caches document states locally to IndexedDB. This is not needed when you replicate your Firestore with RxDB because RxDB itself will store the data locally already.
+Firestore has the `enableIndexedDbPersistence()` feature which caches document states locally to [IndexedDB](./rx-storage-indexeddb.md). This is not needed when you replicate your Firestore with RxDB because RxDB itself will store the data locally already.
 
 ## Using the replication with an already existing Firestore Database State
 
@@ -105,6 +118,7 @@ to manually set the `_deleted` field to `false` and the `serverTimestamp` to all
 import {
     getDocs,
     query,
+    where,
     serverTimestamp
 } from 'firebase/firestore';
 const allDocsResult = await getDocs(query(firestoreCollection));

@@ -11,9 +11,11 @@ import type {
     RxCollection,
     RxDumpDatabase,
     RxDumpDatabaseAny,
+    RxDumpOptions,
     BackupOptions,
     RxStorage,
     RxStorageInstance,
+    RxStorageInstanceCreationParams,
     BulkWriteRow,
     RxChangeEvent,
     RxDatabaseCreator,
@@ -27,7 +29,10 @@ import type {
     RxError,
     HashFunction,
     MaybePromise,
-    RxState
+    RxState,
+    RxCollectionEvent,
+    WebMCPOptions,
+    WebMCPLogEvent
 } from './types/index.d.ts';
 
 import {
@@ -39,7 +44,8 @@ import {
     getDefaultRevision,
     getDefaultRxDocumentMeta,
     defaultHashSha256,
-    RXDB_VERSION
+    RXDB_VERSION,
+    deepEqual
 } from './plugins/utils/index.ts';
 import {
     newRxError
@@ -79,7 +85,7 @@ import {
     INTERNAL_STORE_SCHEMA,
     _collectionNamePrimary
 } from './rx-database-internal-store.ts';
-import { removeCollectionStorages } from './rx-collection-helper.ts';
+import { createRxCollectionStorageInstance, removeCollectionStorages } from './rx-collection-helper.ts';
 import { overwritable } from './overwritable.ts';
 import type { RxMigrationState } from './plugins/migration-schema/index.ts';
 import type { RxReactivityFactory } from './types/plugins/reactivity.d.ts';
@@ -87,7 +93,7 @@ import { rxChangeEventBulkToRxChangeEvents } from './rx-change-event.ts';
 
 /**
  * stores the used database names+storage names
- * so we can throw when the same database is created more then once.
+ * so we can throw when the same database is created more than once.
  */
 const USED_DATABASE_NAMES: Set<string> = new Set();
 const DATABASE_UNCLOSED_INSTANCE_PROMISE_MAP = new Map<string, Set<Promise<RxDatabase>>>();
@@ -133,8 +139,23 @@ export class RxDatabaseBase<
         public readonly allowSlowCount?: boolean,
         public readonly reactivity?: RxReactivityFactory<any>,
         public readonly onClosed?: () => void,
+        public readonly liveQueryUpdateThrottleTime: number = 0,
     ) {
         DB_COUNT++;
+
+        /**
+         * SECURITY: Make the password property non-enumerable
+         * so it does not leak through Object.keys(), spreading,
+         * Object.assign(), for..in loops, or JSON.stringify().
+         */
+        if (typeof password !== 'undefined') {
+            Object.defineProperty(this, 'password', {
+                value: password,
+                enumerable: false,
+                writable: false,
+                configurable: false
+            });
+        }
 
         /**
          * In the dev-mode, we create a pseudoInstance
@@ -178,6 +199,15 @@ export class RxDatabaseBase<
         return this.observable$;
     }
 
+    /**
+     * Emits events whenever a JavaScript instance
+     * of RxCollection is added or removed on the RxDatabase instance.
+     * Does not emit anything across browser-tabs!
+     */
+    get collections$(): Observable<RxCollectionEvent> {
+        return this.collectionsSubject$.asObservable();
+    }
+
     public getReactivityFactory(): RxReactivityFactory<Reactivity> {
         if (!this.reactivity) {
             throw newRxError('DB14', { database: this.name });
@@ -206,6 +236,14 @@ export class RxDatabaseBase<
     public states: { [name: string]: RxState<any, Reactivity>; } = {};
 
     /**
+     * Support for `using` / `await using` (ECMAScript explicit resource management).
+     * This allows: `await using db = await createRxDatabase(...)`
+     */
+    public async [Symbol.asyncDispose](): Promise<void> {
+        await this.close();
+    }
+
+    /**
      * Internally only use eventBulks$
      * Do not use .$ or .observable$ because that has to transform
      * the events which decreases performance.
@@ -214,9 +252,10 @@ export class RxDatabaseBase<
 
     private closePromise: Promise<boolean> | null = null;
 
+    public collectionsSubject$ = new Subject<RxCollectionEvent>();
     private observable$: Observable<RxChangeEvent<any>> = this.eventBulks$
         .pipe(
-            mergeMap(changeEventBulk => rxChangeEventBulkToRxChangeEvents(changeEventBulk))
+            mergeMap((changeEventBulk: RxChangeEventBulk<any>) => rxChangeEventBulkToRxChangeEvents(changeEventBulk))
         );
 
     /**
@@ -361,47 +400,120 @@ export class RxDatabaseBase<
         );
 
 
-        const putDocsResult = await this.internalStore.bulkWrite(
-            bulkPutDocs,
-            'rx-database-add-collection'
-        );
+        /**
+         * Optimization: Start creating collection storage instances
+         * in parallel with the internal store bulkWrite and startup error check.
+         * Storage instance creation is independent of the internal store write,
+         * so we can overlap these I/O operations to reduce time-to-first-insert.
+         */
+        const collectionStorageInstancePromises: { [key: string]: Promise<RxStorageInstance<any, any, any>>; } = {};
+        Object.keys(collectionCreators).forEach((collectionName) => {
+            const useArgs = useArgsByCollectionName[collectionName];
+            const storageInstanceCreationParams: RxStorageInstanceCreationParams<any, any> = {
+                databaseInstanceToken: this.token,
+                databaseName: this.name,
+                collectionName: collectionName,
+                schema: useArgs.schema.jsonSchema,
+                options: useArgs.instanceCreationOptions || {},
+                multiInstance: this.multiInstance,
+                password: this.password,
+                devMode: overwritable.isDevMode()
+            };
+            runPluginHooks('preCreateRxStorageInstance', storageInstanceCreationParams);
+            const promise = createRxCollectionStorageInstance(
+                this.asRxDatabase,
+                storageInstanceCreationParams
+            );
+            /**
+             * Prevent unhandled promise rejection warnings.
+             * If ensureNoStartupErrors() or the bulkWrite error handling throws
+             * (e.g. password mismatch, schema mismatch), these promises might
+             * never be awaited. The actual errors are still propagated when
+             * the promises are awaited in Phase 5 below.
+             */
+            promise.catch(() => { });
+            collectionStorageInstancePromises[collectionName] = promise;
+        });
 
-        await ensureNoStartupErrors(this);
+        /**
+         * If the ensureNoStartupErrors or the bulkWrite error handling throws,
+         * we must close any pre-created storage instances to avoid resource leaks.
+         */
+        let putDocsResult;
+        try {
+            [putDocsResult] = await Promise.all([
+                this.internalStore.bulkWrite(
+                    bulkPutDocs,
+                    'rx-database-add-collection'
+                ),
+                ensureNoStartupErrors(this)
+            ]);
 
-        await Promise.all(
-            putDocsResult.error.map(async (error) => {
-                if (error.status !== 409) {
-                    throw newRxError('DB12', {
-                        database: this.name,
-                        writeError: error
-                    });
-                }
-                const docInDb: RxDocumentData<InternalStoreCollectionDocType> = ensureNotFalsy(error.documentInDb);
-                const collectionName = docInDb.data.name;
-                const schema = (schemas as any)[collectionName];
-                // collection already exists but has different schema
-                if (docInDb.data.schemaHash !== await schema.hash) {
-                    throw newRxError('DB6', {
-                        database: this.name,
-                        collection: collectionName,
-                        previousSchemaHash: docInDb.data.schemaHash,
-                        schemaHash: await schema.hash,
-                        previousSchema: docInDb.data.schema,
-                        schema: ensureNotFalsy((jsonSchemas as any)[collectionName])
-                    });
-                }
-            })
-        );
+            await Promise.all(
+                putDocsResult.error.map(async (error) => {
+                    if (error.status !== 409) {
+                        throw newRxError('DB12', {
+                            database: this.name,
+                            writeError: error
+                        });
+                    }
+                    const docInDb: RxDocumentData<InternalStoreCollectionDocType> = ensureNotFalsy(error.documentInDb);
+                    const collectionName = docInDb.data.name;
+                    const schema = (schemas as any)[collectionName];
+                    // collection already exists but has different schema
+                    if (
+                        docInDb.data.schemaHash !== await schema.hash &&
+                        /**
+                         * sortObject() uses localeCompare() which depends on the device locale,
+                         * so the same schema can produce a different key order and hash
+                         * on another device. Only when the hashes differ, we compare the content
+                         * so that this expensive check does not run on each startup.
+                         * @link https://github.com/pubkey/rxdb/issues/9128
+                         */
+                        !deepEqual(docInDb.data.schema, schema.jsonSchema)
+                    ) {
+                        throw newRxError('DB6', {
+                            database: this.name,
+                            collection: collectionName,
+                            previousSchemaHash: docInDb.data.schemaHash,
+                            schemaHash: await schema.hash,
+                            previousSchema: docInDb.data.schema,
+                            schema: ensureNotFalsy((jsonSchemas as any)[collectionName])
+                        });
+                    }
+                })
+            );
+        } catch (err) {
+            /**
+             * Close any pre-created storage instances on error.
+             * Some instances might have failed to create (rejected promise),
+             * so we catch and ignore errors during cleanup.
+             */
+            await Promise.all(
+                Object.values(collectionStorageInstancePromises).map(
+                    p => p.then(instance => instance.close()).catch(() => { })
+                )
+            );
+            throw err;
+        }
 
         const ret: { [key in keyof CreatedCollections]: RxCollection<any, {}, {}, {}, Reactivity> } = {} as any;
         await Promise.all(
             Object.keys(collectionCreators).map(async (collectionName) => {
                 const useArgs = useArgsByCollectionName[collectionName];
-                const collection = await createRxCollection(useArgs);
+                const storageInstance = await collectionStorageInstancePromises[collectionName];
+                const collection = await createRxCollection({
+                    ...useArgs,
+                    storageInstance
+                });
                 (ret as any)[collectionName] = collection;
 
                 // set as getter to the database
                 (this.collections as any)[collectionName] = collection;
+                this.collectionsSubject$.next({
+                    collection,
+                    type: 'ADDED'
+                });
                 if (!(this as any)[collectionName]) {
                     Object.defineProperty(this, collectionName, {
                         get: () => (this.collections as any)[collectionName]
@@ -427,9 +539,18 @@ export class RxDatabaseBase<
     /**
      * Export database to a JSON friendly format.
      */
-    exportJSON(_collections?: string[]): Promise<RxDumpDatabase<Collections>>;
-    exportJSON(_collections?: string[]): Promise<RxDumpDatabaseAny<Collections>>;
-    exportJSON(_collections?: string[]): Promise<any> {
+    exportJSON(
+        _collectionsOrOptions?: string[] | RxDumpOptions,
+        _options?: RxDumpOptions
+    ): Promise<RxDumpDatabase<Collections>>;
+    exportJSON(
+        _collectionsOrOptions?: string[] | RxDumpOptions,
+        _options?: RxDumpOptions
+    ): Promise<RxDumpDatabaseAny<Collections>>;
+    exportJSON(
+        _collectionsOrOptions?: string[] | RxDumpOptions,
+        _options?: RxDumpOptions
+    ): Promise<any> {
         throw pluginMissing('json-dump');
     }
 
@@ -477,7 +598,7 @@ export class RxDatabaseBase<
             return this.closePromise;
         }
 
-        const { promise, resolve } = createPromiseWithResolvers<boolean>();
+        const { promise, resolve, reject } = createPromiseWithResolvers<boolean>();
         const resolveClosePromise = (result: boolean) => {
             if (this.onClosed) {
                 this.onClosed();
@@ -494,6 +615,7 @@ export class RxDatabaseBase<
              * to stop all subscribers who forgot to unsubscribe.
              */
             this.eventBulks$.complete();
+            this.collectionsSubject$.complete();
 
             DB_COUNT--;
             this._subs.map(sub => sub.unsubscribe());
@@ -512,18 +634,42 @@ export class RxDatabaseBase<
             /**
              * First wait until the database is idle
              */
-            return this.requestIdlePromise()
-                .then(() => Promise.all(this.onClose.map(fn => fn())))
-                // close all collections
-                .then(() => Promise.all(
-                    Object.keys(this.collections as any)
-                        .map(key => (this.collections as any)[key])
-                        .map(col => col.close())
-                ))
-                // close internal storage instances
-                .then(() => this.internalStore.close())
-                .then(() => resolveClosePromise(true));
-        })();
+            await this.requestIdlePromise();
+
+            let closingError: Error | null = null;
+            try {
+                await Promise.all(this.onClose.map(fn => fn()));
+            } catch (err: unknown) {
+                closingError = err as Error;
+            }
+
+            // close all collections
+            await Promise.all(
+                Object.keys(this.collections as any)
+                    .map(key => (this.collections as any)[key])
+                    .map(col => col.close())
+            );
+
+            // close internal storage instances
+            await this.internalStore.close();
+
+            if (closingError) {
+                throw closingError;
+            }
+            resolveClosePromise(true);
+        })().catch((err) => {
+            /**
+             * If an error occurs during closing,
+             * we still have to mark the database as closed
+             * and clean up the instance tracking so that
+             * a new database with the same name can be created.
+             */
+            if (this.onClosed) {
+                this.onClosed();
+            }
+            this.closed = true;
+            reject(err);
+        });
 
         return promise;
     }
@@ -532,10 +678,18 @@ export class RxDatabaseBase<
      * deletes the database and its stored data.
      * Returns the names of all removed collections.
      */
-    remove(): Promise<string[]> {
-        return this
-            .close()
-            .then(() => removeRxDatabase(this.name, this.storage, this.multiInstance, this.password));
+    async remove(): Promise<string[]> {
+        /**
+         * Collect all collection onRemove handlers before closing,
+         * because close() will clear the collections and unsubscribe
+         * all listeners, making it impossible to trigger onRemove afterwards.
+         */
+        const collections = Object.values(this.collections as any) as RxCollection[];
+        await this.close();
+        await Promise.all(
+            collections.map(col => Promise.all(col.onRemove.map(fn => fn())))
+        );
+        return removeRxDatabase(this.name, this.storage, this.multiInstance, this.password);
     }
 
     get asRxDatabase(): RxDatabase<
@@ -545,6 +699,10 @@ export class RxDatabaseBase<
         Reactivity
     > {
         return this as any;
+    }
+
+    registerWebMCP(_options?: WebMCPOptions): { error$: Subject<Error>; log$: Subject<WebMCPLogEvent>; } {
+        throw pluginMissing('webmcp');
     }
 }
 
@@ -566,14 +724,14 @@ function throwIfDatabaseNameUsed(
 }
 
 /**
- * ponyfill for https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/withResolvers
+ * Polyfill for https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/withResolvers
  */
 function createPromiseWithResolvers<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
     let reject!: (reason?: any) => void;
     const promise = new Promise<T>((res, rej) => {
-      resolve = res;
-      reject = rej;
+        resolve = res;
+        reject = rej;
     });
     return { promise, resolve, reject };
 }
@@ -612,6 +770,38 @@ export async function createRxDatabaseStorageInstance<Internals, InstanceCreatio
     return internalStore;
 }
 
+/**
+ * Creates an RxDatabase instance.
+ *
+ * In development, add the dev-mode plugin via `addRxPlugin()` **before** calling
+ * this function. The dev-mode plugin enables schema validation, detailed error
+ * messages, and other helpful runtime checks that are stripped from production builds.
+ *
+ * Need help? The RxDB Discord is the fastest place to reach the maintainers.
+ * @see https://rxdb.info/chat/?console=code RxDB Discord community and support
+ *
+ * @example
+ * ```ts
+ * import { createRxDatabase, addRxPlugin } from 'rxdb';
+ * import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
+ * import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
+ * import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+ *
+ * // Add dev-mode plugin first, before any other RxDB code runs.
+ * if (process.env.NODE_ENV !== 'production') {
+ *   addRxPlugin(RxDBDevModePlugin);
+ * }
+ *
+ * const db = await createRxDatabase({
+ *   name: 'mydb',
+ *   // In dev-mode, wrap the storage with a validator so every write is
+ *   // checked against the schema and errors surface immediately.
+ *   storage: process.env.NODE_ENV !== 'production'
+ *     ? wrappedValidateAjvStorage({ storage: getRxStorageDexie() })
+ *     : getRxStorageDexie()
+ * });
+ * ```
+ */
 export function createRxDatabase<
     Collections = { [key: string]: RxCollection; },
     Internals = any,
@@ -632,7 +822,8 @@ export function createRxDatabase<
         allowSlowCount = false,
         localDocuments = false,
         hashFunction = defaultHashSha256,
-        reactivity
+        reactivity,
+        liveQueryUpdateThrottleTime = 0
     }: RxDatabaseCreator<Internals, InstanceCreationOptions, Reactivity>
 ): Promise<
     RxDatabase<Collections, Internals, InstanceCreationOptions, Reactivity>
@@ -711,7 +902,8 @@ export function createRxDatabase<
             cleanupPolicy,
             allowSlowCount,
             reactivity,
-            onInstanceClosed
+            onInstanceClosed,
+            liveQueryUpdateThrottleTime
         ) as RxDatabase<Collections>;
 
         await runAsyncPluginHooks('createRxDatabase', {

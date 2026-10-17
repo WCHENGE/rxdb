@@ -6,12 +6,23 @@
 - Performance and quality of vector comparison functions (euclideanDistance etc)
 - performance and quality of vector indexing methods
 - What is new in IndexedDB 3.0
+- how progressive syncing beats client-server architecture
+- beating expo sqlite performce with the new expo filesystem and rxdb
+- linkedin post: How RxDB is optimized for LLMs to make you a 100x developer
+- how WebMCP & Local-First gives your app superpowers
+- How Local-First and WebMCP make your app accessible to agents
+- DX for LLMs
+- vibe-coding is the killer-app for local-first
+- agent-first with RxDB
+- "why the indexeddb API is almost perfekt"
+- "how to do auth with RxDB"
+- "Where to store that JWT token?"
 
 ## Seo keywords:
 
 X- "optimistic ui"
 X- "local database" (rddt done)
-X- "react-native encryption"
+X- "react-native [encryption](../encryption.md)"
 X- "vue database" (rddt done)
 X- "jquery database"
 X- "vue indexeddb"
@@ -21,7 +32,7 @@ X- "ionic storage" (rddt done)
 X- "local database"
 X- "offline database"
 X- "zero local first"
-X- "webrtc p2p" - 390 http://localhost:3000/replication-webrtc.html
+X- "webrtc p2p" - 390 http://localhost:3000/[replication](../replication.md)-webrtc.html
 
 X- "indexeddb storage limit" - 590 https://rxdb.info/articles/indexeddb-max-storage-limit.html
 X- "indexeddb size limit" - 260 https://rxdb.info/articles/indexeddb-max-storage-limit.html
@@ -44,7 +55,7 @@ X- "reactjs storage"
 - "reactive database" - 210
 - "electron sqlite"
 - "in browser database" - 90
-- "offline first app" - 260
+- "[offline first](../offline-first.md) app" - 260
 - "react native sql" - 110
 - "sqlite electron"
 - "localstorage vs indexeddb"
@@ -76,16 +87,11 @@ X- "reactjs storage"
 - "redux alternative" - 1300
 - "Awesome local first" - 10
 - "tauri database" - 170
+- "capacitor embedded database"
+- "Node.js embedded database"
 
 - "sqlite javascript" - 2900
 - "sqlite typescript" - 260
 
 - "sync engine" - 390
-
-
-## Non Seo
-
-- "Local-First Partial Sync with RxDB"
-- "why the indexeddb API is almost perfekt"
-- "how to do auth with RxDB"
-- "Where to store that JWT token?"
+- "indexeddb alternative" - 70

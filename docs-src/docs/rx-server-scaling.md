@@ -2,6 +2,7 @@
 title: RxServer Scaling - Vertical or Horizontal
 slug: rx-server-scaling.html
 description: Discover vertical and horizontal techniques to boost RxServer. Learn multiple processes, worker threads, and replication for limitless performance.
+image: /headers/rx-server-scaling.jpg
 ---
 
 
@@ -32,7 +33,9 @@ So instead of directly serving requests from the persistence layer, you add an i
 ```ts
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 import { replicateRxCollection } from 'rxdb/plugins/replication';
-import { getRxStorageFilesystemNode } from 'rxdb-premium/plugins/storage-filesystem-node';
+import {
+    getRxStorageFilesystemNode
+} from 'rxdb-premium/plugins/storage-filesystem-node';
 import { getMemoryMappedRxStorage } from 'rxdb-premium/plugins/storage-memory-mapped';
 const myRxDatabase = await createRxDatabase({
     name: 'mydb',
@@ -61,7 +64,7 @@ The most common way to use multiple servers with RxDB is to split up the server 
 This is mostly useful on read-heavy applications because reads will directly run on the branches without ever reaching the main datastore and you can always add more branches to **scale up**. Even adding additional layers of "datastores" is possible so the tree can grow (or shrink) with the demand.
 
 <p align="center">
-  <img src="./files/server-scaling-tree.png" alt="Server Scaling Tree" width="320" class="img-padding" />
+  <img src="./files/server-scaling-tree.png" alt="Server Scaling Tree" width="320" className="img-padding" />
 </p>
 
 ### Moving the branches to "the edge"

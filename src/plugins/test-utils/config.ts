@@ -7,9 +7,6 @@ import {
 import {
     enforceOptions as broadcastChannelEnforceOptions
 } from 'broadcast-channel';
-import events from 'node:events';
-import * as path from 'node:path';
-import url from 'node:url';
 import type { RxStorage, RxTestStorage } from '../../types';
 import { wrappedKeyEncryptionCryptoJsStorage } from '../encryption-crypto-js/index.ts';
 
@@ -18,7 +15,7 @@ export type TestConfig = {
 };
 
 export const isDeno = typeof Deno !== 'undefined' || (typeof window !== 'undefined' && 'Deno' in window);
-export const isBun = typeof process !== 'undefined' && !!process.versions.bun;
+export const isBun = typeof process !== 'undefined' && typeof process.versions !== 'undefined' && !!process.versions.bun;
 export const isNode = !isDeno && !isBun && typeof window === 'undefined';
 
 let config: TestConfig;
@@ -43,16 +40,17 @@ function getEnvVariables() {
         const ret: any = {};
         [
             'DEFAULT_STORAGE',
-            'NODE_ENV'
+            'NODE_ENV',
+            'STORAGE_PASSWORD'
         ].forEach(k => {
             ret[k] = Deno.env.get(k);
         });
         return ret;
     }
 
-    return isBun || isNode ? process.env : (window as any).__karma__.config.env;
+    return isBun || isNode ? process.env : ((window as any).__karma__?.config?.env || {});
 }
-export const ENV_VARIABLES = getEnvVariables();
+export const ENV_VARIABLES = getEnvVariables() || {};
 export const DEFAULT_STORAGE = ENV_VARIABLES.DEFAULT_STORAGE as string;
 
 export function isFastMode(): boolean {
@@ -98,8 +96,6 @@ export function initTestEnvironment() {
 
     if (isNode) {
         process.setMaxListeners(100);
-
-        events.EventEmitter.defaultMaxListeners = 100;
 
         /**
          * Add a global function to process, so we can debug timings

@@ -2,7 +2,10 @@
 title: Solving IndexedDB Slowness for Seamless Apps
 slug: slow-indexeddb.html
 description: Struggling with IndexedDB performance? Discover hidden bottlenecks, advanced tuning techniques, and next-gen storage like the File System Access API.
+image: /headers/slow-indexeddb.jpg
 ---
+
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Why IndexedDB is slow and what to use instead
 
@@ -21,11 +24,7 @@ For [in-browser data storage](./articles/browser-database.md), you have some opt
 :::note UPDATE April 2023
 Since beginning of 2023, all modern browsers ship the **File System Access API** which allows to persistently store data in the browser with a way better performance. For [RxDB](https://rxdb.info/) you can use the [OPFS RxStorage](./rx-storage-opfs.md) to get about 4x performance improvement compared to IndexedDB.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="./files/logo/rxdb_javascript_database.svg" alt="IndexedDB Database" width="250" />
-    </a>
-</center>
+<RxdbLogo alt="IndexedDB Database" width={250} />
 :::
 
 It becomes clear that the only way to go is IndexedDB. You start developing your app and everything goes fine.
@@ -37,9 +36,7 @@ So before we start complaining, lets analyze what exactly is slow. When you run 
 
 I forked the comparison tool [here](https://pubkey.github.io/client-side-databases/database-comparison/index.html) and changed it to use one transaction per document write. And there we have it. Inserting 1k documents with one transaction per write, takes about 2 seconds. Interestingly if we increase the document size to be 100x bigger, it still takes about the same time to store them. This makes clear that the limiting factor to IndexedDB performance is the transaction handling, not the data throughput.
 
-<p align="center">
-  <img src="./files/indexeddb-transaction-throughput.png" alt="IndexedDB transaction throughput" width="700" />
-</p>
+<CenteredImage src="./files/indexeddb-transaction-throughput.png" alt="IndexedDB transaction throughput" width={700} />
 
 To fix your IndexedDB performance problems you have to make sure to use as less data transfers/transactions as possible.
 Sometimes this is easy, as instead of iterating over a documents list and calling single inserts, with RxDB you could use the [bulk methods](https://rxdb.info/rx-collection.html#bulkinsert) to store many document at once.
@@ -49,7 +46,7 @@ Another solution is to just not care about performance at all. In a few releases
 
 Switching to WebSQL (even if it is deprecated) is also not an option because, like [the comparison tool shows](https://pubkey.github.io/client-side-databases/database-comparison/index.html), it has even slower transactions.
 
-So you need a way to **make IndexedDB faster**. In the following I lay out some performance optimizations than can be made to have faster reads and writes in IndexedDB.
+So you need a way to **make IndexedDB faster**. Reading less data by [picking the right index for a query](./articles/indexeddb/indexeddb-query.md) is one part of that. In the following I lay out some performance optimizations than can be made to have faster reads and writes in IndexedDB.
 
 **HINT:** You can reproduce all performance tests [in this repo](https://github.com/pubkey/indexeddb-performance-tests). In all tests we work on a dataset of 40000 `human` documents with a random `age` between `1` and `100`.
 
@@ -78,7 +75,9 @@ This is required because the `age` field is not unique, and we need a way to che
 ```ts
 const maxAge = 25;
 let result = [];
-const tx: IDBTransaction = db.transaction([storeName], 'readonly', TRANSACTION_SETTINGS);
+const tx: IDBTransaction = db.transaction(
+    [storeName], 'readonly', TRANSACTION_SETTINGS
+);
 const store = tx.objectStore(storeName);
 const index = store.index('age-index');
 let lastDoc;
@@ -134,7 +133,7 @@ RxDB uses batched cursors in the [IndexedDB RxStorage](./rx-storage-indexeddb.md
 
 Sharding is a technique, normally used in server side databases, where the database is partitioned horizontally. Instead of storing all documents at one table/collection, the documents are split into so called **shards** and each shard is stored on one table/collection. This is done in server side architectures to spread the load between multiple physical servers which **increases scalability**.
 
-When you use IndexedDB in a browser, there is of course no way to split the load between the client and other servers. But you can still benefit from sharding. Partitioning the documents horizontally into **multiple IndexedDB stores**, has shown to have a big performance improvement in write- and read operations while only increasing initial pageload slightly.
+When you use IndexedDB in a browser, there is of course no way to split the load between the client and other servers. But you can still benefit from sharding. Partitioning the documents horizontally into **multiple IndexedDB stores**, has shown to have a big performance improvement in write- and read operations while only increasing initial page load slightly.
 
 <p align="center">
   <img src="./files/indexeddb-sharding-performance.png" alt="IndexedDB sharding performance" width="100%" />
@@ -190,10 +189,10 @@ myIndexedDBObjectStore.createIndex(
 
 ```
 
-To iterate over the index, you also use a custom crafted keyrange, depending on the last batched cursor checkpoint. Therefore the `maxLength` of `id` must be known.
+To iterate over the index, you also use a custom crafted key range, depending on the last batched cursor checkpoint. Therefore the `maxLength` of `id` must be known.
 
 ```ts
-// keyrange for normal index
+// key range for normal index
 const range = IDBKeyRange.bound(
     [25, ''],
     [Infinity, Infinity],
@@ -201,7 +200,7 @@ const range = IDBKeyRange.bound(
     false
 );
 
-// keyrange for custom index
+// key range for custom index
 const range = IDBKeyRange.bound(
     // combine both values to a single string
     25 + ''.padStart(idMaxLength, ' '),
@@ -212,9 +211,7 @@ const range = IDBKeyRange.bound(
 ```
 
 
-<p align="center">
-  <img src="./files/indexeddb-custom-index.png" alt="IndexedDB custom index" width="700" />
-</p>
+<CenteredImage src="./files/indexeddb-custom-index.png" alt="IndexedDB custom index" width={700} />
 
 As shown, using a custom index can further improve the performance of running a batched cursor by about `10%`.
 
@@ -253,7 +250,7 @@ There are some libraries that already do that:
 
 - LokiJS with the [IndexedDB Adapter](https://techfort.github.io/LokiJS/LokiIndexedAdapter.html)
 - [Absurd-SQL](https://github.com/jlongster/absurd-sql)
-- SQL.js with the [empscripten Filesystem API](https://emscripten.org/docs/api_reference/Filesystem-API.html#filesystem-api-idbfs)
+- SQL.js with the [Emscripten Filesystem API](https://emscripten.org/docs/api_reference/Filesystem-API.html#filesystem-api-idbfs)
 - [DuckDB Wasm](https://duckdb.org/2021/10/29/duckdb-wasm.html)
 
 ### In-Memory: Persistence
@@ -269,15 +266,13 @@ The only missing event that can happen is when the browser exists unexpectedly l
 
 ### In-Memory: Multi Tab Support
 
-One big difference between a web application and a 'normal' app, is that your users can use the app in multiple browser tabs at the same time. But when you have all database state in memory and only periodically write it to disc, multiple browser tabs could overwrite each other and you would loose data. This might not be a problem when you rely on a client-server replication, because the lost data might already be replicated with the backend and therefore with the other tabs. But this would not work when the client is offline.
+One big difference between a web application and a 'normal' app, is that your users can use the app in multiple browser tabs at the same time. But when you have all database state in memory and only periodically write it to disc, multiple browser tabs could overwrite each other and you would loose data. This might not be a problem when you rely on a client-server [replication](./replication.md), because the lost data might already be replicated with the backend and therefore with the other tabs. But this would not work when the client is offline.
 
 The ideal way to solve that problem, is to use a [SharedWorker](https://developer.mozilla.org/en/docs/Web/API/SharedWorker). A [SharedWorker](./rx-storage-shared-worker.md) is like a [WebWorker](https://developer.mozilla.org/en/docs/Web/API/Web_Workers_API) that runs its own JavaScript process only that the SharedWorker is shared between multiple contexts. You could create the database in the SharedWorker and then all browser tabs could request the Worker for data instead of having their own database. But unfortunately the SharedWorker API does [not work](https://caniuse.com/sharedworkers) in all browsers. Safari [dropped](https://bugs.webkit.org/show_bug.cgi?id=140344) its support and InternetExplorer or Android Chrome, never adopted it. Also it cannot be polyfilled. **UPDATE:** [Apple added SharedWorkers back in Safari 142](https://developer.apple.com/safari/technology-preview/release-notes/)
 
 Instead, we could use the [BroadcastChannel API](https://developer.mozilla.org/en-US/docs/Web/API/Broadcast_Channel_API) to communicate between tabs and then apply a [leader election](https://github.com/pubkey/broadcast-channel#using-the-leaderelection) between them. The [leader election](./leader-election.md) ensures that, no matter how many tabs are open, always one tab is the `Leader`.
 
-<p align="center">
-  <img src="./files/leader-election.gif" alt="Leader Election" width="500" />
-</p>
+<CenteredImage src="./files/leader-election.gif" alt="Leader Election" width={500} />
 
 The disadvantage is that the leader election process takes some time on the initial page load (about 150 milliseconds). Also the leader election can break when a JavaScript process is fully blocked for a longer time. When this happens, a good way is to just reload the browser tab to restart the election process.
 

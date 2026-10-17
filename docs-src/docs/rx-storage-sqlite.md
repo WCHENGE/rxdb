@@ -2,35 +2,35 @@
 title: RxDB SQLite RxStorage for Hybrid Apps
 slug: rx-storage-sqlite.html
 description: Unlock seamless persistence with SQLite RxStorage. Explore usage in hybrid apps, compare performance, and leverage advanced features like attachments.
+image: /headers/rx-storage-sqlite.jpg
 ---
+
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_DATA_NODE, PERFORMANCE_METRICS } from '@site/src/components/performance-data';
 
 import {Steps} from '@site/src/components/steps';
 import {Tabs} from '@site/src/components/tabs';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # SQLite RxStorage
 
 This [RxStorage](./rx-storage.md) is based on [SQLite](https://www.sqlite.org/index.html) and is made to work with **Node.js**, [Electron](./electron-database.md), [React Native](./react-native-database.md) and [Capacitor](./capacitor-database.md) or SQLite via webassembly in the browser. It can be used with different so called `sqliteBasics` adapters to account for the differences in the various SQLite bundles and libraries that exist.
 
-SQLite is a natural fit for RxDB because most platforms - Android, iOS, Node.js, and beyond - already ship with a built-in SQLite engine, delivering robust performance and minimal setup overhead. Its proven reliability, having powered countless applications over the years, ensures a battle-tested foundation for local data. By placing RxDB on top of SQLite, you gain advanced features suited for building interactive, offline-capable UI apps: [real-time queries](./rx-query.md#observe), reactive state updates, [conflict handling](./transactions-conflicts-revisions.md), [data encryption](./encryption.md), and straightforward [schema management](./rx-schema.md). This combination offers a unified NoSQL-like experience without sacrificing the speed and broad availability that SQLite brings.
-
+SQLite is a natural fit for RxDB because most platforms - Android, iOS, Node.js, and beyond - already ship with a built-in SQLite engine, delivering robust performance and minimal setup overhead. Its proven reliability, having powered countless applications over the years, ensures a battle-tested foundation for local data. By placing RxDB on top of SQLite, you gain advanced features suited for building interactive, [offline-capable](./offline-first.md) UI apps: [real-time queries](./rx-query.md#observe), reactive state updates, [conflict handling](./transactions-conflicts-revisions.md), [data encryption](./encryption.md), and straightforward [schema management](./rx-schema.md). This combination offers a unified NoSQL-like experience without sacrificing the speed and broad availability that SQLite brings.
 
 ## Performance comparison with other storages
 
-The SQLite storage is a bit slower compared to other Node.js based storages like the [Filesystem Storage](./rx-storage-filesystem-node.md) because wrapping SQLite has a bit of overhead and sending data from the JavaScript process to SQLite and backwards increases the latency. However for most hybrid apps the SQLite storage is the best option because it can leverage the SQLite version that comes already installed on the smartphones OS (iOS and android). Also for desktop electron apps it can be a viable solution because it is easy to ship SQLite together inside of the electron bundle.
+The SQLite storage is a bit slower compared to other Node.js based storages like the [Filesystem Storage](./rx-storage-filesystem-node.md) because wrapping SQLite has a bit of overhead and sending data from the JavaScript process to SQLite and backwards increases the latency. However for most hybrid apps the SQLite storage is the best option because it can leverage the SQLite version that comes already installed on the smartphone's OS (iOS and android). Also for desktop Electron apps it can be a viable solution because it is easy to ship SQLite together inside of the Electron bundle.
 
-<p align="center">
-  <img src="./files/rx-storage-performance-node.png" alt="SQLite performance - Node.js" width="700" />
-</p>
-
+<PerformanceChart title="Node/Native Storages" data={PERFORMANCE_DATA_NODE} metrics={PERFORMANCE_METRICS} />
 
 ## Using the SQLite RxStorage
 
 There are two versions of the SQLite storage available for RxDB:
 
-- The **trial version** which comes directly shipped with RxDB Core. It contains an SQLite storage that allows you to try out RxDB on devices that support SQLite, like React Native or Electron. While the trial version does pass the full RxDB storage test-suite, it is not made for production. It is not using indexes, has no attachment support, is limited to store 300 documents and fetches the whole storage state to run queries in memory. **Use it for evaluation and prototypes only!**
+- The **trial version** which comes directly shipped with RxDB Core. It contains an SQLite storage that allows you to try out RxDB on devices that support SQLite, like React Native or Electron. While the trial version does pass the full RxDB storage test-suite, it is not made for production. It is not using indexes, has no [attachment support](./rx-attachment.md), is limited to store 500 non-deleted documents and fetches the whole storage state to run queries in memory. **Use it for evaluation and prototypes only!**
 
 - The **[RxDB Premium 👑](/premium/) version** which contains the full production-ready SQLite storage. It contains a full load of performance optimizations and full query support. To use the SQLite storage you have to import `getRxStorageSQLite` from the [RxDB Premium 👑](/premium/) package and then add the correct `sqliteBasics` adapter depending on which sqlite module you want to use. This can then be used as storage when creating the [RxDatabase](./rx-database.md). In the following you can see some examples for some of the most common SQLite packages.
-
 
 <Tabs>
 
@@ -79,20 +79,15 @@ const myRxDatabase = await createRxDatabase({
 });
 ```
 
-
 </Tabs>
-
 
 In the following, all examples are shown with the premium SQLite storage. Still they work the same with the trial version.
 
-
-
 ## SQLiteBasics
 
-Different SQLite libraries have different APIs to create and access the SQLite database. Therefore the library must be massaged to work with the RxDB SQlite storage. This is done in a so called `SQLiteBasics` interface. RxDB directly ships with a wide range of these for various SQLite libraries that are commonly used. Also creating your own one is pretty simple, check the source code of the existing ones for that.
+Different SQLite libraries have different APIs to create and access the SQLite database. Therefore the library must be massaged to work with the RxDB SQlite storage. This is done in a so-called `SQLiteBasics` interface. RxDB directly ships with a wide range of these for various SQLite libraries that are commonly used. Also creating your own one is pretty simple, check the source code of the existing ones for that.
 
 For example for the `sqlite3` npm library we have the `getSQLiteBasicsNode()` implementation. For `node:sqlite` we have the `getSQLiteBasicsNodeNative()` implementation and so on..
-
 
 ## Using the SQLite RxStorage with different SQLite libraries
 
@@ -150,7 +145,7 @@ const myRxDatabase = await createRxDatabase({
 
 ### Usage with Webassembly in the Browser
 
-In the browser you can use the [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) package to run sQLite in Webassembly. The wa-sqlite module also allows to use persistence with IndexedDB or OPFS. Notice that in general SQLite via Webassembly is slower compared to other storages like [IndexedDB](./rx-storage-indexeddb.md) or [OPFS](./rx-storage-opfs.md) because sending data from the main thread to wasm and backwards is slow in the browser. Have a look the [performance comparison](./rx-storage-performance.md).
+In the browser you can use the [wa-sqlite](https://github.com/rhashimoto/wa-sqlite) package to run SQLite in Webassembly. The wa-sqlite module also allows using persistence with IndexedDB or OPFS. Notice that in general SQLite via Webassembly is slower compared to other storages like [IndexedDB](./rx-storage-indexeddb.md) or [OPFS](./rx-storage-opfs.md) because sending data from the main thread to wasm and backwards is slow in the browser. Have a look at the [performance comparison](./rx-storage-performance.md).
 
 ```ts
 import {
@@ -182,8 +177,13 @@ const myRxDatabase = await createRxDatabase({
 
 ### Usage with **React Native**
 
-1. Install the [react-native-quick-sqlite npm module](https://www.npmjs.com/package/react-native-quick-sqlite)
-2. Import `getSQLiteBasicsQuickSQLite` from the SQLite plugin and use it to create a [RxDatabase](./rx-database.md):
+<Steps>
+
+#### 1. Install the package
+Install the [react-native-quick-sqlite npm module](https://www.npmjs.com/package/react-native-quick-sqlite)
+
+#### 2. Create the Database
+Import `getSQLiteBasicsQuickSQLite` from the SQLite plugin and use it to create a [RxDatabase](./rx-database.md):
 
 ```ts
 import {
@@ -198,7 +198,8 @@ import { open } from 'react-native-quick-sqlite';
 // create database
 const myRxDatabase = await createRxDatabase({
     name: 'exampledb',
-    multiInstance: false, // <- Set multiInstance to false when using RxDB in React Native
+    // Set multiInstance to false for React Native
+    multiInstance: false,
     storage: getRxStorageSQLite({
         sqliteBasics: getSQLiteBasicsQuickSQLite(open)
     })
@@ -218,7 +219,13 @@ const storage = getRxStorageSQLite({
 });
 ```
 
+</Steps>
+
 ### Usage with **Expo SQLite**
+
+:::info
+For Expo apps, the **[Expo Filesystem RxStorage](./rx-storage-filesystem-expo.md)** exists and has significantly better performance compared to SQLite.
+:::
 
 Notice that [expo-sqlite](https://www.npmjs.com/package/expo-sqlite) cannot be used on android (but it works on iOS) if you use Expo SDK version 50 or older. Please update to Version 50 or newer to use it.
 
@@ -266,8 +273,13 @@ const myRxDatabase = await createRxDatabase({
 
 ### Usage with **SQLite Capacitor**
 
-1. Install the [sqlite capacitor npm module](https://github.com/capacitor-community/sqlite)
-2. Add the iOS database location to your capacitor config
+<Steps>
+
+#### 1. Install the sqlite capacitor npm module
+Install the [sqlite capacitor npm module](https://github.com/capacitor-community/sqlite)
+
+#### 2. Add the iOS database location
+Add the iOS database location to your capacitor config
 
 ```json
 {
@@ -279,8 +291,8 @@ const myRxDatabase = await createRxDatabase({
 }
 ```
 
-3. Use the function `getSQLiteBasicsCapacitor` to get the capacitor sqlite wrapper.
-
+#### 3. Get the capacitor sqlite wrapper
+Use the function `getSQLiteBasicsCapacitor` to get the capacitor sqlite wrapper.
 
 ```ts
 import {
@@ -317,11 +329,20 @@ const myRxDatabase = await createRxDatabase({
 });
 ```
 
+</Steps>
+
 ### Usage with Tauri SQLite
 
-1. Add the [Tauri SQL plugin](https://tauri.app/plugin/sql/#setup) to your Tauri project.
-2. Make sure to add `sqlite` as your database engine by running `cargo add tauri-plugin-sql --features sqlite` inside `src-tauri`.
-3. Use the `getSQLiteBasicsTauri` function to get the Tauri SQLite wrapper.
+<Steps>
+
+#### 1. Add the Tauri SQL plugin
+Add the [Tauri SQL plugin](https://tauri.app/plugin/sql/#setup) to your Tauri project.
+
+#### 2. Add sqlite as your database engine
+Make sure to add `sqlite` as your database engine by running `cargo add tauri-plugin-sql --features sqlite` inside `src-tauri`.
+
+#### 3. Use the Tauri SQLite wrapper
+Use the `getSQLiteBasicsTauri` function to get the Tauri SQLite wrapper.
 
 ```ts
 import {
@@ -330,7 +351,7 @@ import {
 import {
     getRxStorageSQLite,
     getSQLiteBasicsTauri
-} from 'rxdb/plugins/storage-sqlite';
+} from 'rxdb-premium/plugins/storage-sqlite';
 import sqlite3 from '@tauri-apps/plugin-sql';
 
 const myRxDatabase = await createRxDatabase({
@@ -340,6 +361,8 @@ const myRxDatabase = await createRxDatabase({
     })
 });
 ```
+
+</Steps>
 
 ## Database Connection
 
@@ -382,7 +405,20 @@ const storage = getRxStorageSQLite({
 });
 ```
 
+## FAQ
 
+<Faq>
+<FaqItem question="Does SQLite natively support querying and parsing JSON objects?">
+
+Yes, starting natively from version `3.38.0`, SQLite includes comprehensive built-in core JSON functions like `JSON_EXTRACT`. The **[RxDB SQLite Storage](./rx-storage.md)** engine utilizes these exact JSON extension methods to seamlessly run complex NoSQL document queries, indexes, and sorting operations directly within the SQLite runtime, bridging the gap between flat tabular paradigms and rich document store flexibility.
+
+</FaqItem>
+<FaqItem question="How can you save and export a SQLite database from a local environment?">
+
+You can save and export an active SQLite database by closing the connection and copying its physical `.sqlite` storage file traversing the underlying OS filesystem. If you are operating within a strict sandboxed web environment using WebAssembly, you must extract the SQLite file via exactly matching the `wa-sqlite` export streams, or rely on **[RxDB](./rx-database.md)** JSON export plugins to seamlessly migrate data out of local constraints into raw JSON streams regardless of the active SQLite engine.
+
+</FaqItem>
+</Faq>
 
 ## Related
 - [React Native Databases](./react-native-database.md)

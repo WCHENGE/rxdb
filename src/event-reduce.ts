@@ -3,8 +3,6 @@ import {
     calculateActionName,
     runAction,
     QueryParams,
-    QueryMatcher,
-    DeterministicSortComparator,
     StateResolveFunctionInput,
     ChangeEvent
 } from 'event-reduce-js';
@@ -66,37 +64,25 @@ export function getQueryParams<RxDocType>(
              * Create a custom sort comparator
              * that uses the hooks to ensure
              * we send for example compressed documents to be sorted by compressed queries.
+             *
+             * @performance
+             * Avoid creating intermediate wrapper objects on every comparison call.
+             * The sortComparator and queryMatcher are called directly.
              */
-            const sortComparator = getSortComparator(
+            const useSortComparator = getSortComparator(
                 collection.schema.jsonSchema,
                 normalizedMangoQuery
             );
-
-            const useSortComparator: DeterministicSortComparator<RxDocType> = (docA: RxDocType, docB: RxDocType) => {
-                const sortComparatorData = {
-                    docA,
-                    docB,
-                    rxQuery
-                };
-                return sortComparator(sortComparatorData.docA, sortComparatorData.docB);
-            };
 
             /**
              * Create a custom query matcher
              * that uses the hooks to ensure
              * we send for example compressed documents to match compressed queries.
              */
-            const queryMatcher = getQueryMatcher(
+            const useQueryMatcher = getQueryMatcher(
                 collection.schema.jsonSchema,
                 normalizedMangoQuery
             );
-            const useQueryMatcher: QueryMatcher<RxDocumentData<RxDocType>> = (doc: RxDocumentData<RxDocType>) => {
-                const queryMatcherData = {
-                    doc,
-                    rxQuery
-                };
-                return queryMatcher(queryMatcherData.doc);
-            };
 
             const ret: QueryParams<any> = {
                 primaryKey: rxQuery.collection.schema.primaryPath as any,
@@ -123,7 +109,16 @@ export function calculateNewResults<RxDocumentType>(
     }
     const queryParams = getQueryParams(rxQuery);
     const previousResults: RxDocumentType[] = ensureNotFalsy(rxQuery._result).docsData.slice(0);
-    const previousResultsMap: Map<string, RxDocumentType> = ensureNotFalsy(rxQuery._result).docsDataMap;
+    /**
+     * Copy the map to avoid mutating the cached docsDataMap on the result object.
+     * runAction() modifies the map in-place (adds/removes entries),
+     * which would corrupt the cached map if a later event triggers runFullQueryAgain
+     * and the full re-exec returns the same results (keeping the old result object).
+     * On subsequent event-reduce calls, the corrupted map would cause incorrect
+     * results because insertAtSortPosition checks keyDocumentMap.has(docId)
+     * to decide whether to skip insertion.
+     */
+    const previousResultsMap: Map<string, RxDocumentType> = new Map(ensureNotFalsy(rxQuery._result).docsDataMap);
     let changed: boolean = false;
 
 

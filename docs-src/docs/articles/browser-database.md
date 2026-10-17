@@ -2,17 +2,16 @@
 title: Benefits of RxDB & Browser Databases
 slug: browser-database.html
 description: Find out why RxDB is the go-to solution for browser databases. See how it boosts performance, simplifies replication, and powers real-time UIs.
+image: /headers/browser-database.jpg
 ---
+
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # RxDB: The benefits of Browser Databases
 In the world of web development, efficient data management is a cornerstone of building successful and performant applications. The ability to store data directly in the browser brings numerous advantages, such as caching, offline accessibility, simplified replication of database state, and real-time application development. In this article, we will explore [RxDB](https://rxdb.info/), a powerful browser JavaScript database, and understand why it is an excellent choice for implementing a browser database solution.
 
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Browser Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Browser Database" />
 
 ## Why you might want to store data in the browser
 There are compelling reasons to consider storing data in the browser:
@@ -39,10 +38,10 @@ Browser databases offer the advantage of running queries locally, resulting in l
 Storing data in the browser reduces the initial application start time. Instead of waiting for data to be fetched from the server, the application can leverage the [local database](./local-database.md), resulting in faster initialization and improved user satisfaction right from the start.
 
 ### Easier integration with JavaScript frameworks
-Browser databases, including [RxDB](https://rxdb.info/), seamlessly integrate with popular JavaScript frameworks such as [Angular](./angular-database.md), [React.js](./react-database.md), [Vue.js](./vue-database.md), and Svelte. This integration allows developers to leverage the power of a database while working within the familiar environment of their preferred framework, enhancing productivity and ease of development.
+Browser databases, including [RxDB](https://rxdb.info/), seamlessly integrate with popular JavaScript frameworks such as [Angular](./angular-database.md), [React.js](./react-database.md) (see [IndexedDB in React](./react-indexeddb.md)), [Vue.js](./vue-database.md), and Svelte. This integration allows developers to leverage the power of a database while working within the familiar environment of their preferred framework, enhancing productivity and ease of development.
 
 ### Store local data with encryption
-Security is a crucial aspect of data storage, especially when handling sensitive information. Browser databases, like RxDB, offer the capability to store local data with encryption, ensuring the confidentiality and protection of sensitive user data.
+Security is a crucial aspect of data storage, especially when handling sensitive information. Browser databases, like RxDB, offer the capability to store local data with [encryption](../encryption.md), ensuring the confidentiality and protection of sensitive user data.
 
 ### Using a local database for state management
 Utilizing a local browser database for state management eliminates the need for traditional state management libraries like Redux or NgRx. This approach simplifies the application's architecture by leveraging the database's capabilities to handle state-related operations efficiently.
@@ -58,7 +57,7 @@ When data is stored in the browser, it becomes portable and always accessible by
 
 
 ## Why SQL databases like SQLite are not a good fit for the browser
-While SQL databases, such as SQLite, excel in server-side scenarios, they are not always the optimal choice for browser-based applications. Here are some reasons why SQL databases may not be the best fit for the browser:
+While SQL databases, such as [SQLite](../rx-storage-sqlite.md), excel in server-side scenarios, they are not always the optimal choice for browser-based applications. Here are some reasons why SQL databases may not be the best fit for the browser:
 
 ### Push/Pull based vs. reactive
 SQL databases typically rely on a push/pull mechanism, where the server pushes updates to the client or the client pulls data from the server. This approach is not inherently reactive and requires additional effort to implement real-time data updates. In contrast, browser databases like [RxDB](https://rxdb.info/) provide built-in reactive mechanisms, allowing the application to react to data changes seamlessly.
@@ -95,7 +94,7 @@ RxDB utilizes NoSQL [JSON documents](./json-database.md), which align naturally 
 TypeScript is widely used in modern JavaScript development. [NoSQL databases](./in-memory-nosql-database.md), including RxDB, offer excellent TypeScript support, making it easier to build type-safe applications and leverage the benefits of static typing.
 
 ### Observable document fields
-RxDB allows observing individual document fields, providing granular reactivity. This feature enables efficient tracking of specific data changes and fine-grained UI updates, optimizing performance and responsiveness.
+RxDB allows observing individual document fields, providing granular [reactivity](../reactivity.md). This feature enables efficient tracking of specific data changes and fine-grained UI updates, optimizing performance and responsiveness.
 
 ### Made in JavaScript, optimized for JavaScript applications
 RxDB is built entirely in JavaScript, optimized for JavaScript applications. This ensures seamless integration with JavaScript codebases and maximizes performance within the browser environment.
@@ -106,9 +105,7 @@ RxDB employs the EventReduce Algorithm to optimize observed queries. This algori
 ### Built-in multi-tab support
 RxDB natively supports multi-tab applications, allowing data synchronization and replication across different tabs or instances of the same application. This feature ensures consistent data across the application and enhances collaboration and real-time experiences.
 
-<p align="center">
-  <img src="../files/multiwindow.gif" alt="multi tab support" width="450" />
-</p>
+<CenteredImage src="../files/multiwindow.gif" alt="multi tab support" width={450} />
 
 ### Handling of schema changes
 RxDB excels in handling schema changes, even when data is stored on multiple client devices. It provides mechanisms to handle schema migrations seamlessly, ensuring data integrity and compatibility as the application evolves.
@@ -122,9 +119,7 @@ RxDB offers a flexible storage layer, enabling code reuse across different platf
 ### Replication Algorithm for compatibility with any backend
 RxDB incorporates a [Replication Algorithm](../replication.md) that is open-source and can be made compatible with various backend systems. This compatibility allows seamless data synchronization with different backend architectures, such as own servers, [Firebase](../replication-firestore.md), [CouchDB](../replication-couchdb.md), [NATS](../replication-nats.md) or [WebSocket](../replication-websocket.md).
 
-<p align="center">
-  <img src="../files/database-replication.png" alt="database replication" width="200" />
-</p>
+<CenteredImage src="../files/database-replication.png" alt="database replication" width={200} />
 
 
 ## Follow Up

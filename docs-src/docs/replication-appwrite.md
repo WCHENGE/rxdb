@@ -2,16 +2,17 @@
 title: Appwrite Realtime Sync for Local-First Apps
 slug: replication-appwrite.html
 description: Sync RxDB with Appwrite for local-first apps. Supports real-time updates, offline mode, conflict resolution, and secure push/pull replication.
+image: /headers/replication-appwrite.jpg
 ---
 
 import {Tabs} from '@site/src/components/tabs';
 import {Steps} from '@site/src/components/steps';
 import {VideoBox} from '@site/src/components/video-box';
-import {RxdbMongoDiagramPlain} from '@site/src/components/mongodb-sync';
+import {SyncDiagram} from '@site/src/components/sync-diagram';
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
-
-
-# RxDB Appwrite Replication (beta)
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/appwrite-small.svg" alt="Appwrite" />}>RxDB Appwrite Replication</HeadlineWithIcon>
 
 This replication plugin allows you to synchronize documents between RxDB and an <a href="https://appwrite.io/" rel="noopener nofollow">Appwrite</a> server. It supports both push and pull replication, live updates via Appwrite's real-time subscriptions, [offline-capability](./offline-first.md) and [conflict resolution](./transactions-conflicts-revisions.md).
 
@@ -24,7 +25,7 @@ This replication plugin allows you to synchronize documents between RxDB and an 
 ## Why you should use RxDB with Appwrite?
 
 **Appwrite** is a secure, open-source backend server that simplifies backend tasks like user authentication, storage, database management, and real-time APIs.  
-**RxDB** is a reactive database for the frontend that offers offline-first capabilities and rich client-side data handling.
+**[RxDatabase](./rx-database.md)** is a reactive database for the frontend that offers offline-first capabilities and rich client-side data handling.
 
 Combining the two provides several benefits:
 
@@ -41,7 +42,7 @@ Combining the two provides several benefits:
 <br />
 <br />
 
-<RxdbMongoDiagramPlain showServer={false} dbIcon="/files/icons/appwrite.svg" dbLabel="" />
+<SyncDiagram server={false} backend={{ icon: "/files/icons/appwrite.svg" }} clientConnectionLabel="Realtime API" simulateOffline />
 
 
 ## Preparing the Appwrite Server
@@ -54,7 +55,7 @@ You can either use the appwrite cloud or <a href="https://appwrite.io/docs/advan
 
 <Tabs>
 
-#### Self-Hosted Appwrite Instance
+#### Self-Hosted
 
 <Steps>
 
@@ -208,7 +209,6 @@ const collection = db.humans;
 ```ts
 const client = new Client();
 client.setEndpoint('https://cloud.appwrite.io/v1');
-client.setEndpointRealtime('https://cloud.appwrite.io/v1');
 client.setProject('YOUR_APPWRITE_PROJECT_ID');
 ```
 
@@ -217,7 +217,6 @@ client.setProject('YOUR_APPWRITE_PROJECT_ID');
 ```ts
 const client = new Client();
 client.setEndpoint('http://localhost/v1');
-client.setEndpointRealtime('http://localhost/v1');
 client.setProject('YOUR_APPWRITE_PROJECT_ID');
 ```
 
@@ -262,6 +261,26 @@ The `RxAppwriteReplicationState` which is returned from `replicateAppwrite()` al
 </p>
 
 
+
+## FAQ
+
+<Faq>
+<FaqItem question="Does Appwrite support multiple databases and subcollections?">
+
+Yes, Appwrite supports creating multiple top-level databases within a single project, which cleanly partition collections. However, Appwrite is a rigid NoSQL document store that does *not* support nested subcollections (unlike Firebase). When utilizing the **[RxDB Appwrite Replication](./replication.md)** plugin, your local RxDB schema must mirror this flat topology precisely, keeping all documents completely devoid of complex nested relationships.
+
+</FaqItem>
+<FaqItem question="What database driver does Appwrite use under the hood?">
+
+Appwrite uses MariaDB (a highly performant MySQL fork) as its core backing database driver. To offer developers a flat NoSQL experience, Appwrite abstracts the MariaDB relational complexity behind a unified Document API. This architectural mapping allows **[RxDB](./rx-database.md)** to replicate data effortlessly into Appwrite via standard REST endpoints without ever dealing with strict SQL table mappings or migrations.
+
+</FaqItem>
+<FaqItem question="Does Appwrite feature native real-time sync for offline apps?">
+
+Appwrite natively provides robust WebSocket subscriptions allowing clients to receive real-time document events while the network is active. However, Appwrite does *not* feature a built-in offline-first caching or background-sync engine. To achieve true offline capabilities, you must mount the **[RxDB Appwrite Replication](./replication.md)** plugin on the client. RxDB handles all local caching, queues offline writes securely, and automatically pushes local mutations to Appwrite when connectivity returns.
+
+</FaqItem>
+</Faq>
 
 ## Limitations of the Appwrite Replication Plugin
 

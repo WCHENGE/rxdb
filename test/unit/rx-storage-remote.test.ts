@@ -1,7 +1,7 @@
 
 import assert from 'assert';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     createRxDatabase,
     fillWithDefaultSettings,
@@ -11,8 +11,7 @@ import {
     schemaObjects,
     schemas,
     humansCollection,
-    isNode,
-    nextPort
+    isNode
 } from '../../plugins/test-utils/index.mjs';
 import {
     getRxStorageRemoteWebsocket,
@@ -21,8 +20,9 @@ import {
 import { getRxStorageMemory } from '../../plugins/storage-memory/index.mjs';
 import { wrappedValidateAjvStorage } from '../../plugins/validate-ajv/index.mjs';
 import { assertThrows } from 'async-test-util';
+import { nextPort } from '../helper/port-manager.ts';
 
-describeParallel('rx-storage-remote.test.ts', () => {
+describe('rx-storage-remote.test.ts', () => {
     /**
      * Notice: Most use cases for the remote storage
      * are tests by having a full unit-test run where all
@@ -400,6 +400,45 @@ describeParallel('rx-storage-remote.test.ts', () => {
             );
 
             await database.close();
+        });
+    });
+    describe('remove()', () => {
+        it('should complete the changeStream observable when remove() is called', async () => {
+            const port = await nextPort();
+            const server = await startRxStorageRemoteWebsocketServer({
+                port,
+                storage: memoryStorageWithValidation
+            });
+            assert.ok(server);
+
+            const storage = getRxStorageRemoteWebsocket({
+                url: 'ws://localhost:' + port,
+                mode: 'storage'
+            });
+            const storageInstance = await storage.createStorageInstance({
+                databaseInstanceToken: randomToken(10),
+                databaseName: randomToken(10),
+                collectionName: randomToken(10),
+                devMode: true,
+                multiInstance: false,
+                options: {},
+                schema: fillWithDefaultSettings(schemas.human)
+            });
+
+            let completed = false;
+            storageInstance.changeStream().subscribe({
+                complete() {
+                    completed = true;
+                }
+            });
+
+            await storageInstance.remove();
+
+            /**
+             * The changeStream() observable must complete
+             * after calling remove(), just like it does after close().
+             */
+            assert.strictEqual(completed, true);
         });
     });
     describe('custom requests', () => {

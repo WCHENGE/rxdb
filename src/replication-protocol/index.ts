@@ -20,10 +20,12 @@ import type {
     BulkWriteRow,
     ById,
     DocumentsWithCheckpoint,
+    EventBulk,
     RxConflictHandler,
     RxDocumentData,
     RxReplicationHandler,
     RxReplicationWriteToMasterRow,
+    RxStorageChangeEvent,
     RxStorageInstance,
     RxStorageInstanceReplicationInput,
     RxStorageInstanceReplicationState,
@@ -39,11 +41,15 @@ import {
     getCheckpointKey
 } from './checkpoint.ts';
 import { startReplicationDownstream } from './downstream.ts';
-import { docStateToWriteDoc, getUnderlyingPersistentStorage, writeDocToDocState } from './helper.ts';
+import {
+    docStateToWriteDoc,
+    getUnderlyingPersistentStorage,
+    writeDocToDocState
+} from './helper.ts';
 import { startReplicationUpstream } from './upstream.ts';
 import { fillWriteDataForAttachmentsChange } from '../plugins/attachments/index.ts';
 import { getChangedDocumentsSince } from '../rx-storage-helper.ts';
-import { newRxError } from '../rx-error.ts';
+import { rxStorageWriteErrorToRxError } from '../rx-error.ts';
 
 
 export * from './checkpoint.ts';
@@ -54,6 +60,12 @@ export * from './conflicts.ts';
 export * from './helper.ts';
 export * from './default-conflict-handler.ts';
 
+
+/**
+ * Used in tests to ensure all states are cleaned up
+ * and we have no memory leak.
+ */
+export const OPEN_REPLICATION_STATES = new Set<RxStorageInstanceReplicationState<any>>();
 
 export function replicateRxStorageInstance<RxDocType>(
     input: RxStorageInstanceReplicationInput<RxDocType>
@@ -66,6 +78,7 @@ export function replicateRxStorageInstance<RxDocType>(
         primaryPath: getPrimaryFieldOfPrimaryKey(input.forkInstance.schema.primaryKey),
         hasAttachments: !!input.forkInstance.schema.attachments,
         input,
+        skipStoringPullMeta: input.skipStoringPullMeta,
         checkpointKey: checkpointKeyPromise,
         downstreamBulkWriteFlag: checkpointKeyPromise.then(checkpointKey => 'replication-downstream-' + checkpointKey),
         events: {
@@ -110,6 +123,7 @@ export function replicateRxStorageInstance<RxDocType>(
         checkpointQueue: PROMISE_RESOLVE_VOID,
         lastCheckpointDoc: {}
     };
+    OPEN_REPLICATION_STATES.add(state);
 
     startReplicationDownstream(state);
     startReplicationUpstream(state);
@@ -122,10 +136,10 @@ export function awaitRxStorageReplicationFirstInSync(
     return firstValueFrom(
         combineLatest([
             state.firstSyncDone.down.pipe(
-                filter(v => !!v)
+                filter((v: boolean) => !!v)
             ),
             state.firstSyncDone.up.pipe(
-                filter(v => !!v)
+                filter((v: boolean) => !!v)
             )
         ])
     ).then(() => { });
@@ -184,11 +198,11 @@ export function rxStorageInstanceToReplicationHandler<RxDocType, MasterCheckpoin
     const primaryPath = getPrimaryFieldOfPrimaryKey(instance.schema.primaryKey);
     const replicationHandler: RxReplicationHandler<RxDocType, MasterCheckpointType> = {
         masterChangeStream$: instance.changeStream().pipe(
-            mergeMap(async (eventBulk) => {
+            mergeMap(async (eventBulk: EventBulk<RxStorageChangeEvent<RxDocType>, MasterCheckpointType>) => {
                 const ret: DocumentsWithCheckpoint<RxDocType, MasterCheckpointType> = {
                     checkpoint: eventBulk.checkpoint,
                     documents: await Promise.all(
-                        eventBulk.events.map(async (event) => {
+                        eventBulk.events.map(async (event: RxStorageChangeEvent<RxDocType>) => {
                             let docData = writeDocToDocState(event.documentData, hasAttachments, keepMeta);
                             if (hasAttachments) {
                                 docData = await fillWriteDataForAttachmentsChange(
@@ -230,7 +244,7 @@ export function rxStorageInstanceToReplicationHandler<RxDocType, MasterCheckpoin
                                     instance,
                                     clone(docData),
                                     /**
-                                     * Notice the the master never knows
+                                     * Notice that the master never knows
                                      * the client state of the document.
                                      * Therefore we always send all attachments data.
                                      */
@@ -299,10 +313,15 @@ export function rxStorageInstanceToReplicationHandler<RxDocType, MasterCheckpoin
 
                 result.error.forEach(err => {
                     if (err.status !== 409) {
-                        throw newRxError('SNH', {
-                            name: 'non conflict error',
-                            error: err as any
-                        });
+
+                        /**
+                         * Non-conflict write errors (e.g. status 422 schema validation errors)
+                         * are real errors that must be surfaced to the caller with a meaningful
+                         * message. Throwing SNH here hides the actual cause (e.g. a document
+                         * with a null value in a required string field during migration).
+                         * @see https://github.com/pubkey/rxdb/issues/8607
+                         */
+                        throw rxStorageWriteErrorToRxError(err);
                     } else {
                         conflicts.push(
                             writeDocToDocState(ensureNotFalsy(err.documentInDb), hasAttachments, keepMeta)
@@ -321,6 +340,8 @@ export function rxStorageInstanceToReplicationHandler<RxDocType, MasterCheckpoin
 export async function cancelRxStorageReplication(
     replicationState: RxStorageInstanceReplicationState<any>
 ) {
+    OPEN_REPLICATION_STATES.delete(replicationState);
+
     replicationState.events.canceled.next(true);
     replicationState.events.active.up.complete();
     replicationState.events.active.down.complete();

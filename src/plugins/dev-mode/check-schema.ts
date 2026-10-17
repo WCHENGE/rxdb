@@ -5,7 +5,10 @@
 import {
     newRxError
 } from '../../rx-error.ts';
-import { getPrimaryFieldOfPrimaryKey, getSchemaByObjectPath } from '../../rx-schema-helper.ts';
+import {
+    getPrimaryFieldOfPrimaryKey,
+    getSchemaByObjectPath
+} from '../../rx-schema-helper.ts';
 import type {
     CompositePrimaryKey,
     JsonSchema,
@@ -14,8 +17,9 @@ import type {
     TopLevelProperty
 } from '../../types/index.d.ts';
 import {
-    appendToArray,
-    flattenObject, getProperty, isMaybeReadonlyArray,
+    flattenObject,
+    getProperty,
+    isMaybeReadonlyArray,
     trimDots
 } from '../../plugins/utils/index.ts';
 import { rxDocumentProperties } from './entity-properties.ts';
@@ -37,7 +41,7 @@ export function checkFieldNameRegex(fieldName: string) {
         });
     }
 
-    const regexStr = '^[a-zA-Z](?:[[a-zA-Z0-9_]*]?[a-zA-Z0-9])?$';
+    const regexStr = '^[a-zA-Z](?:[a-zA-Z0-9_]*[a-zA-Z0-9])?$';
     const regex = new RegExp(regexStr);
     if (
         /**
@@ -310,10 +314,11 @@ export function checkSchema(jsonSchema: RxJsonSchema<any>) {
     validateFieldsDeep(jsonSchema);
     checkPrimaryKey(jsonSchema);
 
+    const primaryPath = getPrimaryFieldOfPrimaryKey(jsonSchema.primaryKey);
     Object.keys(jsonSchema.properties).forEach(key => {
         const value: any = jsonSchema.properties[key];
         // check primary
-        if (key === jsonSchema.primaryKey) {
+        if (key === primaryPath) {
             if (jsonSchema.indexes && jsonSchema.indexes.includes(key)) {
                 throw newRxError('SC13', {
                     value,
@@ -393,6 +398,13 @@ export function checkSchema(jsonSchema: RxJsonSchema<any>) {
                         const maxLength = schemaPart.maxLength;
                         if (!maxLength) {
                             throw newRxError('SC34', {
+                                index,
+                                field: fieldName,
+                                schema: jsonSchema
+                            });
+                        }
+                        if (maxLength > 2048) {
+                            throw newRxError('SC42', {
                                 index,
                                 field: fieldName,
                                 schema: jsonSchema
@@ -484,6 +496,7 @@ export function checkSchema(jsonSchema: RxJsonSchema<any>) {
             return split.join('.');
         })
         .filter(key => key !== '')
+        .filter(key => key.indexOf('.patternProperties.') === -1) // regex in patternProperties not interpreted as array index
         .filter((elem, pos, arr) => arr.indexOf(elem) === pos) // unique
         .filter(key => { // check if this path defines an index
             const value = getProperty(jsonSchema, key);
@@ -502,7 +515,7 @@ export function checkSchema(jsonSchema: RxJsonSchema<any>) {
     (jsonSchema.indexes || [])
         .reduce((indexPaths: string[], currentIndex) => {
             if (isMaybeReadonlyArray(currentIndex)) {
-                appendToArray(indexPaths, currentIndex);
+                indexPaths = indexPaths.concat(currentIndex);
             } else {
                 indexPaths.push(currentIndex);
             }
@@ -544,6 +557,24 @@ export function checkSchema(jsonSchema: RxJsonSchema<any>) {
                 const schemaObj = getProperty(jsonSchema, realPath);
                 if (!schemaObj || typeof schemaObj !== 'object') {
                     throw newRxError('SC28', {
+                        field: propPath,
+                        schema: jsonSchema
+                    });
+                }
+            });
+
+        /**
+         * Encrypted fields must not be nested inside other encrypted fields.
+         * When a parent path is encrypted, the whole object gets encrypted
+         * as a single string so child paths cannot also be encrypted separately.
+         */
+        jsonSchema.encrypted
+            .forEach(propPath => {
+                const hasEncryptedParent = jsonSchema.encrypted!.some(
+                    otherPath => otherPath !== propPath && propPath.startsWith(otherPath + '.')
+                );
+                if (hasEncryptedParent) {
+                    throw newRxError('SC43', {
                         field: propPath,
                         schema: jsonSchema
                     });

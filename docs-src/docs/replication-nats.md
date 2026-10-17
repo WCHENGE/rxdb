@@ -2,9 +2,13 @@
 title: RxDB & NATS - Realtime Sync
 slug: replication-nats.html
 description: Seamlessly sync your RxDB data with NATS for real-time, two-way replication. Handle conflicts, errors, and retries with ease.
+image: /headers/replication-nats.jpg
 ---
 
-# Replication with NATS
+import {Steps} from '@site/src/components/steps';
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/nats.svg" alt="NATS" />}>Replication with NATS</HeadlineWithIcon>
 
 With this RxDB plugin you can run a two-way realtime replication with a [NATS](https://nats.io/) server.
 
@@ -26,9 +30,24 @@ The easiest way to start a compatible NATS server is to use the official docker 
 
 ## Usage
 
-To start the replication, import the `replicateNats()` method from the RxDB plugin and call it with the collection
+<Steps>
+
+### Install the nats package
+
+```bash
+npm install nats --save
+```
+
+### Start the Replication
+
+To start the replication, import the
+`replicateNats()` method from the RxDB
+plugin and call it with the collection
 that must be replicated.
-The replication runs *per RxCollection*, you can replicate multiple RxCollections by starting a new replication for each of them.
+The replication runs
+*per [RxCollection](./rx-collection.md)*,
+you can replicate multiple RxCollections by
+starting a new replication for each of them.
 
 ```typescript
 import {
@@ -42,7 +61,8 @@ const replicationState = replicateNats({
     streamName: 'stream-for-replication-A',
     /**
      * The subject prefix determines how the documents are stored in NATS.
-     * For example the document with id 'alice' will have the subject 'foobar.alice'
+     * For example the document with id 'alice'
+     * will have the subject 'foobar.alice'
      */
     subjectPrefix: 'foobar',
     connection: { servers: 'localhost:4222' },
@@ -56,6 +76,17 @@ const replicationState = replicateNats({
 });
 ```
 
+</Steps>
+
+
 ## Handling deletes
 
-RxDB requires you to never [fully delete documents](./replication.md#data-layout-on-the-server). This is needed to be able to replicate the deletion state of a document to other instances. The NATS replication will set a boolean `_deleted` field to all documents to indicate the deletion state. You can change this by setting a different `deletedField` in the sync options.
+RxDB requires you to never
+[fully delete documents](./replication.md#data-layout-on-the-server).
+This is needed to be able to replicate the
+deletion state of a document to other
+instances. The NATS replication will set a
+boolean `_deleted` field to all documents to
+indicate the deletion state. You can change
+this by setting a different `deletedField`
+in the sync options.

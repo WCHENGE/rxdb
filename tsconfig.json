@@ -5,7 +5,7 @@
         "target": "es2022",
         // Search under node_modules for non-relative imports.
         // https://www.youtube.com/watch?v=H91aqUHn8sE
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "module": "es2022",
         // Process & infer types from .js files.
         "allowJs": false,
@@ -28,7 +28,8 @@
         "types": [],
         "noEmit": true,
         "allowImportingTsExtensions": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "jsx": "react"
     },
     "formatCodeOptions": {
         "indentSize": 2,
@@ -44,6 +45,9 @@
         "**/node_modules/*",
         "dist",
         "test/tutorials/*",
+        "test/react/*",
+        "test/react.test.ts",
+        "test/react-ssr.test.ts",
         "examples",
         "docs",
         "docs-src",

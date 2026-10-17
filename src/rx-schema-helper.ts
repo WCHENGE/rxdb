@@ -10,7 +10,6 @@ import type {
     StringKeys
 } from './types/index.d.ts';
 import {
-    appendToArray,
     ensureNotFalsy,
     flatClone,
     getProperty,
@@ -52,18 +51,40 @@ export function getPseudoSchemaForVersion<T = any>(
 }
 
 /**
- * Returns the sub-schema for a given path
+ * Cache for getSchemaByObjectPath results.
+ * Uses a WeakMap keyed by the schema object reference
+ * so the cache is automatically cleaned up when schemas are garbage collected.
+ */
+const SCHEMA_PATH_CACHE = new WeakMap<object, Map<string, JsonSchema>>();
+
+/**
+ * Returns the sub-schema for a given path.
+ * Results are cached per schema reference and path
+ * to avoid redundant string operations and property lookups.
  */
 export function getSchemaByObjectPath<T = any>(
     rxJsonSchema: RxJsonSchema<T>,
     path: keyof T | string
 ): JsonSchema {
-    let usePath: string = path as string;
+    let pathCache = SCHEMA_PATH_CACHE.get(rxJsonSchema as any);
+    const pathStr = path as string;
+    if (pathCache) {
+        const cached = pathCache.get(pathStr);
+        if (cached) {
+            return cached;
+        }
+    } else {
+        pathCache = new Map();
+        SCHEMA_PATH_CACHE.set(rxJsonSchema as any, pathCache);
+    }
+
+    let usePath: string = pathStr;
     usePath = usePath.replace(REGEX_ALL_DOTS, '.properties.');
     usePath = 'properties.' + usePath;
     usePath = trimDots(usePath);
 
     const ret = getProperty(rxJsonSchema, usePath);
+    pathCache.set(pathStr, ret);
     return ret;
 }
 
@@ -224,9 +245,9 @@ export function fillWithDefaultSettings<T = any>(
     (schemaObj.required as string[]).push('_meta');
     (schemaObj.required as string[]).push('_attachments');
 
-    // final fields are always required
-    const finalFields = getFinalFields(schemaObj);
-    appendToArray(schemaObj.required as any, finalFields);
+    // primaryKey is always required
+    (schemaObj.required as any).push(primaryPath);
+
     schemaObj.required = schemaObj.required
         .filter((field: string) => !field.includes('.'))
         .filter((elem: any, pos: any, arr: any) => arr.indexOf(elem) === pos); // unique;
@@ -270,7 +291,7 @@ export function fillWithDefaultSettings<T = any>(
 
     // make indexes unique
     const hasIndex = new Set<string>();
-    useIndexes.filter(index => {
+    schemaObj.indexes = useIndexes.filter(index => {
         const indexStr = index.join(',');
         if (hasIndex.has(indexStr)) {
             return false;
@@ -279,8 +300,6 @@ export function fillWithDefaultSettings<T = any>(
             return true;
         }
     });
-
-    schemaObj.indexes = useIndexes;
 
     return schemaObj as any;
 }
@@ -345,8 +364,13 @@ export function fillObjectWithDefaults(rxSchema: RxSchema<any>, obj: any): any {
     const defaultKeys = Object.keys(rxSchema.defaultValues);
     for (let i = 0; i < defaultKeys.length; ++i) {
         const key = defaultKeys[i];
-        if (!Object.prototype.hasOwnProperty.call(obj, key) || typeof obj[key] === 'undefined') {
-            obj[key] = rxSchema.defaultValues[key];
+        if (obj[key] === undefined) {
+            const val = rxSchema.defaultValues[key];
+            if (typeof val === 'object' && val !== null) {
+                obj[key] = Array.isArray(val) ? val.slice() : { ...val };
+            } else {
+                obj[key] = val;
+            }
         }
     }
     return obj;

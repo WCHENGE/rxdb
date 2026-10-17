@@ -2,17 +2,20 @@
 title: ReactJS Storage - From Basic LocalStorage to Advanced Offline Apps with RxDB
 slug: reactjs-storage.html
 description: Discover how to implement reactjs storage using localStorage for quick key-value data, then move on to more robust offline-first approaches with RxDB, IndexedDB, preact signals, encryption plugins, and more.
+image: /headers/reactjs-storage.jpg
 ---
 
-# ReactJS Storage – From Basic LocalStorage to Advanced Offline Apps with RxDB
+import {CenteredImage} from '@site/src/components/centered-image';
 
-Modern **ReactJS** applications often need to store data on the client side. Whether you’re preserving simple user preferences or building offline-ready features, choosing the right **storage** mechanism can make or break your development experience. In this guide, we’ll start with a basic **localStorage** approach for minimal data. Then, we’ll explore more powerful, reactive solutions via [RxDB](/)—including offline functionality, indexing, `preact signals`, and even encryption.
+# ReactJS Storage - From Basic LocalStorage to Advanced Offline Apps with RxDB
+
+Modern **ReactJS** applications often need to store data on the client side. Whether you’re preserving simple user preferences or building offline-ready features, choosing the right **storage** mechanism can make or break your development experience. In this guide, we’ll start with a basic **localStorage** approach for minimal data. Then, we’ll explore more powerful, reactive solutions via [RxDB](/), including offline functionality, indexing, `preact signals`, and even encryption.
 
 ---
 
 ## Part 1: Storing Data in ReactJS with LocalStorage
 
-`localStorage` is a built-in browser API for storing key-value pairs in the user’s browser. It’s straightforward to set and get items—ideal for trivial preferences or small usage data.
+`localStorage` is a built-in browser API for storing key-value pairs in the user’s browser. It’s straightforward to set and get items, making it ideal for trivial preferences or small usage data.
 
 ```jsx
 import React, { useState, useEffect } from 'react';
@@ -47,7 +50,7 @@ export default LocalStorageExample;
 **Pros** of localStorage in ReactJS:
 
 - Easy to implement quickly for minimal data
-- Built-in to the browser—no extra libs
+- Built-in to the browser, requiring no extra libraries
 - Persistent across sessions
 
 **Downsides of localStorage**
@@ -58,11 +61,11 @@ While localStorage is convenient for small amounts of data, it has certain limit
 - No concurrency or offline logic: If multiple tabs or users need to manipulate the same data, localStorage doesn’t handle concurrency or sync with a server.
 - No indexing: You can’t perform partial lookups or advanced matching.
 
-For “remember user preference” use cases, localStorage is excellent. But if your app grows complex—needing structured data, large data sets, or offline-first features—you might quickly surpass localStorage’s utility.
+For “remember user preference” use cases, localStorage is excellent. But if your app grows complex with structured data, large data sets, or offline-first features, you might quickly surpass localStorage’s utility.
 
 ## Part 2: LocalStorage vs. IndexedDB
 
-While localStorage is simple, it’s limited to string-based key-value lookups and can be synchronous for all reads/writes. For more robust ReactJS storage needs, browsers also provide IndexedDB—a low-level, asynchronous API that can store larger amounts of JSON data with indexing.
+While localStorage is simple, it’s limited to string-based key-value lookups and can be synchronous for all reads/writes. For more robust ReactJS storage needs, browsers also provide [IndexedDB](./react-indexeddb.md), a low-level asynchronous API that can store larger amounts of JSON data with indexing.
 
 **LocalStorage:**
 
@@ -72,21 +75,17 @@ While localStorage is simple, it’s limited to string-based key-value lookups a
 
 **IndexedDB:**
 
-- Stores [large](./indexeddb-max-storage-limit.md) JSON objects, able to index by multiple fields
+- Stores [large](./indexeddb-max-storage-limit.md) [JSON](./json-database.md) objects, able to index by multiple fields
 - Asynchronous and usually more scalable
 - More complicated to use directly (i.e., not as simple as .getItem())
-[RxDB](/), as you’ll see, simplifies [IndexedDB](../rx-storage-indexeddb.md) usage in ReactJS by adding a more intuitive layer for queries, reactivity, and advanced capabilities like [encryption](../encryption.md).
+[RxDB](/), as you’ll see, simplifies [IndexedDB](../rx-storage-indexeddb.md) usage in ReactJS by adding a more intuitive layer for queries, [reactivity](../reactivity.md), and advanced capabilities like [encryption](../encryption.md).
 
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="/files/logo/rxdb_javascript_database.svg" alt="RxDB" width="250" />
-    </a>
-</center>
+<RxdbLogo alt="RxDB" width={250} />
 
 ## Part 3: Moving Beyond Basic Storage: RxDB for ReactJS
 
-When data shapes get complex—large sets of nested documents, or you want offline sync to a server—RxDB can transform your approach to ReactJS storage. It stores documents in (usually) IndexedDB or alternative backends but offers a reactive, NoSQL-based interface.
+When data shapes get complex with large sets of nested documents or you want offline sync to a server, RxDB can transform your approach to ReactJS storage. It stores documents in (usually) IndexedDB or alternative backends but offers a reactive, NoSQL-based interface.
 
 ### RxDB Quick Example (Observables)
 
@@ -107,7 +106,7 @@ import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
     type: 'object',
     primaryKey: 'id',
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', maxLength: 100 },
       name: { type: 'string' },
       power: { type: 'string' }
     },
@@ -125,7 +124,7 @@ import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
 })();
 ```
 
-Reactive Queries: In a React component, you can subscribe to a query via RxDB’s $ property, letting your UI automatically update when data changes. React components can subscribe to updates from .find() queries, letting the UI automatically reflect changes—perfect for dynamic offline-first apps.
+Reactive Queries: In a React component, you can subscribe to a query via RxDB’s $ property, letting your UI automatically update when data changes. React components can subscribe to updates from .find() queries, letting the UI automatically reflect changes perfectly for dynamic offline-first apps.
 
 ```tsx
 import React, { useEffect, useState } from 'react';
@@ -157,9 +156,7 @@ function HeroList({ collection }) {
 export default HeroList;
 ```
 
-<p align="center">
-  <img src="../files/animations/realtime.gif" alt="realtime ui updates" width="700" />
-</p>
+<CenteredImage src="../files/animations/realtime.gif" alt="realtime ui updates" width={700} />
 
 By using these reactive queries, your React app knows exactly when data changes locally (or from another browser tab) or from remote sync, keeping your UI in sync effortlessly.
 
@@ -170,7 +167,9 @@ RxDB typically exposes reactivity via RxJS observables. However, some developers
 ```ts
 import { createRxDatabase } from 'rxdb/plugins/core';
 import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
-import { PreactSignalsRxReactivityFactory } from 'rxdb-premium/plugins/reactivity-preact-signals';
+import {
+    PreactSignalsRxReactivityFactory
+} from 'rxdb/plugins/reactivity-preact-signals';
 
 (async function setUpRxDBWithSignals() {
   const db = await createRxDatabase({
@@ -186,15 +185,17 @@ import { PreactSignalsRxReactivityFactory } from 'rxdb-premium/plugins/reactivit
 })();
 ```
 
-Preact Signals rely on “signals” instead of Observables—some developers find them more straightforward to adopt, especially for fine-grained reactivity. In ReactJS, you might still prefer RxJS-based subscriptions unless you add bridging code for signals.
+Preact Signals rely on `signals` instead of `Observables`. Some developers find them more straightforward to adopt, especially for fine-grained reactivity. In ReactJS, you might still prefer RxJS-based subscriptions unless you add bridging code for signals.
 
 ## Part 5: Encrypting the Storage with RxDB
 
-For more advanced ReactJS storage needs—especially when sensitive user data is involved—you might want to encrypt stored documents at rest. RxDB provides a robust [encryption plugin](../encryption.md):
+For more advanced ReactJS storage needs, especially when sensitive user data is involved, you might want to encrypt stored documents at rest. RxDB provides a robust [encryption plugin](../encryption.md):
 
 ```ts
 import { createRxDatabase } from 'rxdb';
-import { wrappedKeyEncryptionCryptoJsStorage } from 'rxdb/plugins/encryption-crypto-js';
+import {
+    wrappedKeyEncryptionCryptoJsStorage
+} from 'rxdb/plugins/encryption-crypto-js';
 import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
 
 (async function secureSetup() {
@@ -217,7 +218,7 @@ import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
         type: 'object',
         primaryKey: 'id',
         properties: {
-          id: { type: 'string' },
+          id: { type: 'string', maxLength: 100 },
           secretInfo: { type: 'string' }
         },
         required: ['id'],

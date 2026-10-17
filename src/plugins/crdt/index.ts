@@ -33,6 +33,7 @@ import {
     RxError
 } from '../../index.ts';
 import { mingoUpdater } from '../update/mingo-updater.ts';
+import { fillObjectWithDefaults, fillPrimaryKey } from '../../rx-schema-helper.ts';
 
 
 
@@ -352,6 +353,43 @@ export const RxDBcrdtPlugin: RxPlugin = {
                 });
             };
 
+            const oldincrementalRemove = proto.incrementalRemove;
+            proto.incrementalRemove = function (this: RxDocument) {
+                if (!this.collection.schema.jsonSchema.crdt) {
+                    return oldincrementalRemove.call(this);
+                }
+                return this.updateCRDT({
+                    ifMatch: {
+                        $set: {
+                            _deleted: true
+                        }
+                    }
+                });
+            };
+
+            const oldModify = proto.modify;
+            proto.modify = function (this: RxDocument, fn: any, context?: string) {
+                if (!this.collection.schema.jsonSchema.crdt) {
+                    return oldModify.call(this, fn, context);
+                }
+                throw newRxError('CRDT4', {
+                    id: this.primary,
+                    args: { method: 'modify' }
+                });
+            };
+
+            const oldPatch = proto.patch;
+            proto.patch = function (this: RxDocument, patch: any) {
+                if (!this.collection.schema.jsonSchema.crdt) {
+                    return oldPatch.call(this, patch);
+                }
+                return this.updateCRDT({
+                    ifMatch: {
+                        $set: patch
+                    }
+                });
+            };
+
             const oldincrementalPatch = proto.incrementalPatch;
             proto.incrementalPatch = function (this: RxDocument, patch: any) {
                 if (!this.collection.schema.jsonSchema.crdt) {
@@ -376,6 +414,16 @@ export const RxDBcrdtPlugin: RxPlugin = {
                         args: { context }
                     });
                 }
+            };
+
+            const oldUpdate = proto.update;
+            proto.update = function (this: RxDocument, updateObj: any) {
+                if (!this.collection.schema.jsonSchema.crdt) {
+                    return oldUpdate.call(this, updateObj);
+                }
+                return this.updateCRDT({
+                    ifMatch: updateObj
+                });
             };
         },
         RxCollection: (proto: any) => {
@@ -468,6 +516,30 @@ export const RxDBcrdtPlugin: RxPlugin = {
                     const storageToken = await collection.database.storageToken;
                     const useDocsData = await Promise.all(
                         docsData.map(async (docData) => {
+                            /**
+                             * Fill schema default values before creating CRDT operations,
+                             * so that default values are captured in the operations and
+                             * will be preserved during rebuildFromCRDT (conflict resolution).
+                             */
+                            fillObjectWithDefaults(collection.schema, docData);
+
+                            /**
+                             * Fill composite primary key before building the CRDT $set body.
+                             * When a schema uses a composite primary key, the value of the
+                             * primary key field is computed from other fields by RxDB and
+                             * is not provided by the user. Without this, the CRDT operation
+                             * would miss the primary key field and rebuildFromCRDT (used
+                             * during conflict resolution) would produce a document without
+                             * the primary key.
+                             */
+                            if (typeof collection.schema.jsonSchema.primaryKey !== 'string') {
+                                fillPrimaryKey(
+                                    collection.schema.primaryPath,
+                                    collection.schema.jsonSchema,
+                                    docData
+                                );
+                            }
+
                             const setMe: Partial<RxDocumentData<any>> = {};
                             Object.entries(docData).forEach(([key, value]) => {
                                 if (

@@ -1,12 +1,13 @@
 import assert from 'assert';
-import { describeParallel } from './config.ts';
+import './config.ts';
 
 
 import {
     schemaObjects,
     schemas,
     getConfig,
-    SimpleHumanAgeDocumentType
+    SimpleHumanAgeDocumentType,
+    isFastMode,
 } from '../../plugins/test-utils/index.mjs';
 
 import { waitUntil } from 'async-test-util';
@@ -21,7 +22,10 @@ import {
 } from '../../plugins/core/index.mjs';
 
 import { RxDBQueryBuilderPlugin } from '../../plugins/query-builder/index.mjs';
+import { RxDBLocalDocumentsPlugin } from '../../plugins/local-documents/index.mjs';
+import { PREACT_SIGNAL_STATE, PreactSignalReactivityLambda, PreactSignalsRxReactivityFactory } from '../../plugins/reactivity-preact-signals/index.mjs';
 addRxPlugin(RxDBQueryBuilderPlugin);
+addRxPlugin(RxDBLocalDocumentsPlugin);
 
 
 
@@ -30,7 +34,7 @@ addRxPlugin(RxDBQueryBuilderPlugin);
  * double dollar sign $.
  * Used for stuff like signals etc.
  */
-describeParallel('reactivity.test.js', () => {
+describe('reactivity.test.ts', () => {
     type ReactivityType = {
         obs: Observable<any>;
         init: any;
@@ -153,5 +157,129 @@ describeParallel('reactivity.test.js', () => {
             collection.database.close();
         });
     });
-    describe('issues', () => { });
+    describe('preact-signals.test.ts', () => {
+        it('should get the signal and clean up correctly', async function () {
+            /**
+             * This test can take very long because we await the garbage collection
+             * of the signal.
+             */
+            this.timeout(60 * 1000);
+            if (
+                isFastMode() ||
+                !(global as any).gc ||
+                getConfig().storage.name.includes('random-delay')
+            ) {
+                return;
+            }
+
+            // trigger garbace collector very often to speed up the test
+            const intervalId = setInterval(() => {
+                (global as any).gc();
+            }, 200);
+
+            const db = await createRxDatabase<{ docs: any; }, any, any, PreactSignalReactivityLambda>({
+                name: randomToken(10),
+                storage: getConfig().storage.getStorage(),
+                reactivity: PreactSignalsRxReactivityFactory
+            });
+            const collections = await db.addCollections({
+                docs: {
+                    schema: schemas.human
+                }
+            });
+            const collection = collections.docs;
+
+            // create signal and add it to memory
+            let querySignal = collection.find().$$;
+            assert.strictEqual(PREACT_SIGNAL_STATE.subscribeCount, 1);
+
+            // check correct values
+            await waitUntil(() => !!querySignal.value);
+            assert.deepStrictEqual(querySignal.value, []);
+            await collection.insert(schemaObjects.humanData());
+            await waitUntil(() => querySignal.value.length === 1);
+
+            // ensure unsubscribe is called when signal gets garbage collected
+            querySignal = {} as any;
+            await waitUntil(() => {
+                return PREACT_SIGNAL_STATE.subscribeCount === 0;
+            }, undefined, 200);
+
+            clearInterval(intervalId);
+            await db.close();
+        });
+    });
+    describe('issues', () => {
+        it('RxLocalDocument.get$() should not emit spurious values on nested object paths', async () => {
+            const collection = await getReactivityCollection();
+            const db = collection.database;
+            const localDoc = await db.insertLocal('nested-test', {
+                nested: { foo: 'bar' },
+                counter: 0
+            });
+
+            // subscribe to the nested object path via get$
+            const emitted: any[] = [];
+            const sub = localDoc.get$('nested').subscribe((val: any) => {
+                emitted.push(val);
+            });
+
+            // wait for initial emission
+            await waitUntil(() => emitted.length >= 1);
+            assert.deepStrictEqual(emitted[0], { foo: 'bar' });
+
+            // update an UNRELATED field - should NOT cause get$('nested') to re-emit
+            await localDoc.incrementalPatch({ counter: 1 });
+            await localDoc.incrementalPatch({ counter: 2 });
+
+            // give time for potential spurious emissions
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+            // BUG: without deepEqual in distinctUntilChanged, we get spurious emissions
+            // because each document revision creates new object references for nested objects
+            assert.strictEqual(
+                emitted.length,
+                1,
+                'get$ on a nested object path should not emit when an unrelated field changes, but got ' + emitted.length + ' emissions'
+            );
+
+            sub.unsubscribe();
+            await db.close();
+        });
+        it('RxLocalDocument.get$$() should not emit spurious values on nested object paths', async () => {
+            const collection = await getReactivityCollection();
+            const db = collection.database;
+            const localDoc = await db.insertLocal('nested-test-signal', {
+                nested: { foo: 'bar' },
+                counter: 0
+            });
+
+            // get the reactive value for nested object path
+            const signal: ReactivityType = localDoc.get$$('nested') as any;
+
+            // subscribe to track emissions from the underlying observable
+            const emitted: any[] = [];
+            const sub = signal.obs.subscribe((val: any) => {
+                emitted.push(val);
+            });
+
+            await waitUntil(() => emitted.length >= 1);
+            assert.deepStrictEqual(emitted[0], { foo: 'bar' });
+
+            // update an UNRELATED field
+            await localDoc.incrementalPatch({ counter: 1 });
+            await localDoc.incrementalPatch({ counter: 2 });
+
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+            assert.strictEqual(
+                emitted.length,
+                1,
+                'get$$ on a nested object path should not emit when an unrelated field changes, but got ' + emitted.length + ' emissions'
+            );
+
+            sub.unsubscribe();
+            await db.close();
+        });
+    });
 });

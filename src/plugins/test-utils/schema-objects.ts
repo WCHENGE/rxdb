@@ -4,7 +4,6 @@
 import { HumanDocumentType } from './schemas.ts';
 import * as schemas from './schemas.ts';
 import {
-    appendToArray,
     ensureNotFalsy,
     lastOfArray,
     randomNumber
@@ -20,8 +19,8 @@ export const TEST_DATA_CHARSET_LAST_SORTED = ensureNotFalsy(lastOfArray(TEST_DAT
 const someEmojisArr = ['😊', '💩', '👵', '🍌', '🏳️‍🌈', '😃'];
 
 const baseChars = TEST_DATA_CHARSET.split('');
-const allChars = baseChars.slice(0);
-appendToArray(allChars, someEmojisArr);
+let allChars = baseChars.slice(0);
+allChars = allChars.concat(someEmojisArr);
 
 export function randomStringWithSpecialChars(
     minLength: number,
@@ -237,7 +236,7 @@ export interface SimpleHeroArrayDocumentType {
 }
 export function simpleHeroArray(partial: Partial<SimpleHeroArrayDocumentType> = {}): SimpleHeroArrayDocumentType {
     const defaultObj = {
-        name: randomStringWithSpecialChars(6, 8),
+        name: randomStringWithSpecialChars(8, 10),
         skills: new Array(3).fill(0).map(() => randomStringWithSpecialChars(3, 6))
     };
     return Object.assign(

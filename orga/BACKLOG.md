@@ -11,7 +11,6 @@ https://news.ycombinator.com/item?id=45622604
 
 Something where devs can open a UI to inspect the locally stored data.
 
-
 ## Storage based on ReactNative-MMKV
 
 https://github.com/mrousavy/react-native-mmkv
@@ -26,30 +25,18 @@ https://news.ycombinator.com/item?id=45885768
 
 Like https://github.com/XuHaoJun/rxdb-storage-pglite
 
-## Zero-Sync replication plugin
-
-https://www.youtube.com/watch?v=hAxdOUgjctk&ab_channel=Syntax
-
-## Upsert atomic with attachments
-
-See [#494](https://github.com/pubkey/rxdb/issues/494)
-
-
-## import/export with attachments
-
-See [#1396](https://github.com/pubkey/rxdb/pull/1396#issuecomment-523014106)
-
 ## refactor middleware to not be based on side effects
 
 [See](https://github.com/pubkey/rxdb/issues/3426)
 
-## tool to generate sync enpoints in swagger
+## Reduce persist plugin
 
-## update+delete in one operation
+## tool to generate sync enpoints in swagger
 
 ## Redis Sync
 
 Similar to the NATS replication plugin.
+
 
 ## query normalization and optimization
 
@@ -71,12 +58,7 @@ https://www.powersync.com/blog/sqlite-optimizations-for-ultra-high-performance
 
 [https://docs.postgrest.org/](https://docs.postgrest.org/)
 
-## Add plugin for attachments compression
-
-Attachments can get quite big. Use compression when the api is available on firefox: https://caniuse.com/?search=compressionstream
-
 ## Add plugin for [Pocketbase](https://pocketbase.io/) replication
-
 
 ## make a debugger UI
 

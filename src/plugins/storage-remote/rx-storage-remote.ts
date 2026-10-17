@@ -84,7 +84,7 @@ export class RxStorageRemote implements RxStorage<RxStorageRemoteInternals, any>
 
         const requestId = this.getRequestId();
         const waitForOkPromise = firstValueFrom(messageChannel.messages$.pipe(
-            filter(msg => msg.answerTo === requestId)
+            filter((msg: MessageFromRemote) => msg.answerTo === requestId)
         ));
         messageChannel.send({
             connectionId,
@@ -100,13 +100,23 @@ export class RxStorageRemote implements RxStorage<RxStorageRemoteInternals, any>
             throw new Error('could not create instance ' + JSON.stringify(waitForOkResult.error));
         }
 
+        /**
+         * SECURITY: Remove the password from the stored params
+         * so it does not leak through JSON.stringify() or other
+         * enumeration of the storage instance internals.
+         * The password has already been sent to the remote side
+         * via the message channel and is no longer needed locally.
+         */
+        const paramsWithoutPassword = Object.assign({}, params);
+        delete paramsWithoutPassword.password;
+
         return new RxStorageInstanceRemote(
             this,
             params.databaseName,
             params.collectionName,
             params.schema,
             {
-                params,
+                params: paramsWithoutPassword,
                 connectionId,
                 messageChannel
             },
@@ -119,7 +129,7 @@ export class RxStorageRemote implements RxStorage<RxStorageRemoteInternals, any>
         const requestId = this.getRequestId();
         const connectionId = 'custom|request|' + requestId;
         const waitForAnswerPromise = firstValueFrom(messageChannel.messages$.pipe(
-            filter(msg => msg.answerTo === requestId)
+            filter((msg: MessageFromRemote) => msg.answerTo === requestId)
         ));
         messageChannel.send({
             connectionId,
@@ -180,10 +190,10 @@ export class RxStorageInstanceRemote<RxDocType> implements RxStorageInstance<RxD
         public readonly options: Readonly<any>
     ) {
         this.messages$ = this.internals.messageChannel.messages$.pipe(
-            filter(msg => msg.connectionId === this.internals.connectionId)
+            filter((msg: MessageFromRemote) => msg.connectionId === this.internals.connectionId)
         );
         this.subs.push(
-            this.messages$.subscribe(msg => {
+            this.messages$.subscribe((msg: MessageFromRemote) => {
                 if (msg.method === 'changeStream') {
                     this.changes$.next(getMessageReturn(msg));
                 }
@@ -198,7 +208,7 @@ export class RxStorageInstanceRemote<RxDocType> implements RxStorageInstance<RxD
         const requestId = this.storage.getRequestId();
         const responsePromise = firstValueFrom(
             this.messages$.pipe(
-                filter(msg => msg.answerTo === requestId)
+                filter((msg: MessageFromRemote) => msg.answerTo === requestId)
             )
         );
         const message: MessageToRemote = {
@@ -235,7 +245,7 @@ export class RxStorageInstanceRemote<RxDocType> implements RxStorageInstance<RxD
     count(preparedQuery: any): Promise<RxStorageCountResult> {
         return this.requestRemote('count', [preparedQuery]);
     }
-    getAttachmentData(documentId: string, attachmentId: string, digest: string): Promise<string> {
+    getAttachmentData(documentId: string, attachmentId: string, digest: string): Promise<Blob> {
         return this.requestRemote('getAttachmentData', [documentId, attachmentId, digest]);
     }
     getChangedDocumentsSince(
@@ -271,6 +281,8 @@ export class RxStorageInstanceRemote<RxDocType> implements RxStorageInstance<RxD
             throw new Error('already closed');
         }
         this.closed = (async () => {
+            this.subs.forEach(sub => sub.unsubscribe());
+            this.changes$.complete();
             await this.requestRemote('remove', []);
             await closeMessageChannel(this.internals.messageChannel);
         })();

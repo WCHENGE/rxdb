@@ -5,8 +5,7 @@ import {
     wait,
     waitUntil
 } from 'async-test-util';
-import pkg from 'isomorphic-ws';
-const { WebSocket: IsomorphicWebSocket } = pkg;
+import { WebSocket } from 'ws';
 
 
 import {
@@ -16,7 +15,7 @@ import {
     firstValueFrom
 } from 'rxjs';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     createRxDatabase,
     RxJsonSchema,
@@ -49,7 +48,8 @@ import {
     isDeno,
     isBun,
     getEncryptedStorage,
-    enableKeyCompression
+    enableKeyCompression,
+    ensureReplicationHasNoErrors
 } from '../../plugins/test-utils/index.mjs';
 import {
     GRAPHQL_PATH,
@@ -159,17 +159,6 @@ describe('replication-graphql.test.ts', () => {
             variables
         });
     };
-    function ensureReplicationHasNoErrors(replicationState: RxGraphQLReplicationState<any, any>) {
-        /**
-         * We do not have to unsubscribe because the observable will cancel anyway.
-         */
-        replicationState.error$.subscribe(err => {
-            console.error('ensureReplicationHasNoErrors() has error:');
-            console.dir(err.parameters.errors);
-            console.log(JSON.stringify(err.parameters.errors, null, 4));
-            throw err;
-        });
-    }
     describe('node', () => {
         if (!isNode) {
             return;
@@ -193,7 +182,7 @@ describe('replication-graphql.test.ts', () => {
                 }
             });
         });
-        describeParallel('graphql-server.js', () => {
+        describe('graphql-server.js', () => {
             it('spawn, reach and close a server', async () => {
                 const server = await SpawnServer.spawn();
                 const res = await graphQLRequest(
@@ -310,7 +299,7 @@ describe('replication-graphql.test.ts', () => {
                 const client = createClient({
                     url: endpointUrl,
                     shouldRetry: () => false,
-                    webSocketImpl: IsomorphicWebSocket,
+                    webSocketImpl: WebSocket,
                 });
 
                 const query = `subscription onHumanChanged {
@@ -363,7 +352,7 @@ describe('replication-graphql.test.ts', () => {
                 server.close();
             });
         });
-        describeParallel('live:false pull only', () => {
+        describe('live:false pull only', () => {
             it('should pull all documents in one batch', async () => {
                 const [c, server] = await Promise.all([
                     humansCollection.createHumanWithTimestamp(0),
@@ -399,7 +388,7 @@ describe('replication-graphql.test.ts', () => {
                     SpawnServer.spawn(testData)
                 ]);
 
-                replicateGraphQL({
+                const replicationState = replicateGraphQL({
                     replicationIdentifier: randomToken(10),
                     collection: c,
                     url: server.url,
@@ -410,11 +399,8 @@ describe('replication-graphql.test.ts', () => {
                     live: false,
                     deletedField: 'deleted'
                 });
-
-                await waitUntil(async () => {
-                    const ds = await c.find().exec();
-                    return ds.length === amount;
-                });
+                ensureReplicationHasNoErrors(replicationState);
+                await replicationState.awaitInitialReplication();
 
                 // all of test-data should be in the database
                 const docs = await c.find().exec();
@@ -727,7 +713,7 @@ describe('replication-graphql.test.ts', () => {
             });
 
         });
-        describeParallel('live:true pull only', () => {
+        describe('live:true pull only', () => {
             it('should also get documents that come in afterwards', async () => {
                 const [c, server] = await Promise.all([
                     humansCollection.createHumanWithTimestamp(0),
@@ -805,7 +791,7 @@ describe('replication-graphql.test.ts', () => {
 
                 const docs2 = await c.find().exec();
 
-                assert.strictEqual(docs2.length, amount - 1);
+                assert.strictEqual(docs2.length, amount - 1, 'must have replicated the deletion');
 
                 server.close();
                 c.database.close();
@@ -893,7 +879,7 @@ describe('replication-graphql.test.ts', () => {
             });
         });
 
-        describeParallel('push only', () => {
+        describe('push only', () => {
             it('should send all documents in one batch', async () => {
                 const [c, server] = await Promise.all([
                     humansCollection.createHumanWithTimestamp(batchSize),
@@ -1229,7 +1215,7 @@ describe('replication-graphql.test.ts', () => {
                 c.database.close();
             });
         });
-        describeParallel('push and pull', () => {
+        describe('push and pull', () => {
             it('should push and pull all docs; live: false', async () => {
                 const amount = batchSize * 4;
                 const testData = getTestData(amount);
@@ -1575,7 +1561,7 @@ describe('replication-graphql.test.ts', () => {
             });
         });
 
-        describeParallel('live:true with pull.stream$', () => {
+        describe('live:true with pull.stream$', () => {
             it('should pull all ongoing document writes from the server', async () => {
                 const [c, server] = await Promise.all([
                     humansCollection.createHumanWithTimestamp(0),
@@ -1798,7 +1784,7 @@ describe('replication-graphql.test.ts', () => {
         });
 
 
-        describeParallel('observables', () => {
+        describe('observables', () => {
             it('should emit the received documents when pulling', async () => {
                 const testData = getTestData(batchSize);
                 const [c, server] = await Promise.all([
@@ -1928,7 +1914,7 @@ describe('replication-graphql.test.ts', () => {
             });
         });
 
-        describeParallel('.graphQLSchemaFromRxSchema()', () => {
+        describe('.graphQLSchemaFromRxSchema()', () => {
             it('assumption: buildSchema() fails on non-graphql input', () => {
                 assert.throws(
                     () => buildSchema('foobar')
@@ -1992,7 +1978,7 @@ describe('replication-graphql.test.ts', () => {
                 assert.ok(build);
             });
         });
-        describeParallel('.pullQueryBuilderFromRxSchema()', () => {
+        describe('.pullQueryBuilderFromRxSchema()', () => {
             it('assumption: parseQuery() fails on non-graphql input', () => {
                 assert.throws(
                     () => parseQuery('foobar')
@@ -2089,7 +2075,7 @@ describe('replication-graphql.test.ts', () => {
                 assert.ok(parsed);
             });
         });
-        describeParallel('.pullStreamBuilderFromRxSchema()', () => {
+        describe('.pullStreamBuilderFromRxSchema()', () => {
             it('should create a valid builder', async () => {
                 const builder = pullStreamBuilderFromRxSchema(
                     'human', {
@@ -2166,7 +2152,7 @@ describe('replication-graphql.test.ts', () => {
                 assert.equal(normalizeString(output.query), normalizeString(want));
             });
         });
-        describeParallel('.pushQueryBuilderFromRxSchema()', () => {
+        describe('.pushQueryBuilderFromRxSchema()', () => {
             it('should create a valid builder', async () => {
                 const builder = pushQueryBuilderFromRxSchema(
                     'human', {
@@ -2298,7 +2284,7 @@ describe('replication-graphql.test.ts', () => {
                 assert.ok(pushDoc.deleted);
             });
         });
-        describeParallel('integrations', () => {
+        describe('integrations', () => {
             it('should work with encryption', async () => {
                 const db = await createRxDatabase({
                     name: randomToken(10),
@@ -2559,7 +2545,7 @@ describe('replication-graphql.test.ts', () => {
                 await c.database.close();
             });
         });
-        describeParallel('issues', () => {
+        describe('issues', () => {
             it('push not working on slow db', async () => {
                 if (isBun) {
                     // TODO for somehow bun times out here
@@ -2583,7 +2569,7 @@ describe('replication-graphql.test.ts', () => {
                 const collection = collections.humans;
 
                 // insert data to slow down the db
-                const amount = 30;
+                const amount = isFastMode() ? 5 : 30;
                 await Promise.all(
                     new Array(amount).fill(0)
                         .map(() => schemaObjects.humanWithTimestampData())
@@ -2634,7 +2620,7 @@ describe('replication-graphql.test.ts', () => {
                 });
                 const collection = collections.humans;
 
-                const amount = 50;
+                const amount = isFastMode() ? 10 : 50;
                 const testData = getTestData(amount);
                 const server = await SpawnServer.spawn(testData);
 
@@ -2940,7 +2926,7 @@ describe('replication-graphql.test.ts', () => {
                 const collection: RxCollection<HumanWithTimestampDocumentType> = collections.humans;
 
                 // insert data to slow down the db
-                const amount = 30;
+                const amount = isFastMode() ? 5 : 30;
                 await Promise.all(
                     new Array(amount).fill(0)
                         .map(() => schemaObjects.humanWithTimestampData())

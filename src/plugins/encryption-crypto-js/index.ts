@@ -19,8 +19,8 @@ import type {
     RxStorageInstanceCreationParams
 } from '../../types/index.d.ts';
 import {
-    b64DecodeUnicode,
-    b64EncodeUnicode,
+    arrayBufferToBase64,
+    base64ToArrayBuffer,
     clone,
     ensureNotFalsy,
     flatClone,
@@ -97,12 +97,25 @@ export function wrappedKeyEncryptionCryptoJsStorage<Internals, InstanceCreationO
 
                 /**
                  * Encrypted data is always stored as string
-                 * so we have to change the schema to have "type": "string"
-                 * on encrypted fields.
+                 * so we have to replace the schema definition of
+                 * encrypted fields with just {type: 'string'}.
+                 * All type-specific keywords (properties, required,
+                 * items, maxLength, enum etc.) must be removed because
+                 * they do not apply to the encrypted ciphertext string.
                  */
-                ensureNotFalsy(params.schema.encrypted).forEach(key => {
-                    (schemaWithoutEncrypted as any).properties[key].type = 'string';
-                    delete (schemaWithoutEncrypted as any).properties[key].properties;
+                const encryptedPaths = ensureNotFalsy(params.schema.encrypted);
+                encryptedPaths.forEach(key => {
+                    const pathParts = key.split('.');
+                    if (pathParts.length === 1) {
+                        (schemaWithoutEncrypted as any).properties[key] = { type: 'string' };
+                    } else {
+                        // Navigate nested schema structure: properties.a.properties.b.properties.c
+                        let currentSchemaLevel: any = schemaWithoutEncrypted;
+                        for (let i = 0; i < pathParts.length - 1; i++) {
+                            currentSchemaLevel = currentSchemaLevel.properties[pathParts[i]];
+                        }
+                        currentSchemaLevel.properties[pathParts[pathParts.length - 1]] = { type: 'string' };
+                    }
                 });
 
                 const instance = await args.storage.createStorageInstance(
@@ -115,9 +128,9 @@ export function wrappedKeyEncryptionCryptoJsStorage<Internals, InstanceCreationO
                     )
                 );
 
-                function modifyToStorage(docData: RxDocumentWriteData<RxDocType>) {
+                async function modifyToStorage(docData: RxDocumentWriteData<RxDocType>) {
                     docData = cloneWithoutAttachments(docData);
-                    ensureNotFalsy(params.schema.encrypted)
+                    encryptedPaths
                         .forEach(path => {
                             const value = getProperty(docData, path);
                             if (typeof value === 'undefined') {
@@ -135,21 +148,25 @@ export function wrappedKeyEncryptionCryptoJsStorage<Internals, InstanceCreationO
                         params.schema.attachments.encrypted
                     ) {
                         const newAttachments: typeof docData._attachments = {};
-                        Object.entries(docData._attachments).forEach(([id, attachment]) => {
-                            const useAttachment: RxAttachmentWriteData = flatClone(attachment) as any;
-                            if (useAttachment.data) {
-                                const dataString = useAttachment.data;
-                                useAttachment.data = b64EncodeUnicode(encryptString(dataString, password));
-                            }
-                            newAttachments[id] = useAttachment;
-                        });
+                        await Promise.all(
+                            Object.entries(docData._attachments).map(async ([id, attachment]) => {
+                                const useAttachment: RxAttachmentWriteData = flatClone(attachment) as any;
+                                if (useAttachment.data) {
+                                    const ab = await useAttachment.data.arrayBuffer();
+                                    const base64 = arrayBufferToBase64(ab);
+                                    const encrypted = encryptString(base64, password);
+                                    useAttachment.data = new Blob([encrypted], { type: useAttachment.type });
+                                }
+                                newAttachments[id] = useAttachment;
+                            })
+                        );
                         docData._attachments = newAttachments;
                     }
                     return docData;
                 }
                 function modifyFromStorage(docData: RxDocumentData<any>): Promise<RxDocumentData<RxDocType>> {
                     docData = cloneWithoutAttachments(docData);
-                    ensureNotFalsy(params.schema.encrypted)
+                    encryptedPaths
                         .forEach(path => {
                             const value = getProperty(docData, path);
                             if (typeof value === 'undefined') {
@@ -162,13 +179,15 @@ export function wrappedKeyEncryptionCryptoJsStorage<Internals, InstanceCreationO
                     return docData;
                 }
 
-                function modifyAttachmentFromStorage(attachmentData: string): string {
+                async function modifyAttachmentFromStorage(attachmentData: Blob): Promise<Blob> {
                     if (
                         params.schema.attachments &&
                         params.schema.attachments.encrypted
                     ) {
-                        const decrypted = decryptString(b64DecodeUnicode(attachmentData), password);
-                        return decrypted;
+                        const encryptedText = await attachmentData.text();
+                        const decryptedBase64 = decryptString(encryptedText, password);
+                        const ab = base64ToArrayBuffer(decryptedBase64);
+                        return new Blob([ab], attachmentData.type ? { type: attachmentData.type } : undefined);
                     } else {
                         return attachmentData;
                     }
@@ -202,13 +221,13 @@ function cloneWithoutAttachments<T>(data: RxDocumentWriteData<T>): RxDocumentDat
 function validatePassword(password: string) {
     if (typeof password !== 'string') {
         throw newRxTypeError('EN1', {
-            password
+            passwordType: typeof password
         });
     }
     if (password.length < MINIMUM_PASSWORD_LENGTH) {
         throw newRxError('EN2', {
             minPassLength: MINIMUM_PASSWORD_LENGTH,
-            password
+            passwordLength: password.length
         });
     }
 }

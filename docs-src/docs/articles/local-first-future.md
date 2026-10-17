@@ -2,12 +2,14 @@
 title: Why Local-First Software Is the Future and its Limitations
 slug: local-first-future.html
 description: Discover how local-first transforms web apps, boosts offline resilience, and why instant user feedback is becoming the new normal.
+image: /headers/local-first-future.jpg
 ---
 
 import {Tabs} from '@site/src/components/tabs';
 import {Steps} from '@site/src/components/steps';
 import {QuoteBlock} from '@site/src/components/quoteblock';
 import {VideoBox} from '@site/src/components/video-box';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # Why Local-First Software Is the Future and what are its Limitations
 
@@ -23,7 +25,7 @@ This approach is increasingly popular because it leads to **instant** app respon
 
 
 <QuoteBlock 
-  author="Ink&Switch"
+  author="Ink & Switch"
   year="2019"
   sourceLink="https://martin.kleppmann.com/papers/local-first.pdf"
 >Local-First software: A set of principles for software that enables both collaboration and ownership for users. Local-first ideals include the ability to work offline and collaborate across multiple devices, while also improving the security, privacy, long-term preservation, and user control of data.</QuoteBlock>
@@ -42,7 +44,7 @@ The push for local-first is driven by a few key new technological capabilities t
   - **Bandwidth Has Grown, But Latency Is Capped**: Internet infrastructure has rapidly expanded to provide higher throughput making it possible to transfer large amounts of data more quickly. However, latency (i.e., round-trip delay) is constrained by the **speed of light** and other physical limitations in fiber, satellite links, and routing. We can always build out bigger "pipes" to stream or send bulk data, but we can't significantly reduce the base round-trip time for each request. This is a physical limit, not a technological one. Local-first strategies mitigate this fundamental latency limit by avoiding excessive client-server calls in interactive workflows, once data is on the client, it's instantly available for reads and writes without waiting on a network round-trip. Imagine, transferring **around 100,000** "average" JSON documents might only consume **about the same bandwidth as two frames of a 4K YouTube video** which can be transferred in milliseconds. This shows just how far raw data throughput has come. Yet each request still has a 100-200ms latency or more, which becomes noticeable in user interactions. Local-first mitigates this by minimizing round-trip calls during active use and using the available bandwidth to directly transfer most of the data on the first app start.
 </div>
 
-- **WebAssembly**: Another advancement is **WebAssembly (WASM)**, which allows developers to compile low-level languages (C, C++, Rust) for execution in the browser at near-native speed. This means database engines, search algorithms, [vector databases](./javascript-vector-database.md),  and other performance-heavy tasks can run right on the client. However, a key limitation is that **WASM cannot directly access persistent storage APIs** in the browser. Instead, all data must be send from WASM to JavaScript (or the main thread) and then go through something like IndexedDB or OPFS. This extra indirection [is slower](./localstorage-indexeddb-cookies-opfs-sqlite-wasm.md) compared to plain JavaScript->storage calls. Looking ahead, there might come up future APIs that allow WASM to interface with persistent storage directly, and if those land, local-first systems could see another major boost in [performance](../rx-storage-performance.md).
+- **WebAssembly**: Another advancement is **WebAssembly (WASM)**, which allows developers to compile low-level languages (C, C++, Rust) for execution in the browser at near-native speed. This means database engines, search algorithms, [vector databases](./javascript-vector-database.md),  and other performance-heavy tasks can run right on the client. However, a key limitation is that **WASM cannot directly access persistent storage APIs** in the browser. Instead, all data must be sent from WASM to JavaScript (or the main thread) and then go through something like IndexedDB or OPFS. This extra indirection [is slower](./localstorage-indexeddb-cookies-opfs-sqlite-wasm.md) compared to plain JavaScript->storage calls. Looking ahead, there might come up future APIs that allow WASM to interface with persistent storage directly, and if those land, local-first systems could see another major boost in [performance](../rx-storage-performance.md).
 
 - **Improvements in Local-First Tooling**: A major factor fueling the rise of local-first architectures is the **dramatic leap in client-side tooling and performance**. For instance, consider a local-first **email client** that stores **one million messages**. In 2014, searching through that many documents, especially with something like early PouchDB, could take **minutes** in a browser. Today, with advanced offline databases like **RxDB**, you can use the [OPFS storage](../rx-storage-opfs.md) with [sharding](../rx-storage-sharding.md) across multiple [web workers](../rx-storage-worker.md) (one per CPU) and use [memory-mapped](../rx-storage-memory-mapped.md) techniques. The result is a **regex search** of one million of these email documents in around **120 milliseconds** - all in JavaScript, running inside a standard web browser, on a mobile phone.
 
@@ -57,7 +59,7 @@ The push for local-first is driven by a few key new technological capabilities t
 
 <div style={{textAlign: 'justify'}}>
   <img src="/files/loading-spinner-not-needed.gif" alt="loading spinner not needed" width="160" className="img-in-text-right" />
-- **Performance & UX:** Running from local storage means **low latency** and instantaneous interactions. There's no round-trip delay for most operations. Local-first apps aim to provide [near-zero latency](./zero-latency-local-first.md) responses by querying a local database instead of waiting for a server response​. This results in a snappy UX (often no need for loading spinners) because data reads/writes happen immediately on-device. Modern users expect real-time feedback, and local-first delivers that by default.
+- **Performance & UX:** Running from local storage means **low latency** and instantaneous interactions. There's no round-trip delay for most operations. Local-first apps aim to provide [near-zero latency](./zero-latency-local-first.md) responses by querying a [local database](./local-database.md) instead of waiting for a server response​. This results in a snappy UX (often no need for loading spinners) because data reads/writes happen immediately on-device. Modern users expect real-time feedback, and local-first delivers that by default.
 </div>
 
 - **User Control & Privacy:** Storing data locally can limit how much sensitive information is sent off to remote servers. End users have greater control over their data, and the app can implement [client-side encryption](../encryption.md), thereby reducing the risk of mass data breaches. Its even possible to only replicated encrypted data with a server so that the backend does not know about the data at all and just acts as a backup/replication endpoint.
@@ -77,7 +79,7 @@ The push for local-first is driven by a few key new technological capabilities t
 
 ### Developer Experience Benefits
 
-- **Reduced Server Load**: Because local-first architectures typically **transfer large chunks of data once** (e.g., during an initial sync) and then sync only small diffs (delta changes) afterward, the server does not have to handle repeated requests for the same dataset. This bulk-first, diff-later approach drastically decreases the total number of round-trip requests to the backend. In scenarios where hundreds of simultaneous users each require continuous data access, an offline-ready client that only periodically sends or receives changes can scale more efficiently, freeing your servers to handle more users or other tasks. Instead of being bombarded with frequent small queries and updates, the server focuses on periodic sync operations, which can be more easily optimized or batched. It **Scales with Data, Not Load**. In fact for most type of apps, most of the data itself rarely changes. Imagine a CRM system, how often does the data of a customer really change compared to how of a user open the customer-overview page which would load data from a server in traditional systems?
+- **Reduced Server Load**: Because local-first architectures typically **transfer large chunks of data once** (e.g., during an initial sync) and then sync only small diffs (delta changes) afterward, the server does not have to handle repeated requests for the same dataset. This bulk-first, diff-later approach drastically decreases the total number of round-trip requests to the backend. In scenarios where hundreds of simultaneous users each require continuous data access, an offline-ready client that only periodically sends or receives changes can scale more efficiently, freeing your servers to handle more users or other tasks. Instead of being bombarded with frequent small queries and updates, the server focuses on periodic sync operations, which can be more easily optimized or batched. It **Scales with Data, Not Load**. In fact for most type of apps, most of the data itself rarely changes. Imagine a CRM system. How often does the data of a customer really change compared to how often a user opens the customer-overview page which would load data from a server in traditional systems?
 
 - **Less Need for Custom API Endpoints**: A local-first architecture often simplifies backend design. Instead of writing extensive REST routes for each client operation (create, read, update, delete, etc.), you can build a **single replication endpoint** or a small set of endpoints to handle data synchronization for each entity. The client manages local data, merges edits, and pushes/pulls changes with the server automatically. This not only **reduces boilerplate code** on the backend but also **frees developers** to focus on business logic and domain-specific concerns rather than spending time creating and maintaining dozens of narrowly scoped endpoints. As a result, the overall system can be easier to scale and maintain, delivering a **smoother developer experience**.
 
@@ -224,7 +226,7 @@ So now that you know the pros and cons about Local-First. Lets directly compare 
 ---
 
 
-<!-- 
+{/*
 ## Local-First in Practice with RxDB
 
 To concretely understand how local-first development works, let's walk through an example using RxDB, a database for building local-first [realtime app](./realtime-database.md) in JavaScript. RxDB runs inside your app, storing data in IndexedDB (or SQLite, etc.) and supports real-time sync with a backend.
@@ -234,11 +236,7 @@ To concretely understand how local-first development works, let's walk through a
 Because you read this on the RxDB website, in the following a local-first setup with RxDB is shown. If you only care about Local-First in general, you can [skip](#partial-sync) this part.
 :::
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="RxDB" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="RxDB" />
 
 
 ### Setting up a Local Database
@@ -261,7 +259,7 @@ addRxPlugin(RxDBDevModePlugin);
 
 #### Create a Database
 
-Here we use the [localstoarge](../rx-storage-localstorage.md) based storage for RxDB which stores data inside of localstorage in a **browser**. There is a wide range of other [storages](../rx-storage.md) for example in **React Native** you would use the [SQLite storage](../rx-storage-sqlite.md) instead.
+Here we use the [localstorage](../rx-storage-localstorage.md) based storage for RxDB which stores data inside of localstorage in a **browser**. There is a wide range of other [storages](../rx-storage.md) for example in **[React Native](../react-native-database.md)** you would use the [SQLite storage](../rx-storage-sqlite.md) instead.
 
 ```ts
 const db = await createRxDatabase({
@@ -468,78 +466,13 @@ const replicationState = await replicateRxCollection({
 </Steps>
 
 
-With just this configuration, RxDB will begin to **pull** any new or changed documents from the Server and apply them to the local store, and **push** any local changes up to the server. Because `live: true` and our `pullStream$`, it will keep doing this continuously (it's not a one-time sync). Under the hood, it uses an iterating checkpoint so it doesn't fetch everything every time – it will fetch in batches of changes (you can set `batchSize`) and use the `pull.stream$` to get new updates. Conflict handling is also integrated: if a conflict is detected during replication, by default RxDB will use a `first-on-server-wins` strategy. But any other conflict handler can be used instead.
+With just this configuration, RxDB will begin to **pull** any new or changed documents from the Server and apply them to the local store, and **push** any local changes up to the server. Because `live: true` and our `pullStream$`, it will keep doing this continuously (it's not a one-time sync). Under the hood, it uses an iterating checkpoint so it doesn't fetch everything every time since it will fetch in batches of changes (you can set `batchSize`) and use the `pull.stream$` to get new updates. Conflict handling is also integrated: if a conflict is detected during replication, by default RxDB will use a `first-on-server-wins` strategy. But any other conflict handler can be used instead.
 
 
 ## Partial Sync
 
-Suppose you're building a Minecraft-like voxel game where the world can expand in every direction. Storing the entire map locally for offline use is impossible because the dataset could be massive. Yet you still want a local-first design so players can edit the game world offline and sync back to the server later.
-
-### Idea: One Collection, Multiple Replications
-
-You might define a single RxDB collection called `db.voxels`, where each document represents a block or "voxel" (with fields like id, chunkId, coordinates, and type). With RxDB you can, instead of setting up _one_ replication that tries to fetch _all_ voxels, you create **separate replication states** for each _chunk_ of the world the player is currently near.
-
-When the player enters a particular chunk (say `chunk-123`), you **start a replication** dedicated to that chunk. On the server side, you have endpoints to **pull** only that chunk's voxels (e.g., GET `/api/voxels/pull?chunkId=123`) and **push** local changes back (e.g., POST `/api/voxels/push?chunkId=123`). RxDB handles them similarly to any other offline-first setup, but each replication is filtered to only that chunk's data.
-
-When the player leaves `chunk-123` and no longer needs it, you **stop** that replication. If the player moves to `chunk-124`, you start a new replication for chunk 124. This ensures the game only downloads and syncs data relevant to the player's immediate location. Meanwhile, all edits made offline remain safely stored in the local database until a network connection is available.
-
-```ts
-const activeReplications = {}; // chunkId -> replicationState
-
-function startChunkReplication(chunkId) {
-  if (activeReplications[chunkId]) return;
-  const replicationId = 'voxels-chunk-' + chunkId;
-
-  const replicationState = replicateRxCollection({
-    collection: db.voxels,
-    replicationIdentifier: replicationId,
-    pull: {
-      async handler(checkpoint, limit) {
-        const res = await fetch(
-          `/api/voxels/pull?chunkId=${chunkId}&cp=${checkpoint}&limit=${limit}`
-        );
-        /* ... */
-      }
-    },
-    push: {
-      async handler(changedDocs) {
-        const res = await fetch(`/api/voxels/push?chunkId=${chunkId}`);
-        /* ... */
-      }
-    }
-  });
-  activeReplications[chunkId] = replicationState;
-}
-
-function stopChunkReplication(chunkId) {
-  const rep = await activeReplications[chunkId];
-  if (rep) {
-    rep.cancel();
-    delete activeReplications[chunkId];
-  }
-}
-
-// Called whenever the player's location changes; 
-// dynamically start/stop replication for nearby chunks.
-function onPlayerMove(neighboringChunkIds) {
-  neighboringChunkIds.forEach(startChunkReplication);
-  Object.keys(activeReplications).forEach(cid => {
-    if (!neighboringChunkIds.includes(cid)) {
-      stopChunkReplication(cid);
-    }
-  });
-}
-```
-
-### Diffy-Sync when Revisiting a Chunk
-An added benefit of this multi-replication-state design is checkpointing. Each replication state has a unique "replication identifier," so the next time the player returns to `chunk-123`, the local database knows what it already has and only fetches the differences without the need to re-download the entire chunk.
-
-### Partial Sync in a Local-First Business Application
-
-Though a voxel world is an intuitive example, the same technique applies in enterprise scenarios where data sets are large but each user only needs a specific subset. You could spin up a new replication for each "permission group" or "region," so users only sync the records they're allowed to see. Or in a CRM, the replication might be filtered by the specific accounts or projects a user is currently handling. As soon as they switch to a different project, you stop the old replication and start one for the new scope.
-
-This **chunk-based** or **scope-based** replication pattern keeps your local storage lean, reduces network overhead, and still gives users the offline, instant-feedback experience that local-first apps are known for. By dynamically creating (and canceling) replication states, you retain tight control over bandwidth usage and make the infinite (or very large) feasible. In a production app you would also "flag" the entities (with a `pull.modifier`) by which replication state they came from, so that you can clean up the parts that you no longer need. -->
-
+RxDB supports [partial sync](../partial-sync.md) patterns where you dynamically manage multiple replication states for different data scopes. This keeps local storage lean and reduces network overhead while still giving users the offline, instant-feedback experience that local-first apps are known for.
+*/}
 
 ## Offline-First vs. Local-First
 
@@ -551,7 +484,7 @@ In the early days of offline-capable web apps (around 2014), the common phrase w
 </center>
 <br />
 
-Over time, this focus on offline support evolved into the broader concept of **"Local-First Software,"** (see [Ink&Switch](https://martin.kleppmann.com/papers/local-first.pdf)) emphasizing not just offline operation but also the technical underpinnings of **storing data locally** in the client application. While offline-first is primarily about resilience to network loss, local-first highlights ownership, privacy, and performance benefits of keeping the primary data on the user's device. Most tools these days extended the original offline-first concepts, adding real-time reactivity, custom sync, and more nuances like conflict resolution or encryption.
+Over time, this focus on offline support evolved into the broader concept of **"Local-First Software,"** (see [Ink & Switch](https://martin.kleppmann.com/papers/local-first.pdf)) emphasizing not just offline operation but also the technical underpinnings of **storing data locally** in the client application. While offline-first is primarily about resilience to network loss, local-first highlights ownership, privacy, and performance benefits of keeping the primary data on the user's device. Most tools these days extended the original offline-first concepts, adding real-time reactivity, custom sync, and more nuances like conflict resolution or encryption.
 
 <div style={{textAlign: 'justify'}}>
   <img src="/files/no-map-tag.png" alt="no map t ag" width="100" className="img-in-text-right" />
@@ -577,18 +510,46 @@ Then, as more sites added **real-time** features - auto-updating feeds, live not
 
 The same pattern is happening with **local-first** apps. Right now, most sites are still built around network availability. We see loading spinners whenever data is fetched, and we simply wait for the server response. As local-first experiences become **commonplace** - removing spinners, letting users keep working when offline, and syncing in the background - everything else will start to feel **frustratingly behind**. Users won't tolerate slow or blocked interactions if they've seen apps that respond instantly and remain usable offline. They'll expect that as the default and we'll likely see growing pressure on developers to eliminate those extra loading steps. For many users, the experience of **immediate local writes will become not just a perk, but an expectation!**
 
+## FAQ
+
+<Faq>
+<FaqItem question="What are the differences between an offline-first database and a cloud-first database for remote areas?">
+
+An offline-first database stores data locally on the user device. A cloud-first database stores data on a remote server. Field workers in remote areas often face poor network connectivity. An offline-first database allows users to read and write data without an internet connection. A cloud-first database requires continuous internet access to function. An offline-first approach synchronizes data automatically when a connection becomes available. A cloud-first approach blocks users from working during offline periods. You choose an offline-first database to ensure continuous productivity in remote locations.
+
+</FaqItem>
+<FaqItem question="What are the core advantages of local-first data storage?">
+
+Local-first data storage provides **Zero Latency** because data is read and written directly to the local device without waiting for network requests. It guarantees extreme **Reliability** since the application remains fully functional regardless of internet connectivity (offline support). Furthermore, it improves user **Privacy** by keeping sensitive data on the native client rather than a centralized server, and significantly reduces cloud infrastructure costs by offloading database compute to the user's hardware.
+
+</FaqItem>
+<FaqItem question="Why does local-first architecture matter for JavaScript applications?">
+
+JavaScript applications, particularly Single Page Applications (SPAs) built with React, Vue, or Angular, are heavily state-driven. A local-first architecture aligns perfectly with this paradigm by using client-side databases like **[RxDB](../rx-database.md)** to instantly manage the application state locally. This eliminates loading spinners, provides instant visual feedback, and bridges the gap between web applications and native desktop/mobile app performance.
+
+</FaqItem>
+<FaqItem question="What does offline-first and local-first mean for web apps?">
+
+**Offline-First** means designing an application to function properly without an internet connection, often caching resources and queueing actions to sync later. **[Local-First](./local-first-future.md)** takes this further: it means the *primary* source of truth for the application is the local database on the device, rather than a remote cloud server. The cloud merely acts as an eventual [syncing mechanism](../replication.md) (or backup) in the background, rather than the primary endpoint for every user interaction.
+
+</FaqItem>
+<FaqItem question="Are applications like WorkFlowy or Capacities considered local-first?">
+
+Yes, applications like WorkFlowy, Capacities, Notion (to an extent), and Linear use local-first or heavily optimized offline-first architectures. They load the user's workspace into the local browser or desktop client memory/database immediately upon startup. Every interaction mutates the local state first to provide instant UI feedback, and then asynchronous replication protocols silently sync those changes to their backend servers in the background.
+
+</FaqItem>
+</Faq>
+
 ## See also
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Angular Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Angular Database" />
 <br />
 <br />
 
 - Discuss [this topic on HackerNews](https://news.ycombinator.com/item?id=43289885)
 - [Local-First Technologies](../alternatives.md): A list of databases and technologies (besides [RxDB](/)) that support offline-first or local-first use cases.
 - [Discord](/chat/): Join our Discord server to talk with people and share ideas about this topic.
-- [Inc&Switch](https://martin.kleppmann.com/papers/local-first.pdf): The "original" paper about Local-First from 2019 where the naming of local-first Software was first used and described.
+- [Ink & Switch](https://martin.kleppmann.com/papers/local-first.pdf): The "original" paper about Local-First from 2019 where the naming of local-first Software was first used and described.
 - [Learn how to build a local-first Application with RxDB](../quickstart.md).
+
+

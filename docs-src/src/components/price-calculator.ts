@@ -1,8 +1,3 @@
-import type { RxLocalDocument } from '../../../plugins/core';
-import { FormValueDocData } from '../pages/premium';
-
-
-
 /**
  * Prices are in percent of average salary.
  */
@@ -34,7 +29,7 @@ export function calculatePrice(input: PriceCalculationInput) {
     console.log('-------------------- calculatePrice:');
     console.dir(input);
 
-    const baseFee = 150;
+    const baseFee = 200;
     const developerSalary = 60_000;
 
     let aimInPercent = 0;
@@ -48,7 +43,7 @@ export function calculatePrice(input: PriceCalculationInput) {
     let totalPrice = baseFee + ((developerSalary) * (aimInPercent / 100));
 
     /**
-     * Discount if more then one package
+     * Discount if more than one package
      */
     if (input.packages.length === 2) {
         totalPrice = totalPrice * 0.95;
@@ -108,20 +103,5 @@ export function calculatePrice(input: PriceCalculationInput) {
     return {
         totalPrice
     };
-}
-
-
-export function calculatePriceFromFormValueDoc(formValueDoc: RxLocalDocument<any, FormValueDocData>): ReturnType<typeof calculatePrice> {
-    const formData = formValueDoc.getLatest()._data.data;
-
-    const priceCalculationInput: PriceCalculationInput = {
-        teamSize: formData.developers,
-        // projectAmount: '1', // formData['project-amount'] as any,
-        // licensePeriod: 1, // parseInt(formData['license-period'] as any, 10) as any,
-        // homeCountryCode: homeCountryObject.code,
-        packages: formData.packages
-    };
-    const priceResult = calculatePrice(priceCalculationInput);
-    return priceResult;
 }
 

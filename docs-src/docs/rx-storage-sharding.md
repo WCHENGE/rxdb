@@ -1,7 +1,15 @@
 ---
-title: Sharding RxStorage 👑
+title: Sharding RxStorage
 slug: rx-storage-sharding.html
+description: Improve RxDB read and write performance by splitting data across multiple storage shards using the sharding RxStorage wrapper plugin.
+image: /headers/rx-storage-sharding.jpg
 ---
+
+import {PremiumBlock} from '@site/src/components/premium-block';
+import { PerformanceChart } from '@site/src/components/performance-chart';
+import { PERFORMANCE_BROWSER_SHARDING_INDEXEDDB, PERFORMANCE_BROWSER_INDEXEDDB } from '@site/src/components/performance-data';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {ShardingSplit} from '@site/src/components/animations/sharding-split';
 
 # Sharding RxStorage
 
@@ -10,9 +18,11 @@ For example on [slow IndexedDB](./slow-indexeddb.md), a performance gain of **30
 
 The sharding plugin works as a wrapper around any other `RxStorage`. The sharding plugin will automatically create multiple shards per storage instance and it will merge and split read and write calls to it.
 
-:::note Premium
-The sharding plugin is part of [RxDB Premium 👑](/premium/). It is not part of the default RxDB module.
-:::
+<PremiumBlock />
+
+<DocsAnimation subtitle="One collection split across multiple shards">
+<ShardingSplit />
+</DocsAnimation>
 
 ## Using the sharding plugin
 
@@ -46,19 +56,25 @@ const mySchema = {
     sharding: {
         /**
          * Amount of shards per RxStorage instance.
-         * Depending on your data size and query patterns, the optimal shard amount may differ.
+         * Depending on your data size and query
+         * patterns, the optimal shard amount may differ.
          * Do a performance test to optimize that value.
          * 10 Shards is a good value to start with.
          * 
-         * IMPORTANT: Changing the value of shards is not possible on a already existing database state,
-         * you will loose access to  your data.
+         * IMPORTANT: Changing the value of shards is
+         * not possible on an already existing
+         * database state,
+         * you will lose access to  your data.
          */
         shards: 10,
         /**
          * Sharding mode,
          * you can either shard by collection or by database.
-         * For most cases you should use 'collection' which will shard on the collection level.
-         * For example with the IndexedDB RxStorage, it will then create multiple stores per IndexedDB database
+         * For most cases you should use 'collection'
+         * which will shard on the collection level.
+         * For example with the IndexedDB RxStorage,
+         * it will then create multiple stores per
+         * IndexedDB database
          * and not multiple IndexedDB databases, which would be slower.
          */
         mode: 'collection'
@@ -77,3 +93,16 @@ const database = await createRxDatabase({
 
 ```
 
+
+
+## Performance
+
+The Sharding [RxStorage](./rx-storage.md) wrapper can improve performance, especially when using an underlying storage that has bottlenecks with large single stores like IndexedDB. Below is a comparison.
+
+<PerformanceChart
+  data={[
+    PERFORMANCE_BROWSER_SHARDING_INDEXEDDB,
+    PERFORMANCE_BROWSER_INDEXEDDB
+  ]}
+  title="Sharding vs Normal IndexedDB Performance"
+/>

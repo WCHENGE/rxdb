@@ -5,7 +5,7 @@ import {
 } from 'async-test-util';
 import AsyncTestUtil from 'async-test-util';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemaObjects,
     schemas
@@ -27,10 +27,11 @@ import {
     fillWithDefaultSettings,
     fillObjectWithDefaults,
     defaultHashSha256,
-    ensureNotFalsy
+    ensureNotFalsy,
+    HashFunction
 } from '../../plugins/core/index.mjs';
 
-describeParallel('rx-schema.test.ts', () => {
+describe('rx-schema.test.ts', () => {
     describe('static', () => {
         describe('.getIndexes()', () => {
             it('get single indexes', () => {
@@ -235,6 +236,58 @@ describeParallel('rx-schema.test.ts', () => {
                 it('break when index does not exist in schema properties', () => {
                     assert.throws(() => checkSchema(schemas.notExistingIndex));
                 });
+                it('break when index is string but too long', async () => {
+                    await AsyncTestUtil.assertThrows(
+                        () => checkSchema({
+                            title: 'schema',
+                            version: 0,
+                            primaryKey: 'id',
+                            type: 'object',
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    maxLength: 100
+                                },
+                                firstName: {
+                                    type: 'string',
+                                    maxLength: 10000000
+                                }
+                            },
+                            indexes: [
+                                'firstName'
+                            ],
+                            required: ['firstName']
+                        }),
+                        'RxError',
+                        'SC42'
+                    );
+                });
+                it('break when primaryKey maxLength string but too long', async () => {
+                    await AsyncTestUtil.assertThrows(
+                        () => checkSchema({
+                            title: 'schema',
+                            version: 0,
+                            primaryKey: 'id',
+                            type: 'object',
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    maxLength: 10000000
+                                },
+                                firstName: {
+                                    type: 'string',
+                                    maxLength: 10000000
+                                }
+                            },
+                            indexes: [
+                                'firstName'
+                            ],
+                            required: ['firstName']
+                        }),
+                        'RxError',
+                        'SC42'
+                    );
+                });
                 it('break compoundIndex key is no string', () => {
                     assert.throws(() => checkSchema(schemas.compoundIndexNoString));
                 });
@@ -389,6 +442,40 @@ describeParallel('rx-schema.test.ts', () => {
                         }
                     }), 'RxError', 'SC1');
                 });
+                it('should not allow square brackets in fieldnames', async () => {
+                    await assertThrows(() => checkSchema({
+                        title: 'schema',
+                        version: 0,
+                        primaryKey: 'id',
+                        description: 'square bracket in fieldname',
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            'foo[bar': {
+                                type: 'string'
+                            }
+                        }
+                    }), 'RxError', 'SC1');
+                    await assertThrows(() => checkSchema({
+                        title: 'schema',
+                        version: 0,
+                        primaryKey: 'id',
+                        description: 'closing square bracket in fieldname',
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            'foo]bar': {
+                                type: 'string'
+                            }
+                        }
+                    }), 'RxError', 'SC1');
+                });
                 it('should not allow RxDocument-properties as top-fieldnames (own)', () => {
                     assert.throws(() => checkSchema({
                         title: 'schema',
@@ -509,6 +596,97 @@ describeParallel('rx-schema.test.ts', () => {
                 /**
                  * @link https://github.com/pubkey/rxdb/issues/4926#issuecomment-1712223984
                  */
+                it('should throw when composite primary key field is encrypted (SC15)', async () => {
+                    await assertThrows(
+                        () => checkSchema({
+                            version: 0,
+                            type: 'object',
+                            primaryKey: {
+                                key: 'id',
+                                fields: ['firstName', 'lastName'],
+                                separator: '|'
+                            },
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    maxLength: 100
+                                },
+                                firstName: {
+                                    type: 'string',
+                                    maxLength: 50
+                                },
+                                lastName: {
+                                    type: 'string',
+                                    maxLength: 50
+                                },
+                                secret: {
+                                    type: 'string'
+                                }
+                            },
+                            required: ['id', 'firstName', 'lastName'],
+                            encrypted: ['id']
+                        }),
+                        'RxError',
+                        'SC15'
+                    );
+                });
+                it('should throw when encrypted field is nested inside another encrypted field (SC43)', async () => {
+                    await assertThrows(
+                        () => checkSchema({
+                            version: 0,
+                            type: 'object',
+                            primaryKey: 'id',
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    maxLength: 100
+                                },
+                                nested: {
+                                    type: 'object',
+                                    properties: {
+                                        secret: { type: 'string' },
+                                        label: { type: 'string' }
+                                    }
+                                }
+                            },
+                            required: ['id'],
+                            encrypted: ['nested', 'nested.secret']
+                        }),
+                        'RxError',
+                        'SC43'
+                    );
+                });
+                it('should throw when composite primary key field is in indexes (SC13)', async () => {
+                    await assertThrows(
+                        () => checkSchema({
+                            version: 0,
+                            type: 'object',
+                            primaryKey: {
+                                key: 'id',
+                                fields: ['firstName', 'lastName'],
+                                separator: '|'
+                            },
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    maxLength: 100
+                                },
+                                firstName: {
+                                    type: 'string',
+                                    maxLength: 50
+                                },
+                                lastName: {
+                                    type: 'string',
+                                    maxLength: 50
+                                }
+                            },
+                            required: ['id', 'firstName', 'lastName'],
+                            indexes: ['id']
+                        }),
+                        'RxError',
+                        'SC13'
+                    );
+                });
                 it('throw when $ref field is used', async () => {
                     await assertThrows(
                         () => checkSchema({
@@ -575,6 +753,44 @@ describeParallel('rx-schema.test.ts', () => {
                 ensureNotFalsy(normalizedSchema.indexes).forEach(index => {
                     assert.ok(index.includes('id'));
                 });
+            });
+            it('should deduplicate indexes that become identical after adding _deleted prefix and primaryKey suffix', () => {
+                /**
+                 * When the user defines ['name'] and ['name', 'id'],
+                 * both become ['_deleted', 'name', 'id'] after fillWithDefaultSettings
+                 * because _deleted is prepended and primaryKey 'id' is appended.
+                 * The result should not contain duplicate indexes.
+                 */
+                const schema: RxJsonSchema<any> = fillWithDefaultSettings({
+                    primaryKey: 'id',
+                    version: 0,
+                    type: 'object',
+                    properties: {
+                        id: {
+                            type: 'string',
+                            maxLength: 100
+                        },
+                        name: {
+                            type: 'string',
+                            maxLength: 100
+                        }
+                    },
+                    required: ['id'],
+                    indexes: [
+                        ['name'],
+                        ['name', 'id']
+                    ]
+                });
+
+                const indexes = ensureNotFalsy(schema.indexes);
+                const indexStrings = indexes.map((index: any) => JSON.stringify(index));
+                const uniqueIndexStrings = [...new Set(indexStrings)];
+
+                assert.strictEqual(
+                    indexStrings.length,
+                    uniqueIndexStrings.length,
+                    'fillWithDefaultSettings should deduplicate indexes that become identical after processing, but found duplicates: ' + JSON.stringify(indexes)
+                );
             });
         });
         describe('.create()', () => {
@@ -681,6 +897,37 @@ describeParallel('rx-schema.test.ts', () => {
                     const hash = await schema.hash;
                     assert.strictEqual(typeof hash, 'string');
                     assert.ok(hash.length >= 5);
+                });
+                it('should not reuse a failed hash for another schema instance', async () => {
+                    let calls = 0;
+                    const hashFunction: HashFunction = (input) => {
+                        calls++;
+                        if (calls === 1) {
+                            return Promise.reject(new Error('hashing failed'));
+                        }
+                        return defaultHashSha256(input);
+                    };
+                    const schema1 = createRxSchema(schemas.human, hashFunction);
+                    await assert.rejects(() => schema1.hash);
+                    await AsyncTestUtil.wait(0);
+
+                    const schema2 = createRxSchema(schemas.human, hashFunction);
+                    const hash = await schema2.hash;
+                    assert.strictEqual(typeof hash, 'string');
+                    assert.ok(hash.length >= 5);
+                    assert.strictEqual(calls, 2);
+                });
+                it('should return the same hash for the same schema and hash function', async () => {
+                    let calls = 0;
+                    const hashFunction: HashFunction = (input) => {
+                        calls++;
+                        return defaultHashSha256(input);
+                    };
+                    const hash1 = await createRxSchema(schemas.human, hashFunction).hash;
+                    const hash2 = await createRxSchema(schemas.human, hashFunction).hash;
+                    assert.strictEqual(hash1, hash2);
+                    assert.strictEqual(hash1, await createRxSchema(schemas.human, defaultHashSha256).hash);
+                    assert.strictEqual(calls, 1);
                 });
                 it('should normalize one schema with two different orders and generate for each the same hash', async () => {
                     const schema1 = createRxSchema(schemas.humanNormalizeSchema1, defaultHashSha256);
@@ -792,6 +1039,45 @@ describeParallel('rx-schema.test.ts', () => {
                     assert.strictEqual(filled.age, 40);
                     assert.strictEqual(filled2.foo, 'bar');
                     assert.strictEqual(filled2.age, 40);
+                });
+                it('should not share non-primitive default value references between filled objects', () => {
+                    const schema = createRxSchema({
+                        version: 0,
+                        primaryKey: 'id',
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            tags: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                default: []
+                            },
+                            metadata: {
+                                type: 'object',
+                                properties: {},
+                                default: {}
+                            }
+                        },
+                        required: ['id']
+                    } as any, defaultHashSha256);
+
+                    const filled1 = fillObjectWithDefaults(schema, { id: 'doc1' });
+                    const filled2 = fillObjectWithDefaults(schema, { id: 'doc2' });
+
+                    // Both should have the correct default values
+                    assert.deepStrictEqual(filled1.tags, []);
+                    assert.deepStrictEqual(filled2.tags, []);
+                    assert.deepStrictEqual(filled1.metadata, {});
+                    assert.deepStrictEqual(filled2.metadata, {});
+
+                    // Default values must be independent copies, not shared references.
+                    // Otherwise mutating one document's defaults (e.g. in a pre-insert hook)
+                    // would corrupt the schema's cached defaults for all future documents.
+                    assert.notStrictEqual(filled1.tags, filled2.tags);
+                    assert.notStrictEqual(filled1.metadata, filled2.metadata);
                 });
             });
         });
@@ -1172,6 +1458,57 @@ describeParallel('rx-schema.test.ts', () => {
             db.close();
         });
         /**
+         * @link https://github.com/pubkey/rxdb/pull/8522
+         */
+        it('#8522 patternProperties with square bracket character classes should not be interpreted as array index', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+
+            const mySchema = {
+                version: 0,
+                primaryKey: 'passportId',
+                type: 'object',
+                properties: {
+                    passportId: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    personFields: {
+                        type: 'object',
+                        patternProperties: {
+                            '^[a-z]\\w*$': {   // regex includes square brackets (character class)
+                                type: 'string'
+                            }
+                        },
+                        additionalProperties: false
+                    },
+                }
+            } as any;
+
+            const collections = await db.addCollections({
+                mycollection: {
+                    schema: mySchema
+                }
+            });
+
+            await collections.mycollection.insert({
+                passportId: 'foobar',
+                personFields: {
+                    firstLower: 'lower',
+                },
+            });
+
+            const myDocument = await collections.mycollection
+                .findOne('foobar')
+                .exec();
+
+            assert.strictEqual(myDocument.personFields.firstLower, 'lower');
+
+            db.close();
+        });
+        /**
          * Using Infinity as "maximum" does not work
          * and should throw a proper error.
          */
@@ -1251,6 +1588,71 @@ describeParallel('rx-schema.test.ts', () => {
             }
 
             db.close();
+        });
+    });
+    describe('.getJsonSchemaWithoutMeta()', () => {
+        it('should not contain any RxDB-internal meta properties like _rev', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            const collections = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const schemaWithoutMeta = collections.humans.schema.getJsonSchemaWithoutMeta();
+            const propertyKeys = Object.keys(schemaWithoutMeta.properties);
+
+            // none of the internal meta properties should be present
+            assert.ok(!propertyKeys.includes('_rev'), '_rev should not be in properties');
+            assert.ok(!propertyKeys.includes('_deleted'), '_deleted should not be in properties');
+            assert.ok(!propertyKeys.includes('_meta'), '_meta should not be in properties');
+            assert.ok(!propertyKeys.includes('_attachments'), '_attachments should not be in properties');
+
+            // the required array should also not contain any internal meta fields
+            const required = schemaWithoutMeta.required as string[];
+            assert.ok(!required.some(r => r.startsWith('_')), 'required should not contain _-prefixed meta fields');
+
+            // user-defined properties should still be present
+            assert.ok(propertyKeys.includes('firstName'));
+            assert.ok(propertyKeys.includes('lastName'));
+            assert.ok(propertyKeys.includes('passportId'));
+            assert.ok(propertyKeys.includes('age'));
+
+            await db.close();
+        });
+        it('indexes should not reference internal meta fields that are removed from properties', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            const collections = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const schemaWithoutMeta = collections.humans.schema.getJsonSchemaWithoutMeta();
+            const propertyKeys = Object.keys(schemaWithoutMeta.properties);
+
+            // every field referenced in an index must exist in properties
+            const indexes = schemaWithoutMeta.indexes as string[][];
+            for (const index of indexes) {
+                const fields = Array.isArray(index) ? index : [index];
+                for (const field of fields) {
+                    const topLevelField = field.split('.')[0];
+                    assert.ok(
+                        propertyKeys.includes(topLevelField),
+                        'index field "' + field + '" references property "' + topLevelField + '" which does not exist in the schema returned by getJsonSchemaWithoutMeta()'
+                    );
+                }
+            }
+
+            // user-defined index fields should still be present
+            const allIndexFields = indexes.flat();
+            assert.ok(allIndexFields.includes('firstName'), 'user-defined index field "firstName" should be present');
+
+            await db.close();
         });
     });
     describe('wait a bit', () => {

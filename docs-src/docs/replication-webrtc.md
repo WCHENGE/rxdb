@@ -2,14 +2,24 @@
 title: WebRTC P2P Replication with RxDB - Sync Browsers and Devices
 slug: replication-webrtc.html
 description: Learn to set up peer-to-peer WebRTC replication with RxDB. Bypass central servers and enjoy secure, low-latency data sync across all clients.
+image: /headers/replication-webrtc.jpg
 ---
 
 import {Steps} from '@site/src/components/steps';
+import {HeadlineWithIcon} from '@site/src/components/headline-with-icon';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {P2pReplicationMesh} from '@site/src/components/animations/p2p-replication-mesh';
 
-# P2P WebRTC Replication with RxDB - Sync Data between Browsers and Devices in JavaScript
+# <HeadlineWithIcon h1 icon={<img src="/files/icons/webrtc.svg" alt="WebRTC" />} subtitle="Sync Data between Browsers and Devices in JavaScript">P2P WebRTC Replication with RxDB</HeadlineWithIcon>
 
 WebRTC P2P data connections are revolutionizing real-time web and mobile development by **eliminating central servers** in scenarios where clients can communicate directly. With the **RxDB** [Sync Engine](./replication.md), you can sync your local database state across multiple browsers or devices via **WebRTC P2P (Peer-to-Peer)** connections, ensuring scalable, secure, and **low-latency** data flows without traditional server bottlenecks.
 
+
+<DocsAnimation subtitle="Peers replicating directly with each other over WebRTC">
+<P2pReplicationMesh />
+</DocsAnimation>
 
 ## What is WebRTC?
 
@@ -28,14 +38,10 @@ For a deeper look at comparing WebRTC with **WebSockets** and **WebTransport**, 
 1. **Reduced Latency** - By skipping a central server hop, data travels directly from one client to another, minimizing round-trip times and improving responsiveness.
 2. **Scalability** - New peers can join without overloading a central infrastructure. The sync overhead increases linearly with the number of connections rather than requiring a massive server cluster.
 3. **Privacy & Ownership** - Data stays within the user’s devices, avoiding risks tied to storing data on third-party servers. This design aligns well with [local-first](./articles/local-first-future.md) or "[zero-latency](./articles/zero-latency-local-first.md)" apps.
-4. **Resilience** - In some scenarios, if the central server is unreachable, P2P connections remain operational (assuming a functioning signaling path). Apps can still replicate data among local networks like when they are in the same Wifi or LAN.
+4. **Resilience** - In some scenarios, if the central server is unreachable, P2P connections remain operational (assuming a functioning signaling path). Apps can still replicate data among local networks like when they are in the same Wifi or LAN. Notice that the peers still have to find each other through a signaling server, so this is not a full offline mesh. For [DDIL environments](./articles/ddil-database.md) without any infrastructure at all, compare the transports in the [Ditto alternative](./articles/alternatives/ditto-alternative.md) page.
 5. **Cost Savings** - Reducing the reliance on a high-bandwidth server can cut hosting and bandwidth expenses, particularly in high-traffic or IoT-style use cases.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="/files/logo/rxdb_javascript_database.svg" alt="JavaScript Embedded Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Embedded Database" />
 
 ## Peer-to-Peer (P2P) WebRTC Replication with the RxDB JavaScript Database
 
@@ -51,15 +57,11 @@ Because RxDB is a NoSQL database and the replication protocol is straightforward
 
 Before you use this plugin, make sure that you understand how [WebRTC works](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API). Here we build a todo-app that replicates todo-entries between clients:
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="https://github.com/pubkey/rxdb-quickstart/raw/master/files/p2p-todo-demo.gif" alt="JavaScript Embedded Database" width="500" />
-    </a>
-</center>
+<CenteredImage src="https://github.com/pubkey/rxdb-quickstart/raw/master/files/p2p-todo-demo.gif" alt="JavaScript Embedded Database" width={500} href="https://rxdb.info/" />
 
 You can find a fully build example of this at the [RxDB Quickstart Repository](https://github.com/pubkey/rxdb-quickstart) which you can also [try out online](https://pubkey.github.io/rxdb-quickstart/).
 
-Four you create the [database](./rx-database.md) and then you can configure the replication:
+First you create the [database](./rx-database.md) and then you can configure the replication:
 
 <Steps>
 
@@ -126,12 +128,14 @@ const replicationPool = await replicateWebRTC(
         // The topic is like a 'room-name'. All clients with the same topic
         // will replicate with each other. In most cases you want to use
         // a different topic string per user. Also you should prefix the topic with
-        // a unique identifier for your app, to ensure you do not let your users connect
+        // a unique identifier for your app, to ensure
+        // you do not let your users connect
         // with other apps that also use the RxDB P2P Replication.
         topic: 'my-users-pool',
         /**
          * You need a collection handler to be able to create WebRTC connections.
-         * Here we use the simple peer handler which uses the 'simple-peer' npm library.
+         * Here we use the simple peer handler which
+         * uses the 'simple-peer' npm library.
          * To learn how to create a custom connection handler, read the source code,
          * it is pretty simple.
          */
@@ -142,8 +146,11 @@ const replicationPool = await replicateWebRTC(
             signalingServerUrl: 'wss://signaling.rxdb.info/',
 
             // only in Node.js, we need the wrtc library
-            // because Node.js does not contain the WebRTC API.
-            wrtc: require('node-datachannel/polyfill'),
+            // because Node.js does not have WebRTC.
+            // Wrap with createSimplePeerWrtc().
+            wrtc: createSimplePeerWrtc(
+                require('node-datachannel/polyfill')
+            ),
 
             // only in Node.js, we need the WebSocket library
             // because Node.js does not contain the WebSocket API.
@@ -201,6 +208,61 @@ const serverState = await startSignalingServerSimplePeer({
 
 For custom signaling servers with more complex logic, you can check the [source code of the default one](https://github.com/pubkey/rxdb/blob/master/src/plugins/replication-webrtc/signaling-server.ts).
 
+## Signaling over Nostr Relays
+
+Instead of running your own signaling server, you can let the peers find each other over [Nostr](https://nostr.how/en/what-is-nostr) relays. Nostr is an open protocol where clients publish signed JSON events to relays, which are plain WebSocket servers. There are many public relays, and you can run your own with open source software like [strfry](https://github.com/hoytech/strfry) or [nostr-rs-relay](https://github.com/scsibug/nostr-rs-relay).
+
+The connection handler from `getConnectionHandlerNostr()` sends the WebRTC offers, answers, and ICE candidates as Nostr events. After the peers are connected, the replicated documents go directly over the WebRTC data channel and never touch a relay.
+
+```ts
+import {
+    replicateWebRTC,
+    getConnectionHandlerNostr
+} from 'rxdb/plugins/replication-webrtc';
+
+const replicationPool = await replicateWebRTC(
+    {
+        collection: myRxCollection,
+        topic: 'my-users-pool',
+        connectionHandlerCreator: getConnectionHandlerNostr({
+            // Public relays, all peers of a topic must share at least one.
+            relays: [
+                'wss://nos.lol',
+                'wss://relay.primal.net',
+                'wss://nostr.mom'
+            ],
+            /**
+             * (optional) Nostr secret key (32 bytes) of this peer.
+             * If not set, a random key is generated on each start.
+             */
+            // secretKey: mySecretKey,
+            /**
+             * (optional) kind of the Nostr events that are used for signaling.
+             * Must be an ephemeral kind between 20000 and 29999.
+             * [default=25050]
+             */
+            // eventKind: 25050
+        }),
+        pull: {},
+        push: {}
+    }
+);
+```
+
+How the signaling works:
+
+- **Ephemeral events**: All signaling events use an ephemeral kind, so relays forward them to the subscribers but do not store them.
+- **Hashed topic**: The events are tagged with a SHA-256 hash of the `topic`, so the topic name is not readable on the relays.
+- **Presence**: Each peer publishes a presence event every `10s`. A peer that sends no presence for `35s` is removed from the room.
+- **Encrypted signals**: Offers, answers, and ICE candidates are encrypted with [NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md) to the public key of the receiving peer. Only the receiving peer can read them.
+- **Signed events**: Every event is signed with the key of the sending peer, and events with an invalid signature are ignored. Because the signals that set up the WebRTC connection are signed, the public key of a connected peer is verified.
+- **Batched signals**: Many public relays rate limit how many events a client can send per second. Trickle ICE creates many signals at once, so the signals to the same peer are collected for `200ms` and sent together in one event.
+- **Multiple relays**: The handler connects to all given relays and reconnects each of them with the same backoff as the signaling server connection. Events that arrive from more than one relay are only processed once.
+
+The same secret key can be used on multiple devices or browser tabs at the same time, because each connection handler adds its own random session id to the peer id.
+
+The public relays `wss://nos.lol`, `wss://relay.primal.net`, and `wss://nostr.mom` from the example above were tested with this handler on September 30, 2026. Public relays are run by third parties and can be offline, change their policies, or rate limit your app at any time. For production, run your own relay or pick relays that you trust, and pass more than one relay url.
+
 
 ## Peer Validation
 
@@ -217,6 +279,60 @@ const replicationPool = await replicateWebRTC(
         pull: {},
         push: {}
         /* ... */
+    }
+);
+```
+
+With the [Nostr connection handler](#signaling-over-nostr-relays), each peer has a verified Nostr public key. You can use it to only replicate with known peers. Give each device its own `secretKey` and store the public keys of the allowed devices:
+
+```ts
+import {
+    replicateWebRTC,
+    getConnectionHandlerNostr,
+    getNostrPublicKeyOfPeer
+} from 'rxdb/plugins/replication-webrtc';
+import { getPublicKey } from 'nostr-tools/pure';
+
+// hex public keys of the devices that are allowed to replicate
+const allowedPublicKeys = [
+    getPublicKey(mySecretKey),
+    publicKeyOfOtherDevice
+];
+
+const replicationPool = await replicateWebRTC(
+    {
+        collection: myRxCollection,
+        topic: 'my-users-pool',
+        connectionHandlerCreator: getConnectionHandlerNostr({
+            relays: ['wss://nos.lol', 'wss://relay.primal.net'],
+            secretKey: mySecretKey
+        }),
+        isPeerValid: (peer) => {
+            const publicKey = getNostrPublicKeyOfPeer(peer);
+            return allowedPublicKeys.includes(publicKey);
+        },
+        pull: {},
+        push: {}
+    }
+);
+```
+
+## Connection Handling and Timeouts
+
+The simple-peer connection handler reconnects on its own when the connection to the signaling server or to another peer breaks. Reconnects run with an exponential backoff that starts at `500ms` and is capped at `15s`, so that an unreachable signaling server does not cause a busy loop. A peer connection that is not established within `15s` is dropped and a new attempt is started. Existing WebRTC connections keep replicating while the signaling server is offline.
+
+Messages that are bigger than the message size limit of the WebRTC data channel (which can be as low as `64 KiB` depending on the browser) are split into chunks, so you can replicate big documents.
+
+Each request to another peer fails when no answer arrives in time. The replication then retries after `retryTime`. You can change the timeout with the `requestTimeout` option:
+
+```ts
+const replicationPool = await replicateWebRTC(
+    {
+        /* ... */
+        // (optional) time in milliseconds [default=20000]
+        requestTimeout: 30000,
+        pull: {},
+        push: {}
     }
 );
 ```
@@ -259,15 +375,18 @@ window.process = {
 While all modern browsers support the WebRTC and WebSocket APIs, they is missing in Node.js which will throw the error `No WebRTC support: Specify opts.wrtc option in this environment`. Therefore you have to polyfill it with a compatible WebRTC and WebSocket polyfill. It is recommended to use the [node-datachannel package](https://github.com/murat-dogan/node-datachannel/tree/master/src/polyfill) for WebRTC which **does not** come with RxDB but has to be installed before via `npm install node-datachannel --save`.
 For the Websocket API use the `ws` package that is included into RxDB.
 
+Because the `node-datachannel/polyfill` has read-only properties on `RTCSessionDescription` that are incompatible with `simple-peer`, you must use the `createSimplePeerWrtc()` wrapper:
+
 ```ts
 import nodeDatachannelPolyfill from 'node-datachannel/polyfill';
 import { WebSocket } from 'ws';
+import { createSimplePeerWrtc } from 'rxdb/plugins/replication-webrtc';
 const replicationPool = await replicateWebRTC(
     {
         /* ... */
         connectionHandlerCreator: getConnectionHandlerSimplePeer({
             signalingServerUrl: 'wss://example.com:8080',
-            wrtc: nodeDatachannelPolyfill,
+            wrtc: createSimplePeerWrtc(nodeDatachannelPolyfill),
             webSocketConstructor: WebSocket
         }),
         pull: {},
@@ -284,9 +403,33 @@ Storing replicated data encrypted on client devices using the RxDB Encryption Pl
 The WebRTC replication plugin seamlessly integrates with the [RxDB encryption plugins](./encryption.md), providing a robust solution for encrypting sensitive information before it's stored locally. By doing so, it ensures that even if unauthorized access to the device occurs, the data remains protected and unintelligible without the encryption key (or password). This approach is particularly vital in scenarios where user-generated content or confidential data is replicated across devices, as it empowers users with control over their own data while adhering to stringent security standards. [Read more about the encryption plugins here](./encryption.md).
 
 
+## FAQ
+
+<Faq>
+<FaqItem question="How can WebRTC enable real-time peer-to-peer communications between browsers?">
+
+WebRTC enables true peer-to-peer (P2P) communication by establishing direct UDP/TCP data channels between browsers, completely bypassing centralized database architectures. Because the WebRTC connection requires initial IP discovery, clients must briefly connect to a WebSocket signaling server or to [Nostr relays](#signaling-over-nostr-relays) to exchange SDP offers and ICE candidates. Once peered, the **[RxDB WebRTC Replication](./replication.md)** plugin streams NoSQL document diffs and [CRDT](./crdt.md) operations instantly across the channel, providing decentralized real-time sync with absolute zero cloud latency.
+
+</FaqItem>
+<FaqItem question="Which distributed database services offer peer discovery and sync plugins?">
+
+RxDB offers comprehensive peer discovery and sync plugins for distributed applications. The WebRTC replication plugin facilitates direct peer-to-peer data synchronization. A signaling server or a set of [Nostr relays](#signaling-over-nostr-relays) handles initial peer discovery and connection establishment. You connect browsers and mobile apps without a central database server. The sync engine automatically replicates local changes across all discovered peers.
+
+</FaqItem>
+<FaqItem question="What are the top databases that sync directly between devices without cloud dependency?">
+
+Very few databases support true decentralized peer-to-peer (P2P) synchronization. **[RxDB](./rx-database.md)** is one of the leading options for this architecture, offering a dedicated WebRTC replication plugin that allows direct, client-to-client data synchronization via [WebRTC data channels](./replication-webrtc.md) without routing through a central cloud database. Other notable decentralized tools include **Ditto**, **GunDB**, and CRDT-based libraries like **Yjs** or **Automerge** (though these are often data structure libraries, not fully queryable databases).
+
+</FaqItem>
+</Faq>
+
 ## Follow Up
 
 - **Check out the [RxDB Quickstart](./quickstart.md)** to see how to set up your first RxDB database.
 - **Explore advanced features** like [Custom Conflict Handling](./transactions-conflicts-revisions.md) or [Offline-First Performance](./rx-storage-performance.md).
 - **Try an example** at [RxDB Quickstart GitHub](https://github.com/pubkey/rxdb-quickstart) to see a working P2P Sync setup.
 - **Join the RxDB Community** on [GitHub](/code/) or [Discord](/chat/) if you have questions or want to share your P2P WebRTC experiences.
+
+
+
+

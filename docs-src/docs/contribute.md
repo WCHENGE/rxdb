@@ -2,6 +2,7 @@
 title: Contribute
 slug: contribution.html
 description: Got a fix or fresh idea? Learn how to contribute to RxDB, run tests, and shape the future of this cutting-edge NoSQL database for JavaScript.
+image: /headers/contribution.jpg
 ---
 
 
@@ -19,7 +20,7 @@ Before you can start developing, do the following:
 1. Make sure you have installed nodejs with the version stated in the [.nvmrc](https://github.com/pubkey/rxdb/blob/master/.nvmrc)
 2. Clone the repository `git clone https://github.com/pubkey/rxdb.git`
 3. Install the dependencies `cd rxdb && npm install`
-4. Make sure that the tests work for you. At first, try it out with `npm run test:node:memory` which tests the memory storage in node. In the [package.json](https://github.com/pubkey/rxdb/blob/master/package.json) you can find more scripts to run the tests with different storages.
+4. Make sure that the tests work for you. At first, try it out with `npm run test:node:memory` which tests the [memory storage](./rx-storage-memory.md) in node. In the [package.json](https://github.com/pubkey/rxdb/blob/master/package.json) you can find more scripts to run the tests with different storages.
 
 ## Adding tests
 
@@ -49,6 +50,7 @@ Also the maintainer will never go on a bug hunt based on your plain description.
 
 The source of the documentation is at the `docs-src`-folder.
 To read the docs locally, run `npm run docs:install && npm run docs:serve` and open `http://localhost:4000/`
+
 
 
 

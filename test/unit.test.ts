@@ -5,9 +5,11 @@ import './unit/util.test.ts';
  * Helpers that
  * do not fully test RxDB but
  * just single methods
-*/
+ */
+import './unit/vector-distance.test.ts';
 import './unit/custom-index.test.ts';
 import './unit/query-planner.test.ts';
+import './unit/doc-cache.test.ts';
 
 
 import './unit/internal-indexes.test.ts';
@@ -24,6 +26,8 @@ import './unit/rx-storage-query-correctness.test.ts';
 import './unit/rx-storage-helper.test.ts';
 
 import './unit/rx-storage-dexie.test.ts';
+import './unit/rx-storage-localstorage.test.ts';
+import './unit/rx-storage-sqlite.test.ts';
 import './unit/rx-storage-remote.test.ts';
 import './unit/instance-of-check.test.ts';
 import './unit/rx-schema.test.ts';
@@ -62,6 +66,7 @@ import './unit/migration-schema.test.ts';
 import './unit/attachments.test.ts';
 import './unit/attachments-compression.test.ts';
 import './unit/migration-storage.test.ts';
+import './unit/webmcp.test.ts';
 import './unit/crdt.test.ts';
 import './unit/population.test.ts';
 import './unit/leader-election.test.ts';

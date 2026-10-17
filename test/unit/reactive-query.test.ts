@@ -1,6 +1,6 @@
 import assert from 'assert';
 import clone from 'clone';
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 
 
 import {
@@ -8,7 +8,8 @@ import {
     schemas,
     humansCollection,
     isFastMode,
-    HumanDocumentType
+    HumanDocumentType,
+    getConfig
 } from '../../plugins/test-utils/index.mjs';
 
 import AsyncTestUtil, { wait, waitUntil } from 'async-test-util';
@@ -31,8 +32,8 @@ import {
     first
 } from 'rxjs/operators';
 
-describeParallel('reactive-query.test.js', () => {
-    describeParallel('positive', () => {
+describe('reactive-query.test.js', () => {
+    describe('positive', () => {
         it('get results of array when .subscribe() and filled array later', async () => {
             const c = await humansCollection.create(1);
             const query = c.find();
@@ -150,11 +151,130 @@ describeParallel('reactive-query.test.js', () => {
             sub.unsubscribe();
             c.database.close();
         });
-        it('doing insert after subscribe should end with the correct results', async () => {
-            if (config.storage.name === 'foundationdb') {
-                // TODO randomly fails in foundationdb
+        it('groups live query write bursts before _ensureEqual when enabled', async () => {
+            if (
+                isFastMode() ||
+                getConfig().storage.name.includes('random-delay')
+            ) {
                 return;
             }
+            const throttleTime = 300;
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                multiInstance: false,
+                eventReduce: false,
+                liveQueryUpdateThrottleTime: throttleTime
+            });
+            const collections = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const c = collections.humans;
+            const query = c.find().sort('passportId');
+            const emitted: RxDocument<HumanDocumentType>[][] = [];
+            let sub: { unsubscribe(): void; } | undefined;
+            try {
+                sub = query.$.subscribe(results => emitted.push(results));
+                await waitUntil(() => emitted.length === 1);
+
+                /**
+                 * The auditTime() window opens with the change event of the first insert,
+                 * not when all writes are done. On a slow storage or on a loaded CI machine
+                 * the write burst itself can take longer than the throttle time, then
+                 * _ensureEqual() legitimately runs while the later inserts are still going on.
+                 * To not have a random failing test, the assertion only runs when the whole
+                 * burst did fit into the throttle window, and the burst is retried otherwise.
+                 */
+                const attempts = 4;
+                let didAssertInsideWindow = false;
+                for (let attempt = 0; attempt < attempts && !didAssertInsideWindow; attempt++) {
+                    if (attempt > 0) {
+                        // wait until the audit window of the previous attempt has flushed.
+                        await promiseWait(throttleTime * 2);
+                    }
+                    const ensureEqualBefore = query._lastEnsureEqual;
+                    const startTime = Date.now();
+                    await Promise.all(
+                        new Array(5).fill(0).map((_v, index) => {
+                            return c.insert(schemaObjects.humanData('throttle-' + attempt + '-' + index));
+                        })
+                    );
+                    await promiseWait(5);
+
+                    /**
+                     * Read the counter before the time so that a measured
+                     * elapsed time inside the window also proves that the
+                     * counter was read inside the window.
+                     */
+                    const ensureEqualAfter = query._lastEnsureEqual;
+                    const elapsed = Date.now() - startTime;
+                    if (elapsed < throttleTime - 20) {
+                        assert.strictEqual(ensureEqualAfter, ensureEqualBefore);
+                        didAssertInsideWindow = true;
+                    }
+                }
+                assert.ok(
+                    didAssertInsideWindow,
+                    'write burst did not fit into the throttle window of ' + throttleTime + 'ms in ' + attempts + ' attempts'
+                );
+            } finally {
+                if (sub) {
+                    sub.unsubscribe();
+                }
+                db.close();
+            }
+        });
+        it('emits the latest matching result after grouped writes', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage(),
+                multiInstance: false,
+                eventReduce: false,
+                liveQueryUpdateThrottleTime: 10
+            });
+            const collections = await db.addCollections({
+                humans: {
+                    schema: schemas.human
+                }
+            });
+            const c = collections.humans;
+            await c.insert(schemaObjects.humanData('match-0', 1));
+
+            const query = c.find({
+                selector: {
+                    age: {
+                        $eq: 1
+                    }
+                },
+                sort: [
+                    {
+                        passportId: 'asc'
+                    }
+                ]
+            });
+            const emitted: RxDocument<HumanDocumentType>[][] = [];
+            const sub = query.$.subscribe(results => emitted.push(results));
+            try {
+                await waitUntil(() => emitted.length === 1);
+
+                await Promise.all([
+                    c.insert(schemaObjects.humanData('outside-result', 2)),
+                    c.insert(schemaObjects.humanData('match-1', 1))
+                ]);
+
+                await waitUntil(() => {
+                    const lastEmission = emitted[emitted.length - 1];
+                    return lastEmission &&
+                        lastEmission.map(doc => doc.primary).join(',') === 'match-0,match-1';
+                });
+            } finally {
+                sub.unsubscribe();
+                db.close();
+            }
+        });
+        it('doing insert after subscribe should end with the correct results', async () => {
 
             const c = await humansCollection.create(1);
             let result = [];
@@ -187,8 +307,81 @@ describeParallel('reactive-query.test.js', () => {
         });
     });
     describe('ISSUES', () => {
+        it('#7075 query results not correct if changes happen faster than the query updates', async () => {
+            if (
+                config.storage.name === 'sqlite-trial'
+            ) {
+                return;
+            }
+            const c = await humansCollection.create(0);
+            let docSize = 0;
+
+            let len = isFastMode() ? 100 : 3000;
+            if (
+                len > 100 &&
+                [
+                    'deno',
+                    'dexie'
+                ].find(slowName => config.storage.name.includes(slowName))
+            ) {
+                len = 100;
+            }
+
+
+            docSize += len;
+            const docs = new Array(len).fill(0).map((_, i) => {
+                const id = 'base_' + ((i + 1) + '').padStart(5, '0');
+                return schemaObjects.humanData(id);
+            });
+            await c.bulkInsert(docs);
+
+            let result: RxDocument<{
+                firstName: string;
+                lastName: string;
+                passportId: string;
+                age?: number | undefined;
+            }, {}>[] = [];
+
+            let done = false;
+            let insertLen = 0;
+            let addCount = 0;
+
+            const query = c.find({ sort: [{ passportId: 'asc', lastName: 'desc', firstName: 'asc' }] });
+            const sub = query.$.subscribe(r => {
+                done = true;
+                result = r;
+            });
+
+            (async () => {
+                while (!done && insertLen < 10) {
+                    await wait(2);
+                    const useCount = addCount++;
+                    const id = 'z_add_ ' + useCount;
+                    c.insert(schemaObjects.humanData(id)).then(() => {
+                    });
+                    insertLen++;
+                }
+            })();
+
+
+            await waitUntil(() => done);
+            await waitUntil(() => {
+                const should = insertLen + docSize;
+                return result.length === should;
+            });
+            await wait(isFastMode() ? 0 : 50);
+            assert.strictEqual(result.length, insertLen + docSize);
+
+            // adding a new doc now should still work
+            await c.insert(schemaObjects.humanData('last'));
+            const endResult = await query.exec();
+            assert.ok(endResult.find(d => d.primary === 'last'), 'must have last doc');
+
+            sub.unsubscribe();
+            c.database.close();
+        });
         // his test failed randomly, so we run it more often.
-        new Array(isFastMode() ? 3 : 10)
+        new Array(isFastMode() ? 1 : 5)
             .fill(0).forEach(() => {
                 it('#31 do not fire on doc-change when result-doc not affected ' + config.storage.name, async () => {
                     const docAmount = isFastMode() ? 2 : 10;

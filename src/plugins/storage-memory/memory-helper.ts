@@ -1,5 +1,4 @@
 import type {
-    BulkWriteRow,
     RxDocumentData,
     RxJsonSchema
 } from '../../types/index.d.ts';
@@ -13,7 +12,7 @@ import {
     pushAtSortPosition
 } from 'array-push-at-sort-position';
 import { newRxError } from '../../rx-error.ts';
-import { boundEQ } from './binary-search-bounds.ts';
+import { boundEQByIndexString } from './binary-search-bounds.ts';
 
 
 export function getMemoryCollectionKey(
@@ -46,6 +45,14 @@ export function attachmentMapKey(documentId: string, attachmentId: string): stri
 }
 
 
+/**
+ * @performance
+ * Threshold for using in-place splice vs. full merge-sort when inserting
+ * documents into indexes. Below this batch size, in-place binary search + splice
+ * is faster because it avoids allocating a new full-size array and copying all elements.
+ */
+const IN_PLACE_INSERT_THRESHOLD = 64;
+
 function sortByIndexStringComparator<RxDocType>(a: DocWithIndexString<RxDocType>, b: DocWithIndexString<RxDocType>) {
     if (a[0] < b[0]) {
         return -1;
@@ -67,38 +74,65 @@ export function putWriteRowToState<RxDocType>(
     docInState?: RxDocumentData<RxDocType>
 ) {
     state.documents.set(docId, document as any);
-    for (let i = 0; i < stateByIndex.length; ++i) {
+    const stateByIndexLength = stateByIndex.length;
+    for (let i = 0; i < stateByIndexLength; ++i) {
         const byIndex = stateByIndex[i];
         const docsWithIndex = byIndex.docsWithIndex;
         const getIndexableString = byIndex.getIndexableString;
         const newIndexString = getIndexableString(document as any);
-        const insertPosition = pushAtSortPosition(
-            docsWithIndex,
-            [
-                newIndexString,
-                document,
-                docId,
-            ],
-            sortByIndexStringComparator,
-            0
-        );
 
         /**
-         * Remove previous if it was in the state
+         * @performance
+         * When updating a document, first compute whether the index changed.
+         * If it did not change, we only need to update the document reference
+         * in-place without any splice operations.
          */
         if (docInState) {
             const previousIndexString = getIndexableString(docInState);
             if (previousIndexString === newIndexString) {
                 /**
                  * Performance shortcut.
-                 * If index was not changed -> The old doc must be before or after the new one.
+                 * Index did not change, so the old entry is at the same position.
+                 * We can find it by string-specialized binary search and update in-place.
                  */
-                const prev = docsWithIndex[insertPosition - 1];
-                if (prev && prev[2] === docId) {
+                const eqPos = boundEQByIndexString(
+                    docsWithIndex,
+                    previousIndexString
+                );
+                if (eqPos !== -1) {
+                    /**
+                     * There might be multiple entries with the same index string
+                     * (e.g. different documents). Search around eqPos for ours.
+                     */
+                    if (docsWithIndex[eqPos][2] === docId) {
+                        docsWithIndex[eqPos][1] = document;
+                        continue;
+                    }
+                    // Check neighbors
+                    const prev = docsWithIndex[eqPos - 1];
+                    if (prev && prev[0] === previousIndexString && prev[2] === docId) {
+                        docsWithIndex[eqPos - 1][1] = document;
+                        continue;
+                    }
+                    const next = docsWithIndex[eqPos + 1];
+                    if (next && next[0] === previousIndexString && next[2] === docId) {
+                        docsWithIndex[eqPos + 1][1] = document;
+                        continue;
+                    }
+                }
+                // Fallback: use the old insert+remove approach
+                const insertPosition = pushAtSortPosition(
+                    docsWithIndex,
+                    [newIndexString, document, docId],
+                    sortByIndexStringComparator,
+                    0
+                );
+                const prevEntry = docsWithIndex[insertPosition - 1];
+                if (prevEntry && prevEntry[2] === docId) {
                     docsWithIndex.splice(insertPosition - 1, 1);
                 } else {
-                    const next = docsWithIndex[insertPosition + 1];
-                    if (next[2] === docId) {
+                    const nextEntry = docsWithIndex[insertPosition + 1];
+                    if (nextEntry[2] === docId) {
                         docsWithIndex.splice(insertPosition + 1, 1);
                     } else {
                         throw newRxError('SNH', {
@@ -109,23 +143,170 @@ export function putWriteRowToState<RxDocType>(
                         });
                     }
                 }
+                continue;
             } else {
                 /**
-                 * Index changed, we must search for the old one and remove it.
+                 * Index changed, we must remove the old entry and insert the new one.
                  */
-                const indexBefore = boundEQ(
+                const indexBefore = boundEQByIndexString(
                     docsWithIndex,
-                    [
-                        previousIndexString
-                    ] as any,
-                    compareDocsWithIndex
+                    previousIndexString
                 );
-                docsWithIndex.splice(indexBefore, 1);
+                if (indexBefore !== -1) {
+                    docsWithIndex.splice(indexBefore, 1);
+                }
+            }
+        }
+
+        pushAtSortPosition(
+            docsWithIndex,
+            [newIndexString, document, docId],
+            sortByIndexStringComparator,
+            0
+        );
+    }
+}
+
+
+/**
+ * @hotPath
+ * Efficiently inserts multiple documents into the state at once.
+ *
+ * Uses two strategies based on batch size:
+ * - For small batches (relative to existing index size), uses in-place
+ *   binary search + splice per document. This avoids allocating a new
+ *   full-size array and copying all elements, reducing GC pressure.
+ * - For large batches (or empty indexes), pre-computes all index entries,
+ *   sorts them, and merges into the existing sorted arrays in a single pass.
+ */
+export function bulkInsertToState<RxDocType>(
+    primaryPath: string,
+    state: MemoryStorageInternals<RxDocType>,
+    stateByIndex: MemoryStorageInternalsByIndex<RxDocType>[],
+    docs: { document: RxDocumentData<RxDocType> }[]
+) {
+    const docsLength = docs.length;
+    const stateByIndexLength = stateByIndex.length;
+
+    // Extract documents and docIds once, store in Map
+    const documents: RxDocumentData<RxDocType>[] = new Array(docsLength);
+    const docIds: string[] = new Array(docsLength);
+    for (let i = 0; i < docsLength; ++i) {
+        const doc = docs[i].document;
+        const docId: string = (doc as any)[primaryPath];
+        documents[i] = doc;
+        docIds[i] = docId;
+        state.documents.set(docId, doc as any);
+    }
+
+    /**
+     * @performance
+     * For small batch sizes, use in-place binary search + splice
+     * instead of creating a full merged array copy. This is faster
+     * for serial inserts and small bulk inserts because it avoids:
+     * - Allocating a new array of size n+m
+     * - Copying all n existing elements
+     * - GC pressure from discarding the old array
+     *
+     * The threshold is based on when the merge approach becomes more
+     * efficient than individual splices.
+     */
+    const useInPlaceInsert = docsLength < IN_PLACE_INSERT_THRESHOLD;
+
+    if (useInPlaceInsert) {
+        for (let indexI = 0; indexI < stateByIndexLength; ++indexI) {
+            const byIndex = stateByIndex[indexI];
+            const docsWithIndex = byIndex.docsWithIndex;
+            const getIndexableString = byIndex.getIndexableString;
+
+            if (docsWithIndex.length === 0) {
+                for (let i = 0; i < docsLength; ++i) {
+                    const doc = documents[i];
+                    const indexString = getIndexableString(doc as any);
+                    docsWithIndex.push([indexString, doc, docIds[i]]);
+                }
+                docsWithIndex.sort(sortByIndexStringComparator);
+            } else {
+                for (let i = 0; i < docsLength; ++i) {
+                    const doc = documents[i];
+                    const indexString = getIndexableString(doc as any);
+                    const newEntry: DocWithIndexString<RxDocType> = [indexString, doc, docIds[i]];
+                    pushAtSortPosition(
+                        docsWithIndex,
+                        newEntry,
+                        sortByIndexStringComparator,
+                        0
+                    );
+                }
+            }
+        }
+    } else {
+        // For each index, batch-compute entries, sort, and merge
+        for (let indexI = 0; indexI < stateByIndexLength; ++indexI) {
+            const byIndex = stateByIndex[indexI];
+            const docsWithIndex = byIndex.docsWithIndex;
+            const getIndexableString = byIndex.getIndexableString;
+
+            // Build new entries
+            const newEntries: DocWithIndexString<RxDocType>[] = new Array(docsLength);
+            for (let i = 0; i < docsLength; ++i) {
+                const doc = documents[i];
+                newEntries[i] = [
+                    getIndexableString(doc as any),
+                    doc,
+                    docIds[i]
+                ];
+            }
+
+            // Sort by index string
+            newEntries.sort(sortByIndexStringComparator);
+
+            if (docsWithIndex.length === 0) {
+                // Index is empty, just assign sorted entries
+                byIndex.docsWithIndex = newEntries;
+            } else {
+                // Merge sorted arrays
+                byIndex.docsWithIndex = mergeSortedArrays(docsWithIndex, newEntries);
             }
         }
     }
 }
 
+
+/**
+ * Merges two sorted DocWithIndexString arrays into a single sorted array.
+ * Runs in O(n + m) where n and m are the lengths of the input arrays.
+ * @performance Comparator is inlined to avoid function call overhead
+ * per comparison, which is significant for large arrays.
+ */
+function mergeSortedArrays<RxDocType>(
+    a: DocWithIndexString<RxDocType>[],
+    b: DocWithIndexString<RxDocType>[]
+): DocWithIndexString<RxDocType>[] {
+    const aLen = a.length;
+    const bLen = b.length;
+    const result: DocWithIndexString<RxDocType>[] = new Array(aLen + bLen);
+    let ai = 0;
+    let bi = 0;
+    let ri = 0;
+
+    while (ai < aLen && bi < bLen) {
+        if (a[ai][0] <= b[bi][0]) {
+            result[ri++] = a[ai++];
+        } else {
+            result[ri++] = b[bi++];
+        }
+    }
+
+    while (ai < aLen) {
+        result[ri++] = a[ai++];
+    }
+    while (bi < bLen) {
+        result[ri++] = b[bi++];
+    }
+
+    return result;
+}
 
 export function removeDocFromState<RxDocType>(
     primaryPath: string,
@@ -136,19 +317,20 @@ export function removeDocFromState<RxDocType>(
     const docId: string = (doc as any)[primaryPath];
     state.documents.delete(docId);
 
-    Object.values(state.byIndex).forEach(byIndex => {
+    const stateByIndex = state.byIndexArray;
+    for (let i = 0; i < stateByIndex.length; ++i) {
+        const byIndex = stateByIndex[i];
         const docsWithIndex = byIndex.docsWithIndex;
         const indexString = byIndex.getIndexableString(doc);
 
-        const positionInIndex = boundEQ(
+        const positionInIndex = boundEQByIndexString(
             docsWithIndex,
-            [
-                indexString
-            ] as any,
-            compareDocsWithIndex
+            indexString
         );
-        docsWithIndex.splice(positionInIndex, 1);
-    });
+        if (positionInIndex !== -1) {
+            docsWithIndex.splice(positionInIndex, 1);
+        }
+    }
 }
 
 

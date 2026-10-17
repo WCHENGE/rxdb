@@ -2,28 +2,36 @@
 title: Master Data - Create and Manage RxCollections
 slug: rx-collection.html
 description: Discover how to create, manage, and migrate documents in RxCollections. Harness real-time data flows, secure encryption, and powerful performance in RxDB.
+image: /headers/rx-collection.jpg
 ---
+
+import { NON_PREMIUM_COLLECTION_LIMIT } from '../src/constants';
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # RxCollection
 A collection stores documents of the same type.
 
 
 ## Creating a Collection
-To create one or more collections you need a RxDatabase object which has the `.addCollections()`-method. Every collection needs a collection name and a valid `RxJsonSchema`. Other attributes are optional.
+To create one or more collections you need an [RxDatabase](./rx-database.md) object which has the `.addCollections()` method. Every collection needs a collection name and a valid [RxJsonSchema](./rx-schema.md). Other attributes are optional.
 
 ```js
 const myCollections = await myDatabase.addCollections({
   // key = collectionName
   humans: {
     schema: mySchema,
-    statics: {},                          // (optional) ORM-functions for this collection
+    statics: {},                       // (optional) ORM-functions
+                                         // for this collection
     methods: {},                          // (optional) ORM-functions for documents
     attachments: {},                      // (optional) ORM-functions for attachments
-    options: {},                          // (optional) Custom parameters that might be used in plugins
+    options: {},                       // (optional) Custom parameters
+                                         // that might be used in plugins
     migrationStrategies: {},              // (optional)
     autoMigrate: true,                    // (optional) [default=true]
-    cacheReplacementPolicy: function(){}, // (optional) custom cache replacement policy
-    conflictHandler: function(){}         // (optional) a custom conflict handler can be used
+    cacheReplacementPolicy: function(){}, // (optional) custom
+                                         // cache replacement policy
+    conflictHandler: function(){}         // (optional) custom
+                                         // conflict handler
   },
   // you can create multiple collections at once
   animals: {
@@ -31,6 +39,10 @@ const myCollections = await myDatabase.addCollections({
   }
 });
 ```
+
+:::note
+Without the Premium Plugins, RxDB allows up to {NON_PREMIUM_COLLECTION_LIMIT} open collections in parallel. If you hit that limit, see the [FAQ on how to remove it](/rx-collection.html#faq).
+:::
 
 ### name
 
@@ -41,7 +53,11 @@ The name uniquely identifies the collection and should be used to refine the col
 The schema defines how the documents of the collection are structured. RxDB uses a schema format, similar to [JSON schema](https://json-schema.org/). Read more about the RxDB schema format [here](./rx-schema.md).
 
 ### ORM-functions
-With the parameters `statics`, `methods` and `attachments`, you can define ORM-functions that are applied to each of these objects that belong to this collection. See [ORM/DRM](./orm.md).
+With the parameters `statics`, `methods` and `attachments`, you can define ORM functions that are applied to each of these objects that belong to this collection. See [ORM/DRM](./orm.md).
+
+### liveQueryUpdateThrottleTime
+
+Overrides `liveQueryUpdateThrottleTime` set at the database level for this specific collection. See [liveQueryUpdateThrottleTime](./rx-query.md#livequeryupdatethrottletime).
 
 ### Migration
 With the parameters `migrationStrategies` and `autoMigrate` you can specify how migration between different schema-versions should be done. [See Migration](./migration-schema.md).
@@ -101,7 +117,7 @@ const doc = await myCollection.insertIfNotExists({
 ### bulkInsert()
 
 When you have to insert many documents at once, use bulk insert. This is much faster than calling `.insert()` multiple times.
-Returns an object with a `success`- and `error`-array.
+Returns an object with a `success` and `error` arrays.
 
 ```js
 const result = await myCollection.bulkInsert([{
@@ -120,7 +136,7 @@ const result = await myCollection.bulkInsert([{
 ```
 
 :::note
-`bulkInsert` will not fail on update conflicts and you cannot expect that on failure the other documents are not inserted. Also the call to `bulkInsert()` it will not throw if a single document errors because of validation errors. Instead it will return the error in the `.error` property of the returned object.
+`bulkInsert` will not fail on update conflicts and you cannot expect that on failure the other documents are not inserted. Also, the call to `bulkInsert()` will not throw if a single document errors because of validation errors. Instead it will return the error in the `.error` property of the returned object.
 :::
 
 ### bulkRemove()
@@ -150,16 +166,22 @@ const result = await myCollection.bulkRemove([
 
 ### upsert()
 Inserts the document if it does not exist within the collection, otherwise it will overwrite it. Returns the new or overwritten RxDocument.
+
+When the document already exists, any [inline attachments](./rx-attachment.md#inline-attachments-on-insert-and-upsert) in the upsert data are **merged** with existing attachments by default. Pass `{ deleteExistingAttachments: true }` as the second argument to replace all existing attachments instead.
+
 ```js
 const doc = await myCollection.upsert({
   name: 'foo',
   lastname: 'bar2'
 });
+
+// with options
+const doc2 = await myCollection.upsert(docData, { deleteExistingAttachments: true });
 ```
 
 ### bulkUpsert()
 Same as `upsert()` but runs over multiple documents. Improves performance compared to running many `upsert()` calls.
-Returns an `error` and a `success` array.
+Returns an `error` and a `success` array. Accepts an optional second argument for [upsert options](./rx-attachment.md#upsert-behavior-with-attachments).
 
 ```js
 const docs = await myCollection.bulkUpsert([
@@ -260,30 +282,20 @@ The `Map` returned by `findByIds` is not guaranteed to return elements in the sa
 :::
 
 ### exportJSON()
-Use this function to create a json export from every document in the collection.
 
-
-Before `exportJSON()` and `importJSON()` can be used, you have to add the `json-dump` plugin.
-
-```javascript
-import { addRxPlugin } from 'rxdb';
-import { RxDBJsonDumpPlugin } from 'rxdb/plugins/json-dump';
-addRxPlugin(RxDBJsonDumpPlugin);
-```
+Creates a JSON export of every document in the collection. Needs the `json-dump` plugin. [Read more](./json-import-export.md)
 
 ```js
-myCollection.exportJSON()
-  .then(json => console.dir(json));
+const json = await myCollection.exportJSON();
 ```
 
 ### importJSON()
-To import the json dump into your collection, use this function.
+
+Imports a previously exported JSON dump back into the collection. [Read more](./json-import-export.md)
+
 ```js
-// import the dump to the database
-myCollection.importJSON(json)
-  .then(() => console.log('done'));
+await myCollection.importJSON(json);
 ```
-Note that importing will fire events for each inserted document.
 
 ### remove()
 
@@ -296,7 +308,7 @@ await myCollection.remove();
 ```
 
 ### close()
-Removes the collection's object instance from the [RxDatabase](./rx-database.md). This is to free up memory and stop all observers and replications. It will not delete the collections data. When you create the collection again with `database.addCollections()`, the newly added collection will still have all data.
+Removes the collection's object instance from the [RxDatabase](./rx-database.md). This is to free up memory and stop all observers and replications. It will not delete the collection's data. When you create the collection again with `database.addCollections()`, the newly added collection will still have all data.
 ```js
 await myCollection.close();
 ```
@@ -304,7 +316,7 @@ await myCollection.close();
 ### onClose / onRemove()
 With these you can add a function that is run when the collection was closed or removed.
 This works even across multiple browser tabs so you can detect when another tab removes the collection
-and you application can behave accordingly.
+and your application can behave accordingly.
 
 ```js
 await myCollection.onClose(() => console.log('I am closed'));
@@ -323,21 +335,25 @@ const is = isRxCollection(myObj);
 
 ## FAQ
 
-<details>
-    <summary>When I reload the browser window, will my collections still be in the database?</summary>
+<Faq>
+<FaqItem question="When I reload the browser window, will my collections still be in the database?">
+
     <div>
     No, the javascript instance of the collections will not automatically load into the database on page reloads.
-    You have to call the `addCollections()` method each time you create your database. This will create the JavaScript object instance of the RxCollection so that you can use it in the RxDatabase. The persisted data will be automatically in your RxCollection each time you create it.
+    You have to call the `addCollections()` method each time you create your database. This will create the JavaScript object instance of the RxCollection so that you can use it in the RxDatabase. The persisted data will automatically be available in your RxCollection each time you create it.
     </div>
-</details>
-<details>
-    <summary>How to remove the limit of 16 collections?</summary>
+
+</FaqItem>
+<FaqItem question={'How to remove the limit of ' + NON_PREMIUM_COLLECTION_LIMIT + ' collections?'}>
+
     <div>
-    In the open-source version of RxDB, the amount of RxCollections that can exist in parallel is limited to `16`.
+    In the open-source version of RxDB, the amount of RxCollections that can exist in parallel is limited to <code>{NON_PREMIUM_COLLECTION_LIMIT}</code>.
     To remove this limit, you can purchase the [Premium Plugins](/premium/) and call the `setPremiumFlag()` function before creating a database:
     ```ts
     import { setPremiumFlag } from 'rxdb-premium/plugins/shared';
     setPremiumFlag();
     ```
     </div>
-</details>
+
+</FaqItem>
+</Faq>

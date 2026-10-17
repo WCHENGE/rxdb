@@ -53,7 +53,7 @@ export interface MangoQueryOperators<PathValueType> {
     $options?: MangoQueryRegexOptions;
     $exists?: boolean;
     $type?: 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object';
-    $mod?: number;
+    $mod?: [number, number];
     $not?: PathValueType;
     $size?: number;
     $elemMatch?: MangoQuerySelector<PathValueType>;
@@ -108,6 +108,9 @@ export type MangoQueryNoLimit<RxDocType> = MangoQuerySelectorAndIndex<RxDocType>
     sort?: MangoQuerySortPart<RxDocType>[];
 };
 
+/**
+ * Mango query for RxDB collections.
+ */
 export type MangoQuery<RxDocType = any> = MangoQueryNoLimit<RxDocType> & {
     skip?: number;
     limit?: number;
@@ -121,24 +124,24 @@ export declare class RxQuery<
     OrmMethods = {},
     Reactivity = unknown
 > extends RxQueryBase<RxDocumentType, RxQueryResult, OrmMethods, Reactivity> {
-    equals(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    eq(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    or(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult>;
-    nor(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult>;
-    and(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult>;
-    gt(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    gte(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    lt(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    lte(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    ne(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    in(queryObj: any[]): RxQuery<RxDocumentType, RxQueryResult>;
-    nin(queryObj: any[]): RxQuery<RxDocumentType, RxQueryResult>;
-    all(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
+    equals(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    eq(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    or(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    nor(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    and(queryObj: keyof RxDocumentType | string | any[]): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    gt(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    gte(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    lt(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    lte(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    ne(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    in(queryObj: any[]): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    nin(queryObj: any[]): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    all(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
     regex(queryObj: string | {
         $regex: string;
         $options: MangoQueryRegexOptions;
-    }): RxQuery<RxDocumentType, RxQueryResult>;
-    exists(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    elemMatch(queryObj: any): RxQuery<RxDocumentType, RxQueryResult>;
-    mod(p1: any, p2: any, p3: any): RxQuery<RxDocumentType, RxQueryResult>;
+    }): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    exists(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    elemMatch(queryObj: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
+    mod(p1: any, p2: any, p3: any): RxQuery<RxDocumentType, RxQueryResult, OrmMethods, Reactivity>;
 }

@@ -1,6 +1,8 @@
 ---
 title: Creating Plugins
 slug: plugins.html
+description: Learn how to create custom RxDB plugins by extending internal classes, prototypes, and hooks to add new functionality to your database setup.
+image: /headers/plugins.jpg
 ---
 
 # Creating Plugins
@@ -21,7 +23,8 @@ const myPlugin = {
             // import other plugins or initialize stuff
         },
         /**
-         * every value in this object can manipulate the prototype of the keynames class
+         * every value in this object can manipulate
+         * the prototype of the keynames class
          * You can manipulate every prototype in this list:
          * @link https://github.com/pubkey/rxdb/blob/master/src/plugin.ts#L22
          */
@@ -51,7 +54,8 @@ const myPlugin = {
          */
         hooks: {
             /**
-             * add a `foo` property to each document. You can then call myDocument.foo (='bar')
+             * add a `foo` property to each document.
+             * You can then call myDocument.foo (='bar')
              */
             createRxDocument: {
                 /**
@@ -89,7 +93,7 @@ Sometimes you don't want to overwrite an existing RxDB-method, but extend it. Yo
 
 # options
 
-RxDatabase and RxCollection have an additional options-parameter, which can be filled with any data required be the plugin.
+[RxDatabase](./rx-database.md) and [RxCollection](./rx-collection.md) have an additional options-parameter, which can be filled with any data required be the plugin.
 
 ```javascript
 const collection = myDatabase.addCollections({

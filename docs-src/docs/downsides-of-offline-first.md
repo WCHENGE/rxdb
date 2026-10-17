@@ -2,13 +2,15 @@
 title: Downsides of Local First / Offline First
 slug: downsides-of-offline-first.html
 description: Discover the hidden pitfalls of local-first apps. Learn about storage limits, conflicts, and real-time illusions before building your offline solution.
+image: /headers/downsides-of-offline-first.jpg
 ---
 
 import {QuoteBlock} from '@site/src/components/quoteblock';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Downsides of Local First / Offline First
 
-So you have read [all these things](./offline-first.md) about how the [local-first](./articles/local-first-future.md) (aka offline-first) paradigm makes it easy to create realtime web applications that even work when the user has no internet connection.
+So you have read [all these things](./offline-first.md) about how the [local-first](./articles/local-first-future.md) (aka offline-first) paradigm makes it easy to create [realtime](./articles/realtime-database.md) web applications that even work when the user has no internet connection.
 But there is no free lunch. The offline first paradigm is not the perfect approach for all kinds of apps.
 
 <QuoteBlock 
@@ -22,7 +24,7 @@ In the following I will point out the limitations you need to know before you de
 ## It only works with small datasets
 
 Making data available offline means it must be loaded from the server and then stored at the clients device.
-You need to load the full dataset on the first pageload and on every ongoing load you need to download the new changes to that set.
+You need to load the full dataset on the first page load and on every ongoing load you need to download the new changes to that set.
 While in theory you could download in infinite amount of data, in practice you have a limit how long the user can wait before having an up-to-date state.
 You want to display chat messages like Whatsapp? No problem. Syncing all the messages a user could write, can be done with a few HTTP requests.
 Want to make a tool that displays server logs? Good luck downloading terabytes of data to the client just to search for a single string. This will not work.
@@ -46,17 +48,13 @@ Apple for example deletes the data when the website was not used in the [last 7 
 The most common way to handle this, is to replicate everything from the backend to the client again.
 Of course, this does not work for state that is not stored at the backend. So if you assume you can store the users private data inside the browser in a secure way, you are [wrong](https://medium.com/universal-ethereum/out-of-gas-were-shutting-down-unilogin-3b544838df1a#4f60).
 
-<p align="center">
-  <img src="./files/safari-database.png" alt="safari database" width="200" />
-</p>
+<CenteredImage src="./files/safari-database.png" alt="safari database" width={200} />
 
 ## There can be conflicts
 
-Imagine two of your users modify the same JSON document, while both are offline. After they go online again, their clients replicate the modified document to the server. Now you have two conflicting versions of the same document, and you need a way to determine how the correct new version of that document should look like. This process is called **conflict resolution**.
+Imagine two of your users modify the same JSON document, while both are offline. After they go online again, their clients replicate the modified document to the server. Now you have two conflicting versions of the same document, and you need a way to determine how the correct new version of that document should look like. This process is called **[conflict resolution](./transactions-conflicts-revisions.md)**.
 
-<p align="center">
-  <img src="./files/document-replication-conflict.svg" alt="document replication conflict" width="250" />
-</p>
+<CenteredImage src="./files/document-replication-conflict.svg" alt="document replication conflict" width={250} />
 
   1. The default in [many](https://docs.couchdb.org/en/stable/replication/conflicts.html) offline first databases is a deterministic conflict resolution strategy. Both conflicting versions of the document are kept in the storage and when you query for the document, a winner is determined by comparing the hashes of the document and only the winning document is returned. Because the comparison is deterministic, all clients and servers will always pick the same winner. This kind of resolution only works when it is not that important that one of the document changes gets dropped. Because conflicts are rare, this might be a viable solution for some use cases.
 
@@ -74,7 +72,7 @@ Imagine two of your users modify the same JSON document, while both are offline.
   {id: new Date().toJSON(), change: 200} // balance increased by $200
   ```
 
-  6. There is this thing called **conflict-free replicated data type**, short **CRDT**. Using a CRDT library like [automerge](https://github.com/automerge/automerge) will magically solve all of your conflict problems. Until you use it in production where you observe that implementing CRDTs has basically the same complexity as implementing conflict resolution strategies.
+  6. There is this thing called **conflict-free replicated data type**, short **[CRDT](./crdt.md)**. Using a CRDT library like [automerge](https://github.com/automerge/automerge) will magically solve all of your conflict problems. Until you use it in production where you observe that implementing CRDTs has basically the same complexity as implementing conflict resolution strategies.
 
 ## Realtime is a lie
 
@@ -84,9 +82,7 @@ There is an internet between your backend and your clients and everything you do
 Even when you run a query against the local database, there is no "real" realtime.
 Client side databases run on JavaScript and JavaScript runs on a single CPU that might be partially blocked because the user is running some background processes. So you can never guarantee a response deadline which violates the time constraint of realtime computing.
 
-<p align="center">
-  <img src="./files/latency-london-san-franzisco.png" alt="latency london san franzisco" width="300" />
-</p>
+<CenteredImage src="./files/latency-london-san-franzisco.png" alt="latency london san franzisco" width={300} />
 
 ## Eventual consistency
 
@@ -95,9 +91,7 @@ The user could update a document based on wrong assumptions because it was not f
 
 And some data is just too important to be "eventual consistent". Create a wire transfer in your online banking app while you are offline. You keep the smartphone laying at your night desk and when you use again in the next morning, it goes online and replicates the transaction. No thank you, do not use offline first for these kinds of things, or at least you have to display the replication state of each document in the UI.
 
-<p align="center">
-  <img src="./files/cap-theorem.png" alt="CAP theorem" width="150" />
-</p>
+<CenteredImage src="./files/cap-theorem.png" alt="CAP theorem" width={150} />
 
 
 ## Permissions and authentication
@@ -121,12 +115,12 @@ With offline first applications, it is even more fun. You do not only have to mi
 
 When you create a web based offline first app, you cannot store data directly on the users filesystem. In fact there are many layers between your JavaScript code and the filesystem of the operation system. Let's say you insert a document in [RxDB](https://github.com/pubkey/rxdb):
   - You call the RxDB API to validate and store the data
-  - RxDB calls the underlying RxStorage, for example PouchDB.
+  - RxDB calls the underlying [RxStorage](./rx-storage.md), for example [PouchDB](./rx-storage-pouchdb.md).
   - Pouchdb calls its underlying storage adapter
   - The storage adapter calls IndexedDB
   - The browser runs its internal handling of the IndexedDB API
   - In most browsers IndexedDB is implemented on [top of SQLite](https://hackaday.com/2021/08/24/sqlite-on-the-web-absurd-sql/)
-  - SQLite calls the OS to store the data in the filesystem
+  - [SQLite](./rx-storage-sqlite.md) calls the OS to store the data in the filesystem
 
 All these layers are abstractions. They are not build for exactly that one use case, so you lose some performance to tunnel the data through the layer itself, and you also lose some performance because the abstraction does not exactly provide the functions that are needed by the layer above and it will overfetch data.
 
@@ -148,7 +142,7 @@ So why are there no real relations in offline first databases? I could answer wi
 
 So creating replication for an SQL offline first database is way more work than just adding some network protocols on top of PostgreSQL. It might not even be possible for clients that have no reliable clock.
 
-<p align="center">
-  <img src="./files/no-relational-data.png" alt="no relational data" width="250" />
-</p>
+<CenteredImage src="./files/no-relational-data.png" alt="no relational data" width={250} />
+
+
 

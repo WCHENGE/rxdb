@@ -2,7 +2,7 @@ import assert from 'assert';
 import AsyncTestUtil, { wait } from 'async-test-util';
 import { Observable } from 'rxjs';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemaObjects,
     schemas,
@@ -40,8 +40,8 @@ addRxPlugin(RxDBUpdatePlugin);
 
 
 describe('rx-document.test.js', () => {
-    describeParallel('statics', () => { });
-    describeParallel('prototype-merge', () => {
+    describe('statics', () => { });
+    describe('prototype-merge', () => {
         describe('RxSchema.getDocumentPrototype()', () => {
             it('should get an object with all main-fields', () => {
                 const schema = createRxSchema(schemas.human, defaultHashSha256);
@@ -130,7 +130,7 @@ describe('rx-document.test.js', () => {
         });
 
     });
-    describeParallel('.get()', () => {
+    describe('.get()', () => {
         it('get a value', async () => {
             const c = await humansCollection.create(1);
             const doc: any = await c.findOne().exec(true);
@@ -147,6 +147,42 @@ describe('rx-document.test.js', () => {
             assert.strictEqual(typeof value2, 'number');
             c.database.close();
         });
+        it('nested property access must not mix up a key with a dot and the nested path of the same name', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            const collections = await db.addCollections({
+                docs: {
+                    schema: {
+                        version: 0,
+                        primaryKey: 'id',
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                maxLength: 100
+                            },
+                            meta: {
+                                type: 'object'
+                            }
+                        }
+                    }
+                }
+            });
+            const doc: any = await collections.docs.insert({
+                id: 'foobar',
+                meta: {
+                    'a.b': { x: 1 },
+                    a: { b: { x: 2 } }
+                }
+            });
+            const viaKeyWithDot = doc.meta['a.b'].x;
+            assert.ok(typeof viaKeyWithDot === 'number');
+            assert.strictEqual(doc.meta.a.b.x, 2);
+            assert.strictEqual(doc.get('meta.a.b').x, 2);
+            await db.close();
+        });
         it('get undefined on undefined value', async () => {
             const c = await humansCollection.createNested(5);
             const doc = await c.findOne().exec(true);
@@ -155,7 +191,7 @@ describe('rx-document.test.js', () => {
             c.database.close();
         });
     });
-    describeParallel('.remove()', () => {
+    describe('.remove()', () => {
         describe('positive', () => {
             it('delete 1 document', async () => {
                 const c = await humansCollection.create(5);
@@ -302,7 +338,7 @@ describe('rx-document.test.js', () => {
             });
         });
     });
-    describeParallel('.update()', () => {
+    describe('.update()', () => {
         describe('positive', () => {
             it('$set a value with a mongo like query', async () => {
                 const c = await humansCollection.createPrimary(1);
@@ -419,7 +455,7 @@ describe('rx-document.test.js', () => {
             });
         });
     });
-    describeParallel('.modify()', () => {
+    describe('.modify()', () => {
         describe('positive', () => {
             it('run one update', async () => {
                 const c = await humansCollection.createNested(1);
@@ -659,6 +695,40 @@ describe('rx-document.test.js', () => {
                 assert.strictEqual(doc.mainSkill, undefined);
                 c.database.close();
             });
+            it('modify() should deep-clone the data so the modifier cannot corrupt the document via shared references', async () => {
+                const c = await humansCollection.createNested(1);
+                const doc = await c.findOne().exec(true);
+
+                const originalMainSkill = doc._data.mainSkill;
+                let receivedMainSkill: any;
+                await doc.modify((d: any) => {
+                    receivedMainSkill = d.mainSkill;
+                    d.mainSkill = { name: 'updated', level: 10 };
+                    return d;
+                });
+
+                /**
+                 * The nested object passed to the modifier must be a clone,
+                 * not a shared reference to the document's internal data.
+                 * Otherwise the modifier could corrupt doc._data by mutating
+                 * nested objects (especially in production mode where data
+                 * is not deep-frozen).
+                 */
+                assert.notStrictEqual(
+                    receivedMainSkill,
+                    originalMainSkill,
+                    'modifier must receive a deep-cloned nested object, not a shared reference'
+                );
+
+                /**
+                 * The update must still be persisted correctly.
+                 */
+                const fromDb = await c.findOne().exec(true);
+                assert.strictEqual(fromDb.mainSkill.name, 'updated');
+                assert.strictEqual(fromDb.mainSkill.level, 10);
+
+                c.database.close();
+            });
         });
         describe('negative', () => {
             it('should throw on conflict', async () => {
@@ -739,7 +809,7 @@ describe('rx-document.test.js', () => {
             });
         });
     });
-    describeParallel('.patch()', () => {
+    describe('.patch()', () => {
         describe('positive', () => {
             it('run one update', async () => {
                 const c = await humansCollection.createNested(1);
@@ -774,7 +844,7 @@ describe('rx-document.test.js', () => {
             });
         });
     });
-    describeParallel('.toJSON()', () => {
+    describe('.toJSON()', () => {
         it('should get the documents data as json', async () => {
             const c = await humansCollection.create(1);
             const doc: any = await c.findOne().exec();
@@ -848,7 +918,7 @@ describe('rx-document.test.js', () => {
             db.close();
         });
     });
-    describeParallel('.toMutableJSON()', () => {
+    describe('.toMutableJSON()', () => {
         it('should be able to mutate the output', async () => {
             const c = await humansCollection.create(1);
             const doc = await c.findOne().exec(true);
@@ -887,7 +957,7 @@ describe('rx-document.test.js', () => {
             c.database.close();
         });
     });
-    describeParallel('Proxy', () => {
+    describe('Proxy', () => {
         describe('get', () => {
             it('top-value', async () => {
                 const c = await humansCollection.create(1);
@@ -1093,7 +1163,7 @@ describe('rx-document.test.js', () => {
             });
         });
     });
-    describeParallel('issues', () => {
+    describe('issues', () => {
         it('#66 - insert -> remove -> upsert does not give new state', async () => {
             const c = await humansCollection.createPrimary(0);
             const docData = schemaObjects.simpleHumanData();
@@ -1398,6 +1468,42 @@ describe('rx-document.test.js', () => {
 
             // clean up afterwards
             db.close();
+        });
+    });
+    describe('RxDocument.$ startWith stale data bug', () => {
+        if (isFastMode()) {
+            return;
+        }
+        it('$ observable should emit the latest document state even when subscribed after an update', async () => {
+            const c = await humansCollection.create(1);
+            const doc = await c.findOne().exec(true);
+            const initialName = doc.firstName;
+
+            // Step 1: Create the observable reference (captures startWith value eagerly)
+            const obs = doc.$;
+
+            // Step 2: Update the document AFTER creating the observable but BEFORE subscribing
+            await doc.incrementalPatch({ firstName: 'UpdatedAfterObsCreation' });
+
+            // Step 3: Subscribe to the previously created observable
+            const emissions: string[] = [];
+            const sub = obs.subscribe((d: any) => {
+                emissions.push(d.firstName);
+            });
+            await promiseWait(100);
+
+            // The subscriber should see the LATEST state ('UpdatedAfterObsCreation'),
+            // not the stale state from when the observable was created.
+            const lastEmission = emissions[emissions.length - 1];
+            assert.strictEqual(
+                lastEmission,
+                'UpdatedAfterObsCreation',
+                'Expected last emission to be the updated name but got: ' +
+                JSON.stringify(emissions) + ' (initial was ' + initialName + ')'
+            );
+
+            sub.unsubscribe();
+            c.database.close();
         });
     });
 });

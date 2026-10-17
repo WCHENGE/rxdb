@@ -63,7 +63,7 @@ export async function initialCleanupWait(collection: RxCollection, cleanupPolicy
 export async function cleanupRxCollection(
     rxCollection: RxCollection,
     cleanupPolicy: RxCleanupPolicy
-) {
+): Promise<boolean> {
     const rxDatabase = rxCollection.database;
     const storageInstance = rxCollection.storageInstance;
 
@@ -85,7 +85,7 @@ export async function cleanupRxCollection(
             );
         }
         if (rxCollection.closed) {
-            return;
+            return false;
         }
         RXSTORAGE_CLEANUP_QUEUE = RXSTORAGE_CLEANUP_QUEUE
             .then(async () => {
@@ -93,6 +93,9 @@ export async function cleanupRxCollection(
                     return true;
                 }
                 await rxDatabase.requestIdlePromise();
+                if (rxCollection.closed) {
+                    return true;
+                }
                 const allDone: Promise<boolean>[] = [];
                 allDone.push(storageInstance.cleanup(cleanupPolicy.minimumDeletedTime));
                 const replicationStates = getFromMapOrCreate(
@@ -102,13 +105,12 @@ export async function cleanupRxCollection(
                 );
                 for (const replicationState of replicationStates) {
                     const meta = replicationState.metaInstance;
-                    if (meta) {
+                    if (meta && !replicationState.isStopped()) {
                         allDone.push(meta.cleanup(cleanupPolicy.minimumDeletedTime));
                     }
                 }
 
-                const hasFalse = (await Promise.all(allDone)).find(v => !v);
-                return !hasFalse;
+                return (await Promise.all(allDone)).every(v => v);
             });
         isDone = await RXSTORAGE_CLEANUP_QUEUE;
     }
@@ -116,6 +118,7 @@ export async function cleanupRxCollection(
         collectionName: rxCollection.name,
         databaseName: rxDatabase.name
     });
+    return isDone;
 }
 
 export async function runCleanupAfterDelete(

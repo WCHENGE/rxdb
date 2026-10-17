@@ -2,17 +2,16 @@
 title: RxDB - Firebase Realtime Database Alternative to Sync With Your Own Backend
 slug: firebase-realtime-database-alternative.html
 description: Looking for a Firebase Realtime Database alternative? RxDB offers a fully offline, vendor-agnostic NoSQL solution with advanced conflict resolution and multi-platform support.
+image: /headers/firebase-realtime-database-alternative.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
 
 # RxDB - The Firebase Realtime Database Alternative That Can Sync With Your Own Backend
 
-Are you on the lookout for a **Firebase Realtime Database alternative** that gives you greater freedom, deeper offline capabilities, and allows you to seamlessly integrate with any backend? **RxDB** (Reactive Database) might be the perfect choice. This [local-first](./local-first-future.md), NoSQL data store runs entirely on the client while supporting real-time updates and robust syncing with any server environment—making it a strong contender against Firebase Realtime Database's limitations and potential vendor lock-in.
+Are you on the lookout for a **Firebase Realtime Database alternative** that gives you greater freedom, deeper offline capabilities, and allows you to seamlessly integrate with any backend? **RxDB** (Reactive Database) might be the perfect choice. This [local-first](./local-first-future.md), NoSQL data store runs entirely on the client while supporting real-time updates and robust syncing with any server environment, making it a strong contender against Firebase Realtime Database's limitations and potential vendor lock-in.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="/files/logo/rxdb_javascript_database.svg" alt="JavaScript Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Database" />
 
 ## Why RxDB Is an Excellent Firebase Realtime Database Alternative
 
@@ -28,7 +27,7 @@ While Firebase Realtime Database ties you into Google's ecosystem, RxDB allows y
 This flexibility ensures you're not locked into a single vendor and can adapt your backend strategy as your project evolves.
 
 ### 3. Advanced Conflict Handling
-Firebase Realtime Database typically updates data with a simple last-in-wins approach. RxDB, on the other hand, lets you implement more sophisticated conflict resolution logic. Using [revisions and conflict handlers](../transactions-conflicts-revisions.md#custom-conflict-handler), RxDB can merge concurrent edits or preserve multiple versions—ensuring your application remains consistent even when multiple clients modify the same data at the same time.
+Firebase Realtime Database typically updates data with a simple last-in-wins approach. RxDB, on the other hand, lets you implement more sophisticated conflict resolution logic. Using [revisions and conflict handlers](../transactions-conflicts-revisions.md#custom-conflict-handler), RxDB can merge concurrent edits or preserve multiple versions to ensure your application remains consistent even when multiple clients modify the same data at the same time.
 
 ### 4. Lower Cloud Costs for Read-Heavy Apps
 When you rely on Firebase Realtime Database, each query or listener can translate into ongoing reads, potentially running up your monthly bill. With RxDB, all queries are performed [locally](../offline-first.md). Your app only communicates with the backend to sync document changes, significantly reducing bandwidth and hosting expenses for applications that frequently read data.
@@ -125,7 +124,8 @@ In addition to using a centralized backend, RxDB supports peer-to-peer synchroni
 ```ts
 import {
   replicateWebRTC,
-  getConnectionHandlerSimplePeer
+  getConnectionHandlerSimplePeer,
+  createSimplePeerWrtc
 } from 'rxdb/plugins/replication-webrtc';
 
 const webrtcPool = await replicateWebRTC({
@@ -133,7 +133,7 @@ const webrtcPool = await replicateWebRTC({
   topic: 'p2p-topic-123',
   connectionHandlerCreator: getConnectionHandlerSimplePeer({
     signalingServerUrl: 'wss://signaling.rxdb.info/',
-    wrtc: require('node-datachannel/polyfill'),
+    wrtc: createSimplePeerWrtc(require('node-datachannel/polyfill')),
     webSocketConstructor: require('ws').WebSocket
   })
 });
@@ -161,9 +161,7 @@ const db = await createRxDatabase({
   name: 'myLocalDB',
   storage: getRxStorageLocalstorage()
 });
-Add a Collection
-ts
-Kopieren
+
 await db.addCollections({
   notes: {
     schema: {
@@ -172,7 +170,7 @@ await db.addCollections({
       primaryKey: 'id',
       type: 'object',
       properties: {
-        id: { type: 'string', maxLenght: 100 },
+        id: { type: 'string', maxLength: 100 },
         content: { type: 'string' }
       }
     }
@@ -191,3 +189,18 @@ Use one of the [Replication Plugins](../replication.md) to connect with your pre
 - **Custom or Complex Queries**: RxDB lets you perform your [queries](../rx-query.md) locally, define [indexing](../rx-schema.md#indexes), and handle even complex [transformations](../rx-pipeline.md) locally - no extra call to an external API.
 - **Avoid Vendor Lock-In**: If you anticipate needing to move or adapt your backend later, you can do so without rewriting how your client manages its data.
 - **Peer-to-Peer Collaboration**: Whether you need quick demos or real production use, [WebRTC replication](../replication-webrtc.md) can link your users directly without central coordination of data storage.
+
+## FAQ
+
+<Faq>
+<FaqItem question="Should I use Firebase or an open-source alternative for real-time syncing?">
+
+You should use Firebase if your primary goal is to offload all backend infrastructure to a fully managed Google Cloud service and your application relies almost entirely on constant internet connectivity. However, if your application requires heavy, complex offline capabilities, true data ownership, or the flexibility to integrate with any existing REST/GraphQL backend, you should opt for an open-source, local-first database alternative like **[RxDB](../rx-database.md)**, which provides Firebase-like real-time UI reactivity without the vendor lock-in.
+
+</FaqItem>
+<FaqItem question="Is Firebase configured as a relational database?">
+
+No, the Firebase Realtime Database and Cloud Firestore are both strict NoSQL, document-oriented data stores. They do not support strict relational schemas or native SQL `JOIN` operations. Developers must manually denormalize data across multiple JSON branches to establish relationships, a pattern perfectly mirrored by local-first NoSQL solutions like **[RxDB](../rx-database.md)** which map the same JSON topologies securely to client-side storage architectures.
+
+</FaqItem>
+</Faq>

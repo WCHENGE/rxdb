@@ -1,6 +1,6 @@
 import assert from 'assert';
 import AsyncTestUtil, { wait, waitUntil } from 'async-test-util';
-import { describeParallel } from './config.ts';
+import './config.ts';
 import {
     schemaObjects,
     humansCollection
@@ -16,7 +16,7 @@ import {
 import { BehaviorSubject, Subscription } from 'rxjs';
 import { mergeMap, shareReplay, switchMap } from 'rxjs/operators';
 
-describeParallel('cache-replacement-policy.test.js', () => {
+describe('cache-replacement-policy.test.js', () => {
     function clearQueryCache(collection: RxCollection) {
         const queryCache = collection._queryCache;
         queryCache._map = new Map();
@@ -116,7 +116,7 @@ describeParallel('cache-replacement-policy.test.js', () => {
                 }),
                 /**
                  * This shareReplay made
-                 * having countRxQuerySubscribers() return more then 0
+                 * having countRxQuerySubscribers() return more than 0
                  * we have to set refCount: true so it will unsubscribe from the root
                  * when has no longer any subscribing children.
                  * @link https://cartant.medium.com/rxjs-whats-changed-with-sharereplay-65c098843e95
@@ -201,6 +201,66 @@ describeParallel('cache-replacement-policy.test.js', () => {
             assert.strictEqual(cachedQueries.length, 0);
 
             col.database.remove();
+        });
+        it('should evict executed unsubscribed queries when subscribed queries push total cache over tryToKeepMax', async () => {
+            const tryToKeepMax = 5;
+            const col = await humansCollection.create(0);
+
+            // Set no-op policy to prevent automatic cleanup during setup
+            col.cacheReplacementPolicy = () => { };
+
+            // Create 6 subscribed queries (more than tryToKeepMax alone)
+            const subs: Subscription[] = [];
+            for (let i = 0; i < 6; i++) {
+                subs.push(col.find({
+                    selector: { firstName: 'sub' + i }
+                }).$.subscribe());
+            }
+
+            // Create 3 executed queries without subscribers
+            const executedQueries: RxQuery[] = [];
+            for (let i = 0; i < 3; i++) {
+                const q = col.find({
+                    selector: { firstName: 'exec' + i }
+                });
+                await q.exec();
+                executedQueries.push(q);
+            }
+
+            // Total in cache: 6 subscribed + 3 executed = 9 > tryToKeepMax (5)
+            // After policy: subscribed queries cannot be removed,
+            // so the 3 executed unsubscribed ones should be evicted.
+
+            // Wait for any pending automatic cache replacement to finish
+            await wait(500);
+
+            // Set the real policy and trigger
+            let policyRan = false;
+            const realPolicy = defaultCacheReplacementPolicyMonad(tryToKeepMax, 0);
+            col.cacheReplacementPolicy = (collection, queryCache) => {
+                realPolicy(collection, queryCache);
+                policyRan = true;
+            };
+
+            triggerCacheReplacement(col);
+            await waitUntil(() => policyRan);
+
+            // Re-create the same queries.
+            // If properly evicted, these will be NEW objects (different reference).
+            // If the bug is present, they stay cached (same reference).
+            for (let i = 0; i < 3; i++) {
+                const newQ = col.find({
+                    selector: { firstName: 'exec' + i }
+                });
+                assert.notStrictEqual(
+                    newQ,
+                    executedQueries[i],
+                    'Expected executed query exec' + i + ' to be evicted from cache'
+                );
+            }
+
+            subs.forEach(sub => sub.unsubscribe());
+            col.database.close();
         });
         it('should remove the oldest ones', async () => {
             const col = await humansCollection.create(0);

@@ -23,12 +23,10 @@ import {
     indexedDB as fakeIndexedDB,
     IDBKeyRange as fakeIDBKeyRange
 } from 'fake-indexeddb';
-import parallel from 'mocha.parallel';
 
 import { createRequire } from 'node:module';
 import {
     DEFAULT_STORAGE,
-    ENV_VARIABLES,
     getConfig,
     isDeno,
     isFastMode,
@@ -48,9 +46,6 @@ export function getRootPath() {
     const rootPath = path.join(__dirname, '../../');
     return rootPath;
 }
-
-
-export const describeParallel: typeof describe = ENV_VARIABLES.NODE_ENV === 'fast' ? parallel : describe;
 
 const localStorageMock = getLocalStorageMock();
 
@@ -134,7 +129,7 @@ export function getStorage(storageKey: string): RxTestStorage {
                 getPerformanceStorage() {
                     return {
                         description: 'localstorage',
-                        storage: getRxStorageLocalstorage()
+                        storage: isNode || isDeno ? getRxStorageLocalstorage({ localStorage: localStorageMock }) : getRxStorageLocalstorage()
                     };
                 },
                 hasPersistence: true,
@@ -164,11 +159,11 @@ export function getStorage(storageKey: string): RxTestStorage {
                     }
                 },
                 getPerformanceStorage() {
-                    if (isNode) {
+                    if (isNode || isDeno) {
                         return {
                             storage: getRxStorageDexie({
-                                indexedDB,
-                                IDBKeyRange
+                                indexedDB: fakeIndexedDB,
+                                IDBKeyRange: fakeIDBKeyRange
                             }),
                             description: 'dexie+fake-indexeddb'
                         };
@@ -222,7 +217,7 @@ export function getStorage(storageKey: string): RxTestStorage {
 
             // use a dynamic import so it does not break browser bundling
 
-            const mongoConnectionString = 'mongodb://localhost:27017';
+            const mongoConnectionString = 'mongodb://localhost:27017/?directConnection=true';
             let getStorageFnMongo: any;
             return {
                 async init() {

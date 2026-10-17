@@ -16,7 +16,7 @@ import type {
     JsonSchema,
     RxDocumentData,
     RxJsonSchema
-} from './types/index.ts';
+} from './types/index.d.ts';
 import {
     ensureNotFalsy,
     objectPathMonad,
@@ -26,6 +26,9 @@ import {
     INDEX_MAX,
     INDEX_MIN
 } from './query-planner.ts';
+import {
+    newRxError
+} from './rx-error.ts';
 
 
 /**
@@ -56,7 +59,7 @@ export function getIndexMeta<RxDocType>(
             fieldName
         );
         if (!schemaPart) {
-            throw new Error('not in schema: ' + fieldName);
+            throw newRxError('CI1', { fieldName });
         }
         const type = schemaPart.type;
         let parsedLengths: ParsedLengths | undefined;
@@ -84,13 +87,54 @@ export function getIndexMeta<RxDocType>(
                 return fieldValue ? '1' : '0';
             };
         } else { // number
-            getIndexStringPart = docData => {
-                const fieldValue = getValue(docData);
-                return getNumberIndexString(
-                    parsedLengths as any,
-                    fieldValue
-                );
-            };
+            /**
+             * @performance
+             * Inline the number index string generation to avoid
+             * function call overhead and redundant boundary checks.
+             * Document data in the hot path is assumed to be valid.
+             */
+            const pLengths = parsedLengths as ParsedLengths;
+            const pMin = pLengths.minimum;
+            const pMax = pLengths.maximum;
+            const pRoundedMin = pLengths.roundedMinimum;
+            const pNonDecimals = pLengths.nonDecimals;
+            const pDecimals = pLengths.decimals;
+            const pMultiplier = pLengths.multiplier;
+            if (pDecimals === 0) {
+                getIndexStringPart = docData => {
+                    let fieldValue = getValue(docData);
+                    if (typeof fieldValue === 'undefined') {
+                        fieldValue = 0;
+                    }
+                    if (fieldValue < pMin) {
+                        fieldValue = pMin;
+                    }
+                    if (fieldValue > pMax) {
+                        fieldValue = pMax;
+                    }
+                    return (Math.floor(fieldValue) - pRoundedMin).toString().padStart(pNonDecimals, '0');
+                };
+            } else {
+                getIndexStringPart = docData => {
+                    let fieldValue = getValue(docData);
+                    if (typeof fieldValue === 'undefined') {
+                        fieldValue = 0;
+                    }
+                    if (fieldValue < pMin) {
+                        fieldValue = pMin;
+                    }
+                    if (fieldValue > pMax) {
+                        fieldValue = pMax;
+                    }
+                    const flooredValue = Math.floor(fieldValue);
+                    const shifted = Math.min(
+                        Math.round((fieldValue - flooredValue) * pMultiplier),
+                        pMultiplier - 1
+                    );
+                    const str = (flooredValue - pRoundedMin).toString().padStart(pNonDecimals, '0');
+                    return str + shifted.toString().padStart(pDecimals, '0');
+                };
+            }
         }
 
         const ret: IndexMetaField<RxDocType> = {
@@ -125,10 +169,25 @@ export function getIndexableStringMonad<RxDocType>(
     const fieldNamePropertiesAmount = fieldNameProperties.length;
     const indexPartsFunctions = fieldNameProperties.map(r => r.getIndexStringPart);
 
-
     /**
      * @hotPath Performance of this function is very critical!
+     * Specialize for common field counts to avoid loop overhead.
      */
+    if (fieldNamePropertiesAmount === 1) {
+        return indexPartsFunctions[0];
+    }
+    if (fieldNamePropertiesAmount === 2) {
+        const fn0 = indexPartsFunctions[0];
+        const fn1 = indexPartsFunctions[1];
+        return (docData: RxDocumentData<RxDocType>): string => fn0(docData) + fn1(docData);
+    }
+    if (fieldNamePropertiesAmount === 3) {
+        const fn0 = indexPartsFunctions[0];
+        const fn1 = indexPartsFunctions[1];
+        const fn2 = indexPartsFunctions[2];
+        return (docData: RxDocumentData<RxDocType>): string => fn0(docData) + fn1(docData) + fn2(docData);
+    }
+
     const ret = function (docData: RxDocumentData<RxDocType>): string {
         let str = '';
         for (let i = 0; i < fieldNamePropertiesAmount; ++i) {
@@ -146,6 +205,11 @@ declare type ParsedLengths = {
     nonDecimals: number;
     decimals: number;
     roundedMinimum: number;
+    /**
+     * Pre-computed Math.pow(10, decimals) to avoid
+     * recomputing on every getNumberIndexString call.
+     */
+    multiplier: number;
 };
 export function getStringLengthOfIndexNumber(
     schemaPart: JsonSchema
@@ -167,7 +231,8 @@ export function getStringLengthOfIndexNumber(
         maximum,
         nonDecimals,
         decimals,
-        roundedMinimum: minimum
+        roundedMinimum: minimum,
+        multiplier: Math.pow(10, decimals)
     };
 }
 
@@ -233,9 +298,19 @@ export function getNumberIndexString(
     let str = nonDecimalsValueAsString.padStart(parsedLengths.nonDecimals, '0');
 
     if (parsedLengths.decimals > 0) {
-        const splitByDecimalPoint = fieldValue.toString().split('.');
-        const decimalValueAsString = splitByDecimalPoint.length > 1 ? splitByDecimalPoint[1] : '0';
-        str += decimalValueAsString.padEnd(parsedLengths.decimals, '0');
+        /**
+         * @performance
+         * Use math to extract decimal digits instead of toString().split('.')
+         * which creates intermediate strings and arrays.
+         * multiplier is pre-computed in ParsedLengths to avoid Math.pow() per call.
+         */
+        const multiplier = parsedLengths.multiplier;
+        const shifted = Math.min(
+            Math.round((fieldValue - Math.floor(fieldValue)) * multiplier),
+            multiplier - 1
+        );
+        const decimalPart = shifted.toString();
+        str += decimalPart.padStart(parsedLengths.decimals, '0');
     }
     return str;
 }
@@ -258,10 +333,20 @@ export function getStartIndexStringFromLowerBound(
             case 'string':
                 const maxLength = ensureNotFalsy(schemaPart.maxLength, 'maxLength not set');
                 if (typeof bound === 'string') {
-                    str += (bound as string).padEnd(maxLength, ' ');
+                    if (bound === INDEX_MAX) {
+                        str += ''.padEnd(maxLength, INDEX_MAX);
+                    } else {
+                        str += (bound as string).padEnd(maxLength, ' ');
+                    }
                 } else {
-                    // str += ''.padStart(maxLength, inclusiveStart ? ' ' : INDEX_MAX);
-                    str += ''.padEnd(maxLength, ' ');
+                    /**
+                     * Use the null character (\x00) as the absolute minimum
+                     * instead of space (\x20). Strings can contain characters
+                     * with codepoints below space (e.g. \t = 9, \n = 10)
+                     * which would sort before space-padded bounds and be
+                     * silently excluded from query results.
+                     */
+                    str += ''.padEnd(maxLength, '\x00');
                 }
                 break;
             case 'boolean':
@@ -298,7 +383,7 @@ export function getStartIndexStringFromLowerBound(
                 }
                 break;
             default:
-                throw new Error('unknown index type ' + type);
+                throw newRxError('CI2', { type: type as string });
         }
     });
     return str;
@@ -325,14 +410,23 @@ export function getStartIndexStringFromUpperBound(
                 if (typeof bound === 'string' && bound !== INDEX_MAX) {
                     str += (bound as string).padEnd(maxLength, ' ');
                 } else if (bound === INDEX_MIN) {
-                    str += ''.padEnd(maxLength, ' ');
+                    /**
+                     * Use the null character (\x00) as the absolute minimum
+                     * to match the lower bound fix. This ensures that compound
+                     * index queries with exclusive bounds on earlier fields
+                     * correctly exclude documents whose later string fields
+                     * contain characters with codepoints below space.
+                     */
+                    str += ''.padEnd(maxLength, '\x00');
                 } else {
                     str += ''.padEnd(maxLength, INDEX_MAX);
                 }
                 break;
             case 'boolean':
-                if (bound === null) {
+                if (bound === null || bound === INDEX_MAX) {
                     str += '1';
+                } else if (bound === INDEX_MIN) {
+                    str += '0';
                 } else {
                     const boolToStr = bound ? '1' : '0';
                     str += boolToStr;
@@ -357,7 +451,7 @@ export function getStartIndexStringFromUpperBound(
                 }
                 break;
             default:
-                throw new Error('unknown index type ' + type);
+                throw newRxError('CI2', { type: type as string });
         }
     });
     return str;

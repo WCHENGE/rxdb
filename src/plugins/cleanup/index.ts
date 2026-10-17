@@ -1,4 +1,3 @@
-import { runAsyncPluginHooks } from '../../hooks.ts';
 import type {
     RxCollection,
     RxPlugin
@@ -12,19 +11,19 @@ export const RxDBCleanupPlugin: RxPlugin = {
     rxdb: true,
     prototypes: {
         RxCollection: (proto: any) => {
-            proto.cleanup = async function (this: RxCollection, minimumDeletedTime?: number): Promise<void> {
+            proto.cleanup = async function (this: RxCollection, minimumDeletedTime?: number): Promise<boolean> {
                 const cleanupPolicy = Object.assign(
                     {},
                     DEFAULT_CLEANUP_POLICY,
                     this.database.cleanupPolicy ? this.database.cleanupPolicy : {}
                 );
 
-                if (typeof minimumDeletedTime === 'undefined') {
-                    minimumDeletedTime = cleanupPolicy.minimumDeletedTime;
+                if (typeof minimumDeletedTime !== 'undefined') {
+                    cleanupPolicy.minimumDeletedTime = minimumDeletedTime;
                 }
 
                 // run cleanup() until it returns true
-                await cleanupRxCollection(this, cleanupPolicy);
+                return cleanupRxCollection(this, cleanupPolicy);
             };
         }
     },
@@ -43,3 +42,4 @@ export const RxDBCleanupPlugin: RxPlugin = {
 };
 
 export * from './cleanup.ts';
+export * from './cleanup-helper.ts';

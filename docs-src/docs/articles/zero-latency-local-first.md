@@ -1,16 +1,17 @@
 ---
-title: Zero Latency Local First Apps with RxDB – Sync, Encryption and Compression
+title: Zero Latency Local First Apps with RxDB - Sync, Encryption and Compression
 slug: zero-latency-local-first.html
 description: Build blazing-fast, zero-latency local first apps with RxDB. Gain instant UI responses, robust offline capabilities, end-to-end encryption, and data compression for streamlined performance.
+image: /headers/zero-latency-local-first.jpg
 ---
 
-# Zero Latency Local First Apps with RxDB – Sync, Encryption and Compression
+import {CenteredImage} from '@site/src/components/centered-image';
+
+# Zero Latency Local First Apps with RxDB - Sync, Encryption and Compression
 
 Creating a **zero-latency local first** application involves ensuring that most (if not all) user interactions occur instantaneously, without waiting on remote network responses. This design drastically enhances user experience, allowing apps to remain responsive and functional even when offline or experiencing poor connectivity. As developers, we can achieve this by storing data **locally on the client** and synchronizing it to the backend in the background. **RxDB** (Reactive Database) offers a comprehensive set of features - covering replication, offline support, encryption, compression, conflict handling, and more - that make it straightforward to build such high-performing apps.
 
-<p align="center">
-  <img src="/files/loading-spinner-not-needed.gif" alt="loading spinner not needed" width="300" />
-</p>
+<CenteredImage src="/files/loading-spinner-not-needed.gif" alt="loading spinner not needed" width={300} />
 
 ## Why Zero Latency with a Local First Approach?
 
@@ -21,15 +22,11 @@ In a traditional architecture, each user action triggers requests to a server fo
 3. **Reduced Backend Load**: Instead of flooding the server with small requests, replication can combine and push or pull changes in batches.
 4. **Simplified Caching**: Instead of implementing multi-layer caching, local first transforms your data layer into a reliable, quickly accessible store for all user actions.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="RxDB local Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="RxDB local Database" />
 
 ## RxDB: Your Key to Zero-Latency Local First Apps
 
-**RxDB** is a JavaScript-based NoSQL database designed for offline-first and real-time replication scenarios. It supports a range of environments - browsers (IndexedDB or OPFS), mobile ([Ionic](./ionic-storage.md), [React Native](../react-native-database.md)), [Electron](../electron-database.md), Node.js - and is built around:
+**RxDB** is a JavaScript-based [NoSQL](./in-memory-nosql-database.md) database designed for offline-first and real-time replication scenarios. It supports a range of environments - browsers (IndexedDB or OPFS), mobile ([Ionic](./ionic-storage.md), [React Native](../react-native-database.md)), [Electron](../electron-database.md), Node.js - and is built around:
 
 - **Reactive Queries** that trigger UI updates upon data changes
 - **Schema-based NoSQL Documents** for flexible but robust data models
@@ -129,9 +126,7 @@ This replication seamlessly merges server-side and client-side changes. Your app
 
 A local first approach, especially with RxDB, naturally supports an [optimistic UI](./optimistic-ui.md) pattern. Because writes occur on the client, you can instantly reflect changes in the interface as soon as the user performs an action - no need to wait for server confirmation. For example, when a user updates a task document to done: true, the UI can re-render immediately with that new state. This even works across multiple browser tabs.
 
-<p align="center">
-  <img src="/files/multiwindow.gif" alt="RxDB multi tab" width="450" />
-</p>
+<CenteredImage src="/files/multiwindow.gif" alt="RxDB multi tab" width={450} />
 
 If a server conflict arises later during replication, RxDB's [conflict handling](../transactions-conflicts-revisions.md) logic determines which changes to keep, and the UI can be updated accordingly. This is far more efficient than blocking the user or displaying a spinner while the backend processes the request.
 
@@ -150,7 +145,9 @@ Over time, apps evolve - new fields, changed field types, or altered indexes. Rx
 When storing data locally, you may handle user-sensitive information like PII (Personal Identifiable Information) or financial details. RxDB supports on-device [encryption](../encryption.md) to protect fields. For example, you can define:
 
 ```ts
-import { wrappedKeyEncryptionCryptoJsStorage } from 'rxdb/plugins/encryption-crypto-js';
+import {
+    wrappedKeyEncryptionCryptoJsStorage
+} from 'rxdb/plugins/encryption-crypto-js';
 
 const encryptedStorage = wrappedKeyEncryptionCryptoJsStorage({
   storage: getRxStorageLocalstorage()
@@ -185,7 +182,7 @@ Then mark fields as `encrypted` in the schema. This ensures data is unreadable o
 
 ### Setup Compression
 
-Local data can expand quickly, especially for large documents or repeated key names. RxDB's key compression feature replaces verbose field names with shorter tokens, decreasing storage usage and speeding up replication. You enable it by adding keyCompression: true to your collection schema:
+Local data can expand quickly, especially for large documents or repeated key names. RxDB's [key compression](../key-compression.md) feature replaces verbose field names with shorter tokens, decreasing storage usage and speeding up replication. You enable it by adding keyCompression: true to your collection schema:
 
 
 ```ts
@@ -198,7 +195,7 @@ await db.addCollections({
       type: 'object',
       primaryKey: 'id',
       properties: {
-        id:         { type: 'string'. maxLength: 100 },
+        id:         { type: 'string', maxLength: 100 },
         message:    { type: 'string' },
         timestamp:  { type: 'number' }
       }

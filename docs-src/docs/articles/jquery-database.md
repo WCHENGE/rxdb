@@ -2,19 +2,17 @@
 title: RxDB as a Database in a jQuery Application
 slug: jquery-database.html
 description: Level up your jQuery-based projects with RxDB. Build real-time, resilient, and responsive apps powered by a reactive NoSQL database right in the browser.
+image: /headers/jquery-database.jpg
 ---
 
 import {VideoBox} from '@site/src/components/video-box';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # RxDB as a Database in a jQuery Application
 
 In the early days of dynamic web development, **jQuery** emerged as a popular library that simplified DOM manipulation and AJAX requests. Despite the rise of modern frameworks, many developers still maintain or extend existing jQuery projects, or leverage jQuery in specific contexts. As jQuery applications grow in complexity, they often require efficient data handling, offline support, and synchronization capabilities. This is where [RxDB](https://rxdb.info/), a reactive JavaScript database for the browser, node.js, and [mobile devices](./mobile-database.md), steps in.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript jQuery Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript jQuery Database" />
 
 ## jQuery Web Applications
 jQuery provides a simple API for DOM manipulation, event handling, and AJAX calls. It has been widely adopted due to its ease of use and strong community support. Many projects continue to rely on jQuery for handling client-side functionality, UI interactions, and animations. As these applications evolve, the need for a robust database solution that can manage data locally (and offline) becomes increasingly important.
@@ -37,7 +35,7 @@ RxDB (short for Reactive Database) is built on top of [IndexedDB](./browser-data
 - **Reactive Data Handling**: RxDB emits real-time updates whenever your data changes, allowing you to instantly reflect these changes in the DOM with jQuery.
 - **Offline-First Approach**: Keep your application usable even when the user's network is unavailable. Data is automatically synchronized once connectivity is restored.
 - **Data Replication**: Enable multi-device or multi-tab synchronization with minimal effort.
-- **Observable Queries**: Reduce code complexity by subscribing to queries instead of constantly polling for changes.
+- **[Observable Queries](../rx-query.md)**: Reduce code complexity by subscribing to queries instead of constantly polling for changes.
 - **Multi-Tab Support**: If a user opens your jQuery application in multiple tabs, RxDB keeps data in sync across all sessions.
 
 <center>
@@ -49,9 +47,7 @@ RxDB (short for Reactive Database) is built on top of [IndexedDB](./browser-data
 ### What is RxDB?
 [RxDB](https://rxdb.info/) is a client-side NoSQL database that stores data in the browser (or [node.js](../nodejs-database.md)) and synchronizes changes with other instances or servers. Its design embraces reactive programming principles, making it well-suited for real-time applications, offline scenarios, and multi-tab use cases.
 
-<p align="center">
-  <img src="../files/animations/realtime.gif" alt="real-time ui updates" width="700" />
-</p>
+<CenteredImage src="../files/animations/realtime.gif" alt="real-time ui updates" width={700} />
 
 ### Reactive Data Handling
 RxDB's use of observables enables an event-driven architecture where data mutations automatically trigger UI updates. In a jQuery application, you can subscribe to these changes and update DOM elements as soon as data changes occur - no need for manual refresh or complicated change detection logic.
@@ -60,7 +56,7 @@ RxDB's use of observables enables an event-driven architecture where data mutati
 One of RxDB's distinguishing traits is its emphasis on offline-first design. This means your jQuery application continues to function, display, and update data even when there's no network connection. When connectivity is restored, RxDB synchronizes updates with the server or other peers, ensuring consistency across all instances.
 
 ### Data Replication
-RxDB supports real-time data replication with different backends. By enabling replication, you ensure that multiple clients - be they multiple [browser](./browser-database.md) tabs or separate devices - stay in sync. RxDB's conflict resolution strategies help keep the data consistent even when multiple users make changes simultaneously.
+RxDB supports real-time data [replication](../replication.md) with different backends. By enabling replication, you ensure that multiple clients - be they multiple [browser](./browser-database.md) tabs or separate devices - stay in sync. RxDB's conflict resolution strategies help keep the data consistent even when multiple users make changes simultaneously.
 
 ### Observable Queries
 Instead of static queries, RxDB provides observable queries. Whenever data relevant to a query changes, RxDB re-emits the new result set. You can subscribe to these updates within your jQuery code and instantly reflect them in the UI.
@@ -68,12 +64,10 @@ Instead of static queries, RxDB provides observable queries. Whenever data relev
 ### Multi-Tab Support
 Running your jQuery app in multiple tabs? RxDB automatically synchronizes changes between those tabs. Users can freely switch windows without missing real-time updates.
 
-<p align="center">
-  <img src="../files/multiwindow.gif" alt="multi tab support" width="450" />
-</p>
+<CenteredImage src="../files/multiwindow.gif" alt="multi tab support" width={450} />
 
 ### RxDB vs. Other jQuery Database Options
-Historically, jQuery developers might use `localStorage` or raw `IndexedDB` for storing data. However, these solutions can require significant boilerplate, lack reactivity, and offer no built-in sync or conflict resolution. RxDB fills these gaps with an out-of-the-box solution, abstracting away low-level database complexities and providing an event-driven, offline-capable approach.
+Historically, jQuery developers might use `localStorage` or raw `IndexedDB` for storing data. However, these solutions can require significant boilerplate, lack [reactivity](../reactivity.md), and offer no built-in sync or conflict resolution. RxDB fills these gaps with an out-of-the-box solution, abstracting away low-level database complexities and providing an event-driven, offline-capable approach.
 
 ## Using RxDB in a jQuery Application
 
@@ -111,7 +105,7 @@ async function initDatabase() {
         primaryKey: 'id',
         type: 'object',
         properties: {
-          id: { type: 'string' },
+          id: { type: 'string', maxLength: 100 },
           name: { type: 'string' },
           points: { type: 'number' }
         }
@@ -168,7 +162,7 @@ With this approach, any time data in the `hero` collection changes - like when a
 
 ## Different RxStorage layers for RxDB
 
-RxDB supports multiple storage backends (RxStorage layers). Some popular ones:
+RxDB supports multiple storage backends ([RxStorage](../rx-storage.md) layers). Some popular ones:
 
 - [LocalStorage.js RxStorage](../rx-storage-localstorage.md): Uses the browsers [localstorage](./localstorage.md). Fast and easy to set up.
 - [IndexedDB RxStorage](../rx-storage-indexeddb.md): Direct IndexedDB usage, suitable for modern browsers.
@@ -188,7 +182,7 @@ Should multiple clients update the same document, RxDB offers [conflict handling
 ### Bidirectional Synchronization
 With RxDB, data changes flow both ways: from client to server and from server to client. This real-time synchronization ensures that all users or tabs see consistent, up-to-date data.
 
-<p align="center"> <img src="../files/database-replication.png" alt="database replication" width="200" /> </p>
+<CenteredImage src="../files/database-replication.png" alt="database replication" width={200} />
 
 ## Advanced RxDB Features and Techniques
 

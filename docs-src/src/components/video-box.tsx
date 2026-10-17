@@ -1,7 +1,8 @@
-import { CSSProperties, useState } from 'react';
+import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { triggerTrackingEvent } from './trigger-event';
 import { VideoPlayButton } from './video-button';
 import { Modal } from './modal';
+import { JsonLd } from './json-ld';
 
 export type VideoBoxProps = {
     dark: boolean;
@@ -10,7 +11,41 @@ export type VideoBoxProps = {
     duration: string;
     // in seconds
     startAt?: number;
+    // (optional) longer description of the video, used for the VideoObject JSON-LD
+    description?: string;
+    // (optional) ISO 8601 date the video was published, for example '2024-05-01'
+    uploadDate?: string;
 };
+
+/**
+ * Converts a human duration like '3:45' or '1:02:30' into the ISO 8601
+ * duration format ('PT3M45S') that schema.org VideoObject expects.
+ */
+function toIsoDuration(duration: string): string | undefined {
+    if (!duration) {
+        return undefined;
+    }
+    const parts = duration.split(':').map(part => parseInt(part, 10));
+    if (parts.length === 0 || parts.length > 3 || parts.some(part => isNaN(part))) {
+        return undefined;
+    }
+    // left-pad to [hours, minutes, seconds]
+    while (parts.length < 3) {
+        parts.unshift(0);
+    }
+    const [hours, minutes, seconds] = parts;
+    const result = `PT${hours ? hours + 'H' : ''}${minutes ? minutes + 'M' : ''}${seconds ? seconds + 'S' : ''}`;
+    return result === 'PT' ? 'PT0S' : result;
+}
+
+type VideoModalProps = {
+    open: boolean;
+    videoId: string;
+    title: string;
+    startAt?: number;
+    onClose: (e: React.MouseEvent) => void;
+};
+
 
 const styles: Record<string, CSSProperties> = {
     container: {
@@ -70,9 +105,22 @@ const styles: Record<string, CSSProperties> = {
     },
 };
 
-export function VideoBox({ videoId, title, duration, startAt, dark }: VideoBoxProps) {
+export function VideoBox({ videoId, title, duration, startAt, dark, description, uploadDate }: VideoBoxProps) {
     const [isHovered, setIsHovered] = useState(false);
     const [isOpen, setIsOpen] = useState(false);
+
+    const isoDuration = toIsoDuration(duration);
+    const videoJsonLd = {
+        '@context': 'https://schema.org',
+        '@type': 'VideoObject',
+        name: title,
+        description: description || title,
+        thumbnailUrl: `https://rxdb.info/files/video-thumbnails/${videoId}.jpg`,
+        contentUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        embedUrl: `https://www.youtube.com/embed/${videoId}`,
+        ...(isoDuration ? { duration: isoDuration } : {}),
+        ...(uploadDate ? { uploadDate } : {}),
+    };
 
     return (
         <div
@@ -84,27 +132,32 @@ export function VideoBox({ videoId, title, duration, startAt, dark }: VideoBoxPr
             onMouseLeave={() => setIsHovered(false)}
             onClick={() => {
                 setIsOpen(true);
-                triggerTrackingEvent('open_video', 0.10);
-                triggerTrackingEvent('open_video_' + videoId, 0.05, 1);
             }}
         >
+            <JsonLd data={videoJsonLd} />
             <div style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div style={{ ...styles.thumbnailWrapper }}>
                     <img
-                        src={`https://i3.ytimg.com/vi/${videoId}/mqdefault.jpg`}
+                        /**
+                         * The thumbnails are downloaded at build time by
+                         * scripts/docs-download-video-thumbnails.mjs and served
+                         * from the docs host itself, because the YouTube CDN
+                         * (i3.ytimg.com) is blocked in China.
+                         */
+                        src={`/files/video-thumbnails/${videoId}.jpg`}
                         alt={title}
-                        style={styles.thumbnail}
+                        style={{
+                            ...styles.thumbnail,
+                            transform: `scale(${isHovered ? 1.1 : 1})`,
+                            transition: 'transform 0.2s ease-in-out',
+                        }}
                         loading="lazy"
                         decoding="async"
-                        referrerPolicy="no-referrer"
-                        crossOrigin="anonymous"
                         fetchPriority="low"
                     />
                     <div
                         style={{
                             ...styles.playButton,
-                            transform: `translate(-50%, -50%) scale(${isHovered ? 1.2 : 1})`,
-                            transition: 'transform 0.1s ease-in-out',
                         }}
                     >
                         <VideoPlayButton />
@@ -122,46 +175,97 @@ export function VideoBox({ videoId, title, duration, startAt, dark }: VideoBoxPr
             </div>
 
             {isOpen ? (
-                <Modal
+                <VideoModal
                     open={isOpen}
-                    onCancel={(e) => {
-                        e.stopPropagation();
-                        setIsOpen(false);
-                    }}
+                    videoId={videoId}
+                    title={title}
+                    startAt={startAt}
                     onClose={(e) => {
                         e.stopPropagation();
                         setIsOpen(false);
                     }}
-                    onOk={(e) => {
-                        e.stopPropagation();
-                        setIsOpen(false);
-                    }}
-                    footer={null}
-                    width={'auto'}
-                    style={{
-                        maxWidth: 800,
-                    }}
-                    title={title}
-                >
-                    <center>
-                        <iframe
-                            style={{ borderRadius: '0px', width: '90vw', maxWidth: '100%' }}
-                            height="515"
-                            src={
-                                'https://www.youtube.com/embed/' +
-                                videoId +
-                                '?autoplay=1&start=' +
-                                (startAt ? startAt : 0)
-                            }
-                            title="YouTube video player"
-                            frameBorder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerPolicy="strict-origin-when-cross-origin"
-                            allowFullScreen
-                        ></iframe>
-                    </center>
-                </Modal>
+                />
             ) : null}
         </div>
+    );
+}
+
+
+
+export function VideoModal({ open, videoId, title, startAt, onClose }: VideoModalProps) {
+    const watchTimeoutRef = useRef<number | null>(null);
+    const openedTrackedRef = useRef(false);
+    const watchSeconds = 25;
+
+    // Track "open_video" once per open session + start the 20s timer
+    useEffect(() => {
+        if (!open) {
+            // reset per-session state when closed
+            openedTrackedRef.current = false;
+
+            if (watchTimeoutRef.current !== null) {
+                clearTimeout(watchTimeoutRef.current);
+                watchTimeoutRef.current = null;
+            }
+            return;
+        }
+
+        // modal just opened (or is open)
+        if (!openedTrackedRef.current) {
+            openedTrackedRef.current = true;
+            triggerTrackingEvent('open_video', 0.10);
+            triggerTrackingEvent('open_video_' + videoId, 0.05, 1);
+        }
+
+        watchTimeoutRef.current = window.setTimeout(() => {
+            triggerTrackingEvent('watch_video_x_secs', 1, 1, 'Lead');
+            triggerTrackingEvent('watch_video_' + watchSeconds + '_secs', 1, 1);
+            triggerTrackingEvent('watch_video_' + videoId + '_' + watchSeconds + '_secs', 1, 0);
+        }, watchSeconds * 1000);
+
+        return () => {
+            if (watchTimeoutRef.current !== null) {
+                clearTimeout(watchTimeoutRef.current);
+                watchTimeoutRef.current = null;
+            }
+        };
+    }, [open, videoId]);
+
+    if (!open) return null;
+
+    return (
+        <Modal
+            open={open}
+            onCancel={onClose}
+            onOk={onClose}
+            footer={null}
+            width="auto"
+            style={{ maxWidth: '90%' }}
+            title={title}
+        >
+            <center>
+                <iframe
+                    style={{
+                        width: '100%',
+                        maxWidth: '90vw',
+                        maxHeight: '80vh',
+                        aspectRatio: '16 / 9',
+                        height: 'auto',
+                        borderRadius: '0px',
+                    }}
+                    src={
+                        'https://www.youtube.com/embed/' +
+                        videoId +
+                        '?autoplay=1&modestbranding=1&rel=0&start=' +
+                        (startAt ? startAt : 0)
+                    }
+                    title="YouTube video player"
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    allowFullScreen
+                />
+            </center>
+        </Modal>
     );
 }

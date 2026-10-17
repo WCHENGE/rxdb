@@ -1,7 +1,12 @@
 console.log('######## init.test.js ########');
 import sourceMapSupport from 'source-map-support';
 sourceMapSupport.install();
-import '@babel/polyfill';
+/**
+ * core-js does not define an `exports` map, so the full path
+ * to the file must be used, otherwise node.js cannot resolve
+ * it from the transpiled ESM tests.
+ */
+import 'core-js/stable/index.js';
 import config from './config.ts';
 import assert from 'assert';
 import {
@@ -24,6 +29,50 @@ if (!isNode) {
     console.dir = (d: any) => {
         console.log(JSON.stringify(d));
     };
+
+    /**
+     * In the browser, we must log uncaught errors and unhandled rejections
+     * to the console so that Karma forwards them to the terminal.
+     * Otherwise these errors are only visible in the browser devtools
+     * and CI tests will just time out without showing what went wrong.
+     */
+    if (typeof window !== 'undefined') {
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('init.test.ts: browser unhandledrejection:');
+            const reason = event.reason;
+            if (reason && typeof reason === 'object' && 'message' in reason) {
+                console.error(reason.message);
+                console.error(reason.stack || new Error('unhandledrejection').stack);
+            } else {
+                try {
+                    console.error(JSON.stringify(reason));
+                } catch (_err) {
+                    console.error(String(reason));
+                }
+                console.error(new Error('unhandledrejection').stack);
+            }
+        });
+
+        window.addEventListener('error', (event) => {
+            console.error('init.test.ts: browser uncaught error:');
+            console.error(event.message);
+            if (event.error) {
+                if (event.error && typeof event.error === 'object' && 'message' in event.error) {
+                    console.error(event.error.stack || new Error('uncaught error').stack);
+                } else {
+                    try {
+                        console.error(JSON.stringify(event.error));
+                    } catch (_err) {
+                        console.error(String(event.error));
+                    }
+                    console.error(new Error('uncaught error').stack);
+                }
+            }
+            if (event.filename) {
+                console.error('at ' + event.filename + ':' + event.lineno + ':' + event.colno);
+            }
+        });
+    }
 } else {
     /**
      * exit with non-zero on unhandledRejection
@@ -35,9 +84,9 @@ if (!isNode) {
         try {
             console.dir(await p);
         } catch (err) {
-            console.log((error as any).stack);
-            console.dir(error);
             console.log('------- COULD NOT AWAIT p');
+            logUnknownError(err);
+            logUnknownError(error);
             process.exit(5);
         }
         console.dir((error as any).stack);
@@ -52,6 +101,19 @@ if (!isNode) {
     console.dir(process.versions.node);
 }
 
+function logUnknownError(err: any) {
+    if (err instanceof Error) {
+        console.error(err.stack || err.message);
+    } else {
+        console.error('Non-Error rejection:', err);
+        console.error(err.stack || err.message);
+        try {
+            console.error(JSON.stringify(err, null, 2));
+        } catch {
+            console.error(String(err));
+        }
+    }
+}
 
 
 describe('init.test.ts', () => {

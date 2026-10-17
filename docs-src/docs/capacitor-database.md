@@ -2,22 +2,23 @@
 title: Capacitor Database Guide - SQLite, RxDB & More
 slug: capacitor-database.html
 description: Explore Capacitor's top data storage solutions - from key-value to real-time databases. Compare SQLite, RxDB, and more in this in-depth guide.
+image: /headers/capacitor-database.jpg
 ---
 
 
 import {Tabs} from '@site/src/components/tabs';
 import {Steps} from '@site/src/components/steps';
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Capacitor Database - SQLite, RxDB and others
 
-[Capacitor](https://capacitorjs.com/) is an open source native JavaScript runtime to build Web based Native apps. You can use it to create cross-platform iOS, Android, and Progressive Web Apps with the web technologies JavaScript, HTML, and CSS.
-It is developed by the Ionic Team and provides a great alternative to create hybrid apps. Compared to [React Native](./react-native-database.md), Capacitor is more Web-Like because the JavaScript runtime supports most Web APIs like IndexedDB, fetch,  and so on.
+[Capacitor](https://capacitorjs.com/) is an open source native JavaScript runtime to build Web based Native apps. You can use it to create cross-platform iOS, Android, and [Progressive Web Apps](./articles/progressive-web-app-database.md) with the web technologies JavaScript, HTML, and CSS.
+It is developed by the Ionic Team and provides a great alternative to create hybrid apps. Compared to [React Native](./react-native-database.md), Capacitor is more Web-Like because the JavaScript runtime supports most Web APIs like [IndexedDB](./rx-storage-indexeddb.md), fetch,  and so on.
 
 To read and write persistent data in Capacitor, there are multiple solutions which are shown in the following.
 
-<p align="center">
-  <img src="./files/icons/capacitor.svg" alt="Capacitor" width="50" />
-</p>
+<CenteredImage src="./files/icons/capacitor.svg" alt="Capacitor" width={50} />
 
 
 
@@ -27,7 +28,7 @@ To read and write persistent data in Capacitor, there are multiple solutions whi
 
 ### Preferences API
 
-Capacitor comes with a native [Preferences API](https://capacitorjs.com/docs/apis/preferences) which is a simple, persistent key->value store for lightweight data, similar to the browsers localstorage or React Native [AsyncStorage](./react-native-database.md#asyncstorage).
+Capacitor comes with a native [Preferences API](https://capacitorjs.com/docs/apis/preferences) which is a simple, persistent key->value store for lightweight data, similar to the browsers localstorage or React Native AsyncStorage.
 
 To use it, you first have to install it from npm `npm install @capacitor/preferences` and then you can import it and write/read data.
 Notice that all calls to the preferences API are asynchronous so they return a `Promise` that must be `await`-ed.
@@ -49,7 +50,7 @@ const { value } = await Preferences.get({ key: 'foo' }); // > 'bar'
 await Preferences.remove({ key: 'foo' });
 ```
 
-The preferences API is good when only a small amount of data needs to be stored and when no query capabilities besides the key access are required. Complex queries or other features like indexes or replication are not supported which makes the preferences API not suitable for anything more than storing simple data like user settings.
+The preferences API is good when only a small amount of data needs to be stored and when no query capabilities besides the key access are required. Complex queries or other features like indexes or [replication](./replication.md) are not supported which makes the preferences API not suitable for anything more than storing simple data like user settings.
 
 ### Localstorage/IndexedDB/WebSQL
 
@@ -108,14 +109,12 @@ The downside of SQLite is that it is lacking many features that are handful when
 
 ### RxDB
 
-<p align="center">
-  <img src="./files/logo/rxdb_javascript_database.svg" alt="RxDB" width="170" />
-</p>
+<RxdbLogo alt="RxDB" width={170} />
 
 
 [RxDB](https://rxdb.info/) is an local first, NoSQL database for JavaScript Applications like hybrid apps. Because it is reactive, you can subscribe to all state changes like the result of a query or even a single field of a document. This is great for UI-based realtime applications in a way that makes it easy to develop realtime applications like what you need in Capacitor.
 
-Because RxDB is made for Web applications, most of the [available RxStorage](./rx-storage.md) plugins can be used to store and query data in a Capacitor app. However it is recommended to use the [SQLite RxStorage](./rx-storage-sqlite.md) because it stores the data on the filesystem of the device, not in the JavaScript runtime (like IndexedDB). Storing data on the filesystem ensures it is persistent and will not be cleaned up by any process. Also the performance of SQLite is [much faster](./rx-storage.md#performance-comparison) compared to IndexedDB, because SQLite does not have to go through a browsers permission layers. For the SQLite binding you should use the [@capacitor-community/sqlite](https://github.com/capacitor-community/sqlite) package.
+Because RxDB is made for Web applications, most of the [available RxStorage](./rx-storage.md) plugins can be used to store and query data in a Capacitor app. However it is recommended to use the [SQLite RxStorage](./rx-storage-sqlite.md) because it stores the data on the filesystem of the device, not in the JavaScript runtime (like IndexedDB). Storing data on the filesystem ensures it is persistent and will not be cleaned up by any process. Also the performance of SQLite is [much faster](./rx-storage-performance.md#performance-comparison) compared to IndexedDB, because SQLite does not have to go through a browsers permission layers. For the SQLite binding you should use the [@capacitor-community/sqlite](https://github.com/capacitor-community/sqlite) package.
 
 Because the SQLite RxStorage is part of the [👑 Premium Plugins](/premium/) which must be purchased, it is recommended to use the [LocalStorage RxStorage](./rx-storage-localstorage.md) while testing and prototyping your Capacitor app.
 
@@ -259,6 +258,16 @@ await collections.humans.find({
 
 </Steps>
 
+
+## FAQ
+
+<Faq>
+<FaqItem question="What is Capacitor.js and how does it compare to React Native or Ionic?">
+
+Capacitor is a lightweight, open-source JavaScript native runtime engineered by the Ionic team that bridges standard Web APIs into native iOS/Android builds. Unlike React Native, which bundles a proprietary JavaScript engine directly mapping to native UI components, Capacitor mounts a standard platform WebView capable of executing raw HTML/CSS/JS exactly as it runs in modern browsers. This allows seamless utilization of standard Web APIs like **[RxDB](./rx-database.md)** atop IndexedDB or OPFS without requiring platform-specific native C++ module compilation.
+
+</FaqItem>
+</Faq>
 
 ## Follow up
 

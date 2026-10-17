@@ -21,6 +21,8 @@ import { PROMISE_RESOLVE_TRUE, getFromMapOrCreate } from '../utils/index.ts';
 const LEADER_ELECTORS_OF_DB: WeakMap<RxDatabase, LeaderElector> = new WeakMap();
 const LEADER_ELECTOR_BY_BROADCAST_CHANNEL: WeakMap<BroadcastChannel, LeaderElector> = new WeakMap();
 
+export const OPEN_LEADER_ELECTORS: Set<LeaderElector> = new Set();
+
 
 /**
  * Returns the leader elector of a broadcast channel.
@@ -49,20 +51,27 @@ export function getForDatabase(this: RxDatabase): LeaderElector {
      * Clean up the reference on RxDatabase.close()
      */
     const oldClose = this.close.bind(this);
-    this.close = function () {
-        removeBroadcastChannelReference(this.token, this);
-        return oldClose();
+    this.close = async function () {
+        /**
+         * It is very important that we remove the
+         * potential leader elected broadcast channel
+         * AFTER the database is closed. Otherwise an
+         * instance running in another browser tab can
+         * already start working on stuff and interfering
+         * with a half-closed database and its collections.
+         */
+        const ret = await oldClose();
+        await removeBroadcastChannelReference(this.token, this);
+        return ret;
     };
 
 
-    let elector = getLeaderElectorByBroadcastChannel(broadcastChannel);
-    if (!elector) {
-        elector = getLeaderElectorByBroadcastChannel(broadcastChannel);
-        LEADER_ELECTORS_OF_DB.set(
-            this,
-            elector
-        );
-    }
+    const elector = getLeaderElectorByBroadcastChannel(broadcastChannel);
+    LEADER_ELECTORS_OF_DB.set(
+        this,
+        elector
+    );
+    OPEN_LEADER_ELECTORS.add(elector);
 
     /**
      * Overwrite for caching
@@ -91,11 +100,14 @@ export function waitForLeadership(this: RxDatabase): Promise<boolean> {
 
 /**
  * runs when the database gets closed
+ * Awaits die() so that the election is finished before
+ * the broadcast channel is closed further down in close().
  */
-export function onClose(db: RxDatabase) {
+export async function onClose(db: RxDatabase) {
     const has = LEADER_ELECTORS_OF_DB.get(db);
     if (has) {
-        has.die();
+        await has.die();
+        OPEN_LEADER_ELECTORS.delete(has);
     }
 }
 

@@ -3,7 +3,7 @@ import {
     clone
 } from 'async-test-util';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemas,
     HumanDocumentType
@@ -18,7 +18,8 @@ import {
     lastOfArray,
     INDEX_MIN,
     randomToken,
-    createRxDatabase
+    createRxDatabase,
+    rateQueryPlan
 } from '../../plugins/core/index.mjs';
 
 
@@ -27,7 +28,7 @@ import type {
 } from '../../plugins/core/index.mjs';
 
 
-describeParallel('query-planner.test.js', () => {
+describe('query-planner.test.js', () => {
     function getHumanSchemaWithIndexes(
         indexes: string[][]
     ): RxJsonSchema<RxDocumentData<HumanDocumentType>> {
@@ -85,6 +86,323 @@ describeParallel('query-planner.test.js', () => {
                     ]
                 );
             });
+            it('should prefer the index with the most matching fields even when all fields match', () => {
+                const schema = getHumanSchemaWithIndexes([
+                    ['lastName'],
+                    ['age', 'firstName']
+                ]);
+                const query = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                    schema,
+                    {
+                        selector: {
+                            _deleted: false,
+                            age: {
+                                $gt: 20
+                            },
+                            firstName: {
+                                $gt: ''
+                            },
+                            passportId: {
+                                $gt: ''
+                            }
+                        }
+                    }
+                );
+
+                /**
+                 * The ['age', 'firstName'] index (expanded to ['_deleted', 'age', 'firstName', 'passportId'])
+                 * has all 4 fields matched by the selector, so it should be preferred over
+                 * the ['lastName'] index which only matches '_deleted' (1 field).
+                 */
+                assert.deepStrictEqual(
+                    query.sort,
+                    [
+                        { _deleted: 'asc' },
+                        { age: 'asc' },
+                        { firstName: 'asc' },
+                        { passportId: 'asc' }
+                    ]
+                );
+            });
+        });
+        describe('normalize selector shorthands', () => {
+            it('should normalize top-level shorthand selectors to $eq', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: 'bar',
+                            age: 10
+                        },
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                assert.deepStrictEqual(
+                    (query.selector as any).firstName,
+                    { $eq: 'bar' }
+                );
+                assert.deepStrictEqual(
+                    (query.selector as any).age,
+                    { $eq: 10 }
+                );
+            });
+            it('should normalize shorthands inside $and', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $and: [
+                                { firstName: 'Alice' },
+                                { age: 30 }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $and = (query.selector as any).$and;
+                assert.deepStrictEqual($and[0].firstName, { $eq: 'Alice' });
+                assert.deepStrictEqual($and[1].age, { $eq: 30 });
+            });
+            it('should normalize shorthands inside $or', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $or: [
+                                { firstName: 'Alice' },
+                                { firstName: 'Bob' }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $or = (query.selector as any).$or;
+                assert.deepStrictEqual($or[0].firstName, { $eq: 'Alice' });
+                assert.deepStrictEqual($or[1].firstName, { $eq: 'Bob' });
+            });
+            it('should normalize shorthands inside $nor', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $nor: [
+                                { firstName: 'Alice' }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $nor = (query.selector as any).$nor;
+                assert.deepStrictEqual($nor[0].firstName, { $eq: 'Alice' });
+            });
+            it('should normalize shorthands inside $not', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $not: {
+                                firstName: 'Alice'
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $not = (query.selector as any).$not;
+                assert.deepStrictEqual($not.firstName, { $eq: 'Alice' });
+            });
+            it('should normalize shorthands in deeply nested $and inside $or', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $or: [
+                                {
+                                    $and: [
+                                        { firstName: 'Alice' },
+                                        { age: 30 }
+                                    ]
+                                },
+                                { firstName: 'Bob' }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $or = (query.selector as any).$or;
+                assert.deepStrictEqual($or[0].$and[0].firstName, { $eq: 'Alice' });
+                assert.deepStrictEqual($or[0].$and[1].age, { $eq: 30 });
+                assert.deepStrictEqual($or[1].firstName, { $eq: 'Bob' });
+            });
+            it('should not modify selectors that already use operators', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $and: [
+                                { age: { $gt: 20 } },
+                                { firstName: 'Alice' }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $and = (query.selector as any).$and;
+                assert.deepStrictEqual($and[0].age, { $gt: 20 });
+                assert.deepStrictEqual($and[1].firstName, { $eq: 'Alice' });
+            });
+            it('should normalize shorthands inside $elemMatch', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: {
+                                $elemMatch: {
+                                    age: 30,
+                                    lastName: 'Smith'
+                                }
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $elemMatch = (query.selector as any).firstName.$elemMatch;
+                assert.deepStrictEqual($elemMatch.age, { $eq: 30 });
+                assert.deepStrictEqual($elemMatch.lastName, { $eq: 'Smith' });
+            });
+            it('should not modify $elemMatch selectors that already use operators', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: {
+                                $elemMatch: {
+                                    age: { $gt: 20 },
+                                    lastName: 'Smith'
+                                }
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $elemMatch = (query.selector as any).firstName.$elemMatch;
+                assert.deepStrictEqual($elemMatch.age, { $gt: 20 });
+                assert.deepStrictEqual($elemMatch.lastName, { $eq: 'Smith' });
+            });
+            it('should not modify $regex/$options operator payloads inside $elemMatch', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const regexQuery = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: {
+                                $elemMatch: {
+                                    $regex: '^applicant$',
+                                    $options: 'i'
+                                }
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                assert.deepStrictEqual(
+                    (regexQuery.selector as any).firstName.$elemMatch,
+                    {
+                        $regex: '^applicant$',
+                        $options: 'i'
+                    }
+                );
+            });
+            it('should not modify $eq operator payloads inside $elemMatch', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const eqQuery = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: {
+                                $elemMatch: {
+                                    $eq: 'Applicant'
+                                }
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                assert.deepStrictEqual(
+                    (eqQuery.selector as any).firstName.$elemMatch,
+                    {
+                        $eq: 'Applicant'
+                    }
+                );
+            });
+            it('should normalize selector shorthands inside logical operators in $elemMatch', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            firstName: {
+                                $elemMatch: {
+                                    $or: [
+                                        { age: 25 },
+                                        { lastName: 'Smith' }
+                                    ]
+                                }
+                            }
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $or = (query.selector as any).firstName.$elemMatch.$or;
+                assert.deepStrictEqual($or[0].age, { $eq: 25 });
+                assert.deepStrictEqual($or[1].lastName, { $eq: 'Smith' });
+            });
+            it('should normalize $elemMatch inside $and', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $and: [
+                                {
+                                    firstName: {
+                                        $elemMatch: {
+                                            age: 25
+                                        }
+                                    }
+                                }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $elemMatch = (query.selector as any).$and[0].firstName.$elemMatch;
+                assert.deepStrictEqual($elemMatch.age, { $eq: 25 });
+            });
+            it('should handle null values in nested selectors', () => {
+                const schema = getHumanSchemaWithIndexes([]);
+                const query = normalizeMangoQuery<HumanDocumentType>(
+                    schema,
+                    {
+                        selector: {
+                            $or: [
+                                { firstName: null as any }
+                            ]
+                        } as any,
+                        sort: [{ passportId: 'asc' }]
+                    }
+                );
+                const $or = (query.selector as any).$or;
+                assert.deepStrictEqual($or[0].firstName, { $eq: null });
+            });
         });
     });
     describe('.getQueryPlan()', () => {
@@ -139,6 +457,127 @@ describeParallel('query-planner.test.js', () => {
             assert.strictEqual(queryPlan.startKeys[1], 20);
             assert.strictEqual(queryPlan.endKeys[1], INDEX_MAX);
             assert.ok(queryPlan.inclusiveStart);
+        });
+        it('should use the min/max of $in values as the scan range', () => {
+            const schema = getHumanSchemaWithIndexes([['firstName']]);
+            const query = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        firstName: {
+                            $in: ['carol', 'alice', 'bob']
+                        },
+                        _deleted: false
+                    }
+                }
+            );
+            const queryPlan = getQueryPlan(
+                schema,
+                query
+            );
+            assert.deepStrictEqual(queryPlan.index, ['_deleted', 'firstName', 'passportId']);
+            assert.strictEqual(queryPlan.startKeys[1], 'alice');
+            assert.strictEqual(queryPlan.endKeys[1], 'carol');
+            assert.ok(queryPlan.inclusiveStart);
+            assert.ok(queryPlan.inclusiveEnd);
+            /**
+             * The scanned range can contain documents whose value
+             * lies between the $in values without being one of them,
+             * so the selector must never count as satisfied by the index.
+             */
+            assert.strictEqual(queryPlan.selectorSatisfiedByIndex, false);
+        });
+        it('should use the min/max of numeric $in values as the scan range', () => {
+            const schema = getHumanSchemaWithIndexes([['age']]);
+            const query = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        age: {
+                            $in: [30, 10, 20]
+                        },
+                        _deleted: false
+                    }
+                }
+            );
+            const queryPlan = getQueryPlan(
+                schema,
+                query
+            );
+            assert.deepStrictEqual(queryPlan.index, ['_deleted', 'age', 'passportId']);
+            assert.strictEqual(queryPlan.startKeys[1], 10);
+            assert.strictEqual(queryPlan.endKeys[1], 30);
+            assert.strictEqual(queryPlan.selectorSatisfiedByIndex, false);
+        });
+        it('should keep the full scan range for mixed-type or empty $in values', () => {
+            const schema = getHumanSchemaWithIndexes([['firstName']]);
+            const mixedQuery = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        firstName: {
+                            $in: ['alice', 5]
+                        } as any,
+                        _deleted: false
+                    }
+                }
+            );
+            const mixedPlan = getQueryPlan(schema, mixedQuery);
+            assert.strictEqual(mixedPlan.startKeys[1], INDEX_MIN);
+            assert.strictEqual(mixedPlan.endKeys[1], INDEX_MAX);
+
+            const emptyQuery = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        firstName: {
+                            $in: []
+                        },
+                        _deleted: false
+                    }
+                }
+            );
+            const emptyPlan = getQueryPlan(schema, emptyQuery);
+            assert.strictEqual(emptyPlan.startKeys[1], INDEX_MIN);
+            assert.strictEqual(emptyPlan.endKeys[1], INDEX_MAX);
+        });
+        it('#8631 should rate a $in bounded plan higher than a full scan so the index is used', () => {
+            const schema = getHumanSchemaWithIndexes([['firstName', 'age']]);
+            const queryWithIn = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        firstName: {
+                            $in: ['aaron', 'jack', 'carol']
+                        },
+                        age: {
+                            $lt: 5
+                        }
+                    },
+                    index: ['firstName', 'age']
+                }
+            );
+            const planWithIn = getQueryPlan(schema, queryWithIn);
+
+            const queryNoSelector = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {},
+                    index: ['firstName', 'age']
+                }
+            );
+            const planNoSelector = getQueryPlan(schema, queryNoSelector);
+
+            const ratingWithIn = rateQueryPlan(schema, queryWithIn, planWithIn);
+            const ratingNoSelector = rateQueryPlan(schema, queryNoSelector, planNoSelector);
+
+            assert.strictEqual(planWithIn.startKeys[0], 'aaron');
+            assert.strictEqual(planWithIn.endKeys[0], 'jack');
+            assert.ok(
+                ratingWithIn > ratingNoSelector,
+                'query plan with $in bounds should be rated higher than a full scan. ' +
+                'Got ratingWithIn=' + ratingWithIn + ', ratingNoSelector=' + ratingNoSelector
+            );
         });
         it('should have the correct start- and end keys when inclusiveStart and inclusiveEnd are false', () => {
             const schema = getHumanSchemaWithIndexes([['age']]);
@@ -339,6 +778,58 @@ describeParallel('query-planner.test.js', () => {
             );
             assert.deepStrictEqual(queryPlan.index, ['_deleted', 'firstName', 'age', 'passportId']);
         });
+        it('should treat enum fields with $eq as sort-irrelevant', () => {
+            const schema: RxJsonSchema<RxDocumentData<any>> = fillWithDefaultSettings({
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 100
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['active', 'inactive', 'pending'],
+                        maxLength: 20
+                    },
+                    age: {
+                        type: 'integer',
+                        minimum: 0,
+                        maximum: 150,
+                        multipleOf: 1
+                    }
+                },
+                indexes: [
+                    ['status', 'age']
+                ],
+                required: ['id', 'status', 'age']
+            });
+            const query = normalizeMangoQuery<RxDocumentData<any>>(
+                schema,
+                {
+                    selector: {
+                        status: {
+                            $eq: 'active'
+                        },
+                        _deleted: false
+                    },
+                    sort: [
+                        { age: 'asc' }
+                    ]
+                }
+            );
+            const queryPlan = getQueryPlan(
+                schema,
+                query
+            );
+            /**
+             * The enum field 'status' with $eq should be treated as sort-irrelevant,
+             * so sortSatisfiedByIndex should be true when the remaining sort
+             * fields match the index order.
+             */
+            assert.ok(queryPlan.sortSatisfiedByIndex);
+        });
         it('should have set sortSatisfiedByIndex=false when order is desc', () => {
             const schema = getHumanSchemaWithIndexes([
                 ['firstName', 'age'],
@@ -361,6 +852,120 @@ describeParallel('query-planner.test.js', () => {
                 query
             );
             assert.strictEqual(queryPlan.sortSatisfiedByIndex, false);
+        });
+        it('should treat string and number fields with $eq as sort-irrelevant', () => {
+            const schema = getHumanSchemaWithIndexes([
+                ['firstName', 'age'],
+                ['age', 'lastName']
+            ]);
+            const stringEqQuery = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        firstName: 'alice',
+                        _deleted: false
+                    },
+                    sort: [
+                        { age: 'asc' }
+                    ]
+                }
+            );
+            const stringEqPlan = getQueryPlan(schema, stringEqQuery);
+            assert.deepStrictEqual(stringEqPlan.index, ['_deleted', 'firstName', 'age', 'passportId']);
+            assert.strictEqual(stringEqPlan.sortSatisfiedByIndex, true);
+
+            const numberEqQuery = normalizeMangoQuery<RxDocumentData<HumanDocumentType>>(
+                schema,
+                {
+                    selector: {
+                        age: 20,
+                        _deleted: false
+                    },
+                    sort: [
+                        { lastName: 'asc' }
+                    ]
+                }
+            );
+            const numberEqPlan = getQueryPlan(schema, numberEqQuery);
+            assert.deepStrictEqual(numberEqPlan.index, ['_deleted', 'age', 'lastName', 'passportId']);
+            assert.strictEqual(numberEqPlan.sortSatisfiedByIndex, true);
+        });
+        it('should return correctly sorted results when a $eq field makes the index order match the sort', async () => {
+            const db = await createRxDatabase({
+                name: randomToken(10),
+                storage: config.storage.getStorage()
+            });
+            const schema = clone(schemas.human);
+            schema.indexes = [['firstName', 'age']];
+            schema.required = ['firstName', 'lastName', 'passportId', 'age'];
+            const collections = await db.addCollections({
+                humans: {
+                    schema
+                }
+            });
+            const collection = collections.humans;
+            await collection.bulkInsert([
+                { passportId: 'a', firstName: 'alice', lastName: 'x', age: 30 },
+                { passportId: 'b', firstName: 'bob', lastName: 'x', age: 10 },
+                { passportId: 'c', firstName: 'alice', lastName: 'x', age: 10 },
+                { passportId: 'd', firstName: 'alice', lastName: 'x', age: 20 },
+                { passportId: 'e', firstName: 'carol', lastName: 'x', age: 5 }
+            ]);
+            const result = await collection.find({
+                selector: {
+                    firstName: 'alice'
+                },
+                sort: [
+                    { age: 'asc' }
+                ]
+            }).exec();
+            assert.deepStrictEqual(
+                result.map(doc => doc.passportId),
+                ['c', 'd', 'a']
+            );
+            await db.close();
+        });
+        it('rateQueryPlan should rate endKeys constraints ($lte) higher than no constraint', () => {
+            const schema = getHumanSchemaWithIndexes([['age']]);
+
+            // Query with only an upper bound ($lte) sets endKey but NOT startKey
+            const queryWithUpper = normalizeMangoQuery<HumanDocumentType>(
+                schema,
+                {
+                    selector: {
+                        age: {
+                            $lte: 50
+                        }
+                    },
+                    index: ['age']
+                }
+            );
+            const planWithUpper = getQueryPlan(schema, queryWithUpper);
+
+            // Query with no selector at all (full table scan)
+            const queryNoSelector = normalizeMangoQuery<HumanDocumentType>(
+                schema,
+                {
+                    selector: {},
+                    index: ['age']
+                }
+            );
+            const planNoSelector = getQueryPlan(schema, queryNoSelector);
+
+            const ratingWithUpper = rateQueryPlan(schema, queryWithUpper, planWithUpper);
+            const ratingNoSelector = rateQueryPlan(schema, queryNoSelector, planNoSelector);
+
+            /**
+             * The plan with an $lte constraint should be rated higher
+             * because its endKey is a specific value (50) rather than INDEX_MAX.
+             * Previously, rateQueryPlan() checked startKeys twice instead of
+             * checking endKeys, so both plans would receive the same rating.
+             */
+            assert.ok(
+                ratingWithUpper > ratingNoSelector,
+                'query with $lte endKey constraint should be rated higher than query with no constraint. ' +
+                'Got ratingWithUpper=' + ratingWithUpper + ', ratingNoSelector=' + ratingNoSelector
+            );
         });
     });
     describe('issues', () => {

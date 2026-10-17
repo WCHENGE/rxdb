@@ -2,6 +2,7 @@
 title: TypeScript Setup
 slug: typescript.html
 description: Use RxDB with TypeScript to define typed schemas, create typed collections, and build fully typed ORM methods. A quick step-by-step guide.
+image: /headers/typescript.jpg
 ---
 
 import {Steps} from '@site/src/components/steps';
@@ -11,7 +12,7 @@ import {Steps} from '@site/src/components/steps';
 <!-- IMPORTANT: When you edit this file, apply the same changes to test/tutorials/src/typescript.ts -->
 
 In this tutorial you will learn how to use RxDB with TypeScript.
-We will create a basic database with one collection and several ORM-methods, fully typed!
+We will create a basic database with one collection and several [ORM](../orm.md)-methods, fully typed!
 
 RxDB directly comes with its typings and you do not have to install anything else, however the latest version of RxDB requires that you are using Typescript v3.8 or newer.
 Our way to go is
@@ -34,6 +35,9 @@ import {
     RxJsonSchema,
     RxDocument,
 } from 'rxdb/plugins/core';
+import {
+    getRxStorageLocalstorage
+} from 'rxdb/plugins/storage-localstorage';
 ```
 
 
@@ -77,7 +81,10 @@ export const heroSchemaLiteral = {
 const schemaTyped = toTypedRxJsonSchema(heroSchemaLiteral);
 
 // aggregate the document type from the schema
-export type HeroDocType = ExtractDocumentTypeFromTypedRxJsonSchema<typeof schemaTyped>;
+export type HeroDocType =
+    ExtractDocumentTypeFromTypedRxJsonSchema<
+        typeof schemaTyped
+    >;
 
 // create the typed RxJsonSchema from the literal typed object.
 export const heroSchema: RxJsonSchema<HeroDocType> = heroSchemaLiteral;
@@ -109,7 +116,7 @@ export type HeroDocMethods = {
 };
 ```
 
-## Create RxDocument Type
+## Create [RxDocument](../rx-document.md) Type
 
 We can merge these into our HeroDocument.
 
@@ -117,7 +124,7 @@ We can merge these into our HeroDocument.
 export type HeroDocument = RxDocument<HeroDocType, HeroDocMethods>;
 ```
 
-## Create RxCollection Type
+## Create [RxCollection](../rx-collection.md) Type
 
 Now we can define type for the collection which contains the documents.
 
@@ -136,7 +143,7 @@ export type HeroCollection = RxCollection<
 >;
 ```
 
-## Create RxDatabase Type
+## Create [RxDatabase](../rx-database.md) Type
 
 Before we can define the database, we make a helper-type which contains all collections of it.
 
@@ -179,7 +186,8 @@ const heroSchema: RxJsonSchema<HeroDocType> = {
     type: 'object',
     properties: {
         passportId: {
-            type: 'string'
+            type: 'string',
+            maxLength: 100
         },
         firstName: {
             type: 'string'
@@ -254,18 +262,4 @@ console.log(amount);
  * clean up
  */
 myDatabase.close();
-```
-
-
-
-## Known Problems
-
-RxDB uses the [WeakRef API](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakRef). If your typescript bundler throws the error `TS2304: Cannot find name 'WeakRef'`, you have to add `ES2021.WeakRef` to `compilerOptions.lib` in your `tsconfig.json`.
-
-```json
-{
-    "compilerOptions": {
-        "lib": ["ES2020", "ES2021.WeakRef"]
-    }
-}
 ```

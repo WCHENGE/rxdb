@@ -2,7 +2,12 @@
 title: Attachments
 slug: rx-attachment.html
 description: Learn how to store and manage binary data like images or files in RxDB using attachments. Discover features, performance benefits, encryption, compression, and usage examples with code.
+image: /headers/rx-attachment.jpg
 ---
+
+import { DefaultCompressibleTypes } from '@site/src/components/default-compressible-types';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {AttachmentsMail} from '@site/src/components/animations/attachments-mail';
 
 # Attachments
 
@@ -12,11 +17,15 @@ Using attachments instead of adding the data to the normal document, ensures tha
 
 - You can store string, binary files, images and whatever you want side by side with your documents.
 - Deleted documents automatically loose all their attachments data.
-- Not all replication plugins support the replication of attachments.
+- Not all [replication](./replication.md) plugins support the replication of attachments.
 - Attachments can be stored [encrypted](./encryption.md).
 
-Internally, attachments in RxDB are stored and handled similar to how [CouchDB, PouchDB](https://pouchdb.com/guides/attachments.html#how-attachments-are-stored) does it.
+Internally, attachment data is stored as `Blob` objects. Blob is the canonical internal type because it is immutable, carries MIME type metadata via `Blob.type`, provides synchronous size via `Blob.size`, and is [structured-cloneable](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) (works with Worker/Electron `postMessage` and IndexedDB). Conversion to `ArrayBuffer` only happens at system boundaries that require it: encryption (Web Crypto), compression (CompressionStream), digest hashing, and WebSocket serialization.
 
+
+<DocsAnimation subtitle="Binary files attached to a document">
+<AttachmentsMail />
+</DocsAnimation>
 
 ## Add the attachments plugin
 
@@ -44,7 +53,9 @@ const mySchema = {
         // .
     },
     attachments: {
-        encrypted: true // if true, the attachment-data will be encrypted with the db-password
+        // if true, the attachment-data will be
+        // encrypted with the db-password
+        encrypted: true
     }
 };
 
@@ -65,8 +76,9 @@ import { createBlob } from 'rxdb';
 const attachment = await myDocument.putAttachment(
     {
         id: 'cat.txt',     // (string) name of the attachment
-        data: createBlob('meowmeow', 'text/plain'),   // (string|Blob) data of the attachment
-        type: 'text/plain'    // (string) type of the attachment-data like 'image/jpeg'
+        data: createBlob('meowmeow', 'text/plain'),   // (Blob) data of the attachment
+        type: 'text/plain'   // (string) type of the attachment
+                            // data like 'image/jpeg'
     }
 );
 ```
@@ -74,6 +86,27 @@ const attachment = await myDocument.putAttachment(
 :::warning
 Expo/React-Native does not support the `Blob` API natively. Make sure you use your own polyfill that properly supports `blob.arrayBuffer()` when using RxAttachments or use the `putAttachmentBase64()` and `getDataBase64()` so that you do not have to create blobs.
 :::
+
+## putAttachments()
+
+Write multiple attachments to a `RxDocument` in a single atomic operation. This is more efficient than calling `putAttachment()` multiple times because it only performs one write to the storage. Returns a Promise with an array of the new attachments.
+
+```javascript
+import { createBlob } from 'rxdb';
+
+const attachments = await myDocument.putAttachments([
+    {
+        id: 'cat.txt',
+        data: createBlob('meowmeow', 'text/plain'),
+        type: 'text/plain'
+    },
+    {
+        id: 'dog.txt',
+        data: createBlob('woof', 'text/plain'),
+        type: 'text/plain'
+    }
+]);
+```
 
 ## putAttachmentBase64()
 
@@ -107,7 +140,7 @@ const attachments = myDocument.allAttachments();
 
 ## allAttachments$
 
-Gets an Observable which emits a stream of all attachments from the document. Re-emits each time an attachment gets added or removed from the RxDocument.
+Gets an Observable which emits a stream of all attachments from the document. Re-emits each time an attachment gets added or removed from the [RxDocument](./rx-document.md).
 
 ```javascript
 const all = [];
@@ -185,14 +218,64 @@ const data = await attachment.getStringData(); // 'meow'
 ```
 
 
+## Inline attachments on insert and upsert
+
+Instead of inserting a document first and then calling `putAttachment()` separately, you can include attachments directly in the document data when using `insert()`, `bulkInsert()`, `upsert()`, `bulkUpsert()`, or `incrementalUpsert()`. Provide `_attachments` as an array of `{ id, type, data }` objects.
+
+```javascript
+import { createBlob } from 'rxdb';
+
+// insert with inline attachments
+const doc = await myCollection.insert({
+    name: 'foo',
+    _attachments: [
+        {
+            id: 'photo.jpg',
+            type: 'image/jpeg',
+            data: myJpegBlob
+        },
+        {
+            id: 'notes.txt',
+            type: 'text/plain',
+            data: createBlob('some notes', 'text/plain')
+        }
+    ]
+});
+
+const attachment = doc.getAttachment('photo.jpg');
+```
+
+### Upsert behavior with attachments
+
+When upserting a document that already exists, attachments from the new data are **merged** with the document's existing attachments by default. This means existing attachments not mentioned in the upsert data are preserved.
+
+To replace all existing attachments instead, pass `{ deleteExistingAttachments: true }` as the second argument:
+
+```javascript
+// Merge (default): keeps existing attachments, adds/updates new ones
+const doc = await myCollection.upsert(docData);
+
+// Replace: only the attachments in docData will exist after the upsert
+const doc2 = await myCollection.upsert(docData, { deleteExistingAttachments: true });
+```
+
+This option works with `upsert()`, `bulkUpsert()`, and `incrementalUpsert()`.
 
 
-# Attachment compression
+
+
+## Attachment compression {#attachment-compression}
 
 Storing many attachments can be a problem when the disc space of the device is exceeded.
 Therefore it can make sense to compress the attachments before storing them in the [RxStorage](./rx-storage.md).
 With the `attachments-compression` plugin you can compress the attachments data on write and decompress it on reads.
-This happens internally and will now change on how you use the api. The compression is run with the [Compression Streams API](https://developer.mozilla.org/en-US/docs/Web/API/Compression_Streams_API) which is only supported on [newer browsers](https://caniuse.com/?search=compressionstream).
+This happens internally and will not change how you use the API. The compression is run with the [Compression Streams API](https://developer.mozilla.org/en-US/docs/Web/API/Compression_Streams_API) which is only supported on [newer browsers](https://caniuse.com/?search=compressionstream).
+
+## MIME-type-aware compression
+
+The compression plugin is MIME-type-aware. It only compresses attachment types that benefit from compression (text, JSON, SVG, etc.) and passes through already-compressed formats (JPEG, PNG, MP4, etc.) as-is. This avoids wasting CPU cycles on files that won't shrink.
+
+A built-in default list of compressible types is used automatically. You can override it with the `compressibleTypes` option in your schema:
 
 ```ts
 import {
@@ -217,15 +300,32 @@ const mySchema = {
     version: 0,
     type: 'object',
     properties: {
-        // .
-        // .
-        // .
+        // ..
     },
     attachments: {
-        compression: 'deflate'  // <- Specify the compression mode here. OneOf ['deflate', 'gzip']
+        // Specify the compression mode.
+        // OneOf ['deflate', 'gzip']
+        compression: 'deflate',
+
+        // Optional: override which MIME types get compressed.
+        // Supports wildcard prefix matching
+        // (e.g. 'text/*' matches 'text/plain',
+        // 'text/html', etc.).
+        // If omitted, a built-in default list of compressible types is used.
+        compressibleTypes: [
+            'text/*',
+            'application/json',
+            'application/xml',
+            'image/svg+xml'
+            // ... add your own patterns
+        ]
     }
 };
 
 /* ... create your collections as usual and store attachments in them. */
 
 ```
+
+The default compressible types include the following MIME type patterns. Binary formats like `image/jpeg`, `image/png`, `video/*`, and `audio/*` are **not** in the default list and will be stored without re-compression.
+
+<DefaultCompressibleTypes />

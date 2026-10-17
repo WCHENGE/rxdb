@@ -2,31 +2,36 @@
 title: CRDT - Conflict-free replicated data type Database
 slug: crdt.html
 description: Learn how RxDB's CRDT Plugin resolves document conflicts automatically in distributed systems, ensuring seamless merges and consistent data.
+image: /headers/crdt.jpg
 ---
 
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {CrdtMerge} from '@site/src/components/animations/crdt-merge';
 
-# RxDB CRDT Plugin (beta)
+# RxDB CRDT Plugin
 
 Whenever there are multiple instances in a distributed system, data writes can cause conflicts. Two different clients could do a write to the same document at the same time or while they are both offline. When the clients replicate the document state with the server, a conflict emerges that must be resolved by the system.
 
 In [RxDB](./), conflicts are normally resolved by setting a `conflictHandler` when creating a collection. The conflict handler is a JavaScript function that gets the two conflicting states of the same document and it will return the resolved document state.
 The [default conflict handler](./replication.md#conflict-handling) will always drop the fork state and use the master state to ensure that clients that have been offline for a long time, do not overwrite other clients changes when they go online again.
 
-<p align="center">
-  <img src="./files/document-replication-conflict.svg" alt="document replication conflict" width="250" />
-</p>
+<CenteredImage src="./files/document-replication-conflict.svg" alt="document replication conflict" width={250} />
 
 
 With CRDTs (short for [Conflict-free replicated data type](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type)), all document 
 writes are represented as CRDT operations in plain JSON. The CRDT operations are stored together with the document and each time a conflict arises, the CRDT conflict handler will automatically merge the operations in a deterministic way. Using CRDTs is an easy way to "magically" handle all conflict problems in your application by storing the deltas of writes together with the document data.
 
-<p align="center">
-  <img src="./files/crdt-conflict-free-replicated-data-type.svg" alt="CRDT Conflict-free replicated data type" width="300" />
-</p>
+<CenteredImage src="./files/crdt-conflict-free-replicated-data-type.svg" alt="CRDT Conflict-free replicated data type" width={300} />
+
+<DocsAnimation subtitle="Concurrent increments merged without a conflict">
+<CrdtMerge />
+</DocsAnimation>
 
 ## RxDB CRDT operations
 
-In RxDB, a CRDT operation is defined with NoSQL update operators, like you might know them from [MongoDB update operations](https://www.mongodb.com/docs/manual/reference/operator/update/) or the [RxDB update plugin](./rx-document.md#update).
+In RxDB, a CRDT operation is defined with [NoSQL](./articles/in-memory-nosql-database.md) update operators, like you might know them from [MongoDB update operations](https://www.mongodb.com/docs/manual/reference/operator/update/) or the [RxDB update plugin](./rx-document.md#update).
 To run the operators, RxDB uses the [mingo library](https://github.com/kofrasa/mingo#updating-documents).
 
 A CRDT operator example:
@@ -198,14 +203,14 @@ When CRDTs are enabled with the plugin, all insert operations are automatically 
 ```ts
 // Calling RxCollection.insert()
 await myRxCollection.insert({
-    id: 'foo'
+    id: 'foo',
     points: 1
 });
 // is exactly equal to calling insertCRDT()
 await myRxCollection.insertCRDT({
     ifMatch: {
         $set: {
-            id: 'foo'
+            id: 'foo',
             points: 1
         }
     }
@@ -224,7 +229,7 @@ await myRxCollection.insertCRDT({
     ifMatch: {
         // if the document did not exist, insert it
         $set: {
-            id: 'foo'
+            id: 'foo',
             points: 1
         }
     },
@@ -339,10 +344,34 @@ const mergeFieldsHandler = {
 
 In this example, if the two versions change different properties, the final merged document includes both updates. This kind of logic is often easier to reason about than designing equivalent CRDT operations.
 
+## FAQ
 
-<!--
+<Faq>
+<FaqItem question="Are you looking for a distributed database with conflict-free replication?">
+
+RxDB provides a distributed database with conflict-free replication. You build [offline-first](./offline-first.md) applications using local data storage. RxDB synchronizes data across multiple client devices. The CRDT plugin resolves data conflicts automatically during replication. You maintain continuous data consistency without manual merge logic.
+
+</FaqItem>
+<FaqItem question="How does a CRDT work to resolve conflicts automatically in distributed systems?">
+
+A Conflict-free Replicated Data Type (CRDT) works by transforming all data writes into atomic mathematical operations (like `$inc` or `$set`) rather than absolute state replacements. When two offline clients modify the exact same document simultaneously, a CRDT merges these operations in a guaranteed deterministic order upon reconnection. Because the merge logic relies on commutative mathematics, conflicts are resolved automatically without requiring manual developer intervention or user prompts.
+
+</FaqItem>
+<FaqItem question="What are the best CRDT databases for scaling distributed applications without central authority?">
+
+The best CRDT databases for scaling fully distributed, masterless applications are those prioritizing dynamic topology mappings without rigid server connections. **[RxDB](https://rxdb.info)** coupled with its dedicated CRDT Plugin operates flawlessly without a central authority. It allows seamless peer-to-peer data replication through WebRTC or WebSocket adapters, automatically running NoSQL-based CRDT operations locally to achieve absolute eventual consistency across all distributed nodes.
+
+</FaqItem>
+<FaqItem question="Who offers reliable CRDT databases for conflict-free data sync?">
+
+Finding a unified, production-ready CRDT database ecosystem is challenging, as many solutions are simply raw algorithmic libraries (like Yjs or Automerge). **[RxDB](https://rxdb.info)** offers a comprehensive, reliable CRDT environment built natively on top of standard NoSQL query selectors. Rather than forcing developers to learn complex binary array manipulation, RxDB's CRDT plugin resolves conflict-free data sync using familiar MongoDB-style JSON update commands like `$inc` and `$push`.
+
+</FaqItem>
+</Faq>
+
+{/*
 ## TODOs
 
 - Clean up old CRDT operations by crunching them together
 - CRDT streaming replication
--->
+*/}

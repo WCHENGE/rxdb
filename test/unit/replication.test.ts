@@ -11,7 +11,7 @@ import {
     waitUntil
 } from 'async-test-util';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     schemaObjects,
     schemas,
@@ -54,12 +54,20 @@ import {
 } from '../../plugins/core/index.mjs';
 
 import {
-    replicateRxCollection
+    RxReplicationState,
+    replicateRxCollection,
+    REPLICATION_STATE_BY_COLLECTION,
+    startReplicationOnLeaderShip
 } from '../../plugins/replication/index.mjs';
 
 import type {
+    ReplicationPullHandlerResult,
+    RxConflictHandler,
+    RxReplicationConflict,
+    RxReplicationWriteToMasterRow,
     RxStorage,
-    RxStorageDefaultCheckpoint
+    RxStorageDefaultCheckpoint,
+    WithDeleted
 } from '../../plugins/core/index.mjs';
 import { firstValueFrom, map, Subject, timer } from 'rxjs';
 import type { HumanWithCompositePrimary, HumanWithTimestampDocumentType } from '../../src/plugins/test-utils/schema-objects.ts';
@@ -121,9 +129,9 @@ describe('replication.test.ts', () => {
             });
         });
     });
-    describeParallel('non-live replication', () => {
+    describe('non-live replication', () => {
         it('should replicate both sides', async () => {
-            const docsPerSide = 15;
+            const docsPerSide = isFastMode() ? 5 : 15;
             const { localCollection, remoteCollection } = await getTestCollections({
                 local: docsPerSide,
                 remote: docsPerSide
@@ -266,6 +274,133 @@ describe('replication.test.ts', () => {
             localCollection.database.close();
             remoteCollection.database.close();
         });
+        it('sent$ must not emit null when the push-modifier returns null', async () => {
+            const totalDocs = 10;
+            const { localCollection, remoteCollection } = await getTestCollections({
+                local: 0,
+                remote: 0
+            });
+            await localCollection.bulkInsert(
+                new Array(totalDocs).fill(0).map((_v, idx) => {
+                    return schemaObjects.humanWithTimestampData({
+                        name: 'from-local',
+                        age: idx + 1
+                    });
+                })
+            );
+            const replicationState = replicateRxCollection<HumanWithTimestampDocumentType, any>({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: false,
+                pull: {
+                    handler: getPullHandler(remoteCollection)
+                },
+                push: {
+                    handler: getPushHandler(remoteCollection),
+                    modifier: (doc) => {
+                        // drop every second document
+                        if (doc.age % 2 === 0) {
+                            return null;
+                        }
+                        return doc;
+                    }
+                }
+            });
+
+            const sentDocs: WithDeleted<HumanWithTimestampDocumentType>[] = [];
+            replicationState.sent$.subscribe(d => sentDocs.push(d));
+
+            ensureReplicationHasNoErrors(replicationState);
+            await replicationState.awaitInitialReplication();
+
+            /**
+             * sent$ is typed as Observable<WithDeleted<RxDocType>>,
+             * so it must never emit null or undefined values,
+             * not even for documents that were filtered out
+             * by the push modifier.
+             */
+            sentDocs.forEach((doc, idx) => {
+                assert.ok(
+                    doc !== null && doc !== undefined,
+                    'sent$ emitted ' + JSON.stringify(doc) + ' at index ' + idx
+                );
+                assert.strictEqual(typeof (doc as any).id, 'string');
+            });
+
+            // Only the 5 non-filtered documents were actually sent to the endpoint
+            assert.strictEqual(
+                sentDocs.length,
+                5,
+                'sent$ must only emit for actually pushed docs, got ' + sentDocs.length
+            );
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
+        it('sent$ must emit documents in WithDeleted format with _deleted field when deletedField is custom', async () => {
+            const localCollection = await humansCollection.createHumanWithTimestamp(0, randomToken(10), false);
+
+            // Prepare states before starting replication to avoid storage-specific
+            // intermediate emissions for insert-then-remove in a single run.
+            await localCollection.insert(schemaObjects.humanWithTimestampData({ id: 'alive' }));
+            const removeDoc = await localCollection.insert(schemaObjects.humanWithTimestampData({ id: 'to-remove' }));
+            await removeDoc.remove();
+
+            const pushedToMaster: any[] = [];
+            const replicationState = replicateRxCollection<HumanWithTimestampDocumentType, any>({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                deletedField: 'is_deleted',
+                live: false,
+                push: {
+                    handler: (rows) => {
+                        rows.forEach(row => pushedToMaster.push(row.newDocumentState));
+                        return Promise.resolve([]);
+                    }
+                }
+            });
+            ensureReplicationHasNoErrors(replicationState);
+
+            const sentDocs: WithDeleted<HumanWithTimestampDocumentType>[] = [];
+            replicationState.sent$.subscribe(d => sentDocs.push(d));
+
+            await replicationState.awaitInitialReplication();
+
+            // The push handler must receive the master format with `is_deleted` (not `_deleted`)
+            assert.ok(pushedToMaster.length >= 2, 'push handler must receive at least both docs');
+            pushedToMaster.forEach((doc) => {
+                assert.strictEqual(typeof doc.is_deleted, 'boolean', 'push handler must see is_deleted, got ' + JSON.stringify(doc));
+                assert.strictEqual((doc as any)._deleted, undefined, 'push handler must NOT see _deleted, got ' + JSON.stringify(doc));
+            });
+
+            // sent$ is typed as Observable<WithDeleted<RxDocType>>.
+            // It must always emit documents with `_deleted: boolean`,
+            // never the master-format `is_deleted` field.
+            assert.ok(sentDocs.length >= 2, 'sent$ must emit at least both docs, got ' + sentDocs.length);
+            sentDocs.forEach((doc, idx) => {
+                assert.strictEqual(
+                    typeof doc._deleted,
+                    'boolean',
+                    'sent$ doc at index ' + idx + ' must have _deleted: boolean, got ' + JSON.stringify(doc)
+                );
+                assert.strictEqual(
+                    (doc as any).is_deleted,
+                    undefined,
+                    'sent$ doc at index ' + idx + ' must NOT have is_deleted (master format), got ' + JSON.stringify(doc)
+                );
+            });
+
+            const aliveSent = ensureNotFalsy(sentDocs.find(d => (d as any).id === 'alive'));
+            const removedSent = sentDocs.filter(d => (d as any).id === 'to-remove');
+            assert.strictEqual(aliveSent._deleted, false, 'alive doc must have _deleted=false on sent$');
+            assert.ok(removedSent.length > 0, 'removed doc must be emitted on sent$');
+            assert.ok(
+                removedSent.some(doc => doc._deleted === true),
+                'removed doc must have _deleted=true on sent$'
+            );
+
+            await localCollection.database.close();
+        });
         it('should not save pulled documents that do not match the schema', async () => {
             const amount = 5;
             const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: amount });
@@ -380,7 +515,7 @@ describe('replication.test.ts', () => {
             remoteCollection.database.close();
         });
         it('should never resolve awaitInitialReplication() on erroring replication', async () => {
-            const { localCollection, remoteCollection } = await getTestCollections({ local: 10, remote: 10 });
+            const { localCollection, remoteCollection } = await getTestCollections({ local: isFastMode() ? 3 : 10, remote: isFastMode() ? 3 : 10 });
             const replicationState = replicateRxCollection({
                 collection: localCollection,
                 replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
@@ -412,7 +547,7 @@ describe('replication.test.ts', () => {
             await remoteCollection.database.close();
         });
         it('should never resolve awaitInitialReplication() on canceled replication', async () => {
-            const { localCollection, remoteCollection } = await getTestCollections({ local: 10, remote: 10 });
+            const { localCollection, remoteCollection } = await getTestCollections({ local: isFastMode() ? 3 : 10, remote: isFastMode() ? 3 : 10 });
             const replicationState = replicateRxCollection({
                 collection: localCollection,
                 replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
@@ -446,7 +581,7 @@ describe('replication.test.ts', () => {
             remoteCollection.database.close();
         });
     });
-    describeParallel('live replication', () => {
+    describe('live replication', () => {
         it('should replicate all writes', async () => {
             const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
 
@@ -579,9 +714,84 @@ describe('replication.test.ts', () => {
             localCollection.database.close();
             remoteCollection.database.close();
         });
+        it('should emit conflicts reported by the remote on conflict$ together with the conflictHandler output', async () => {
+            const localCollection = await humansCollection.createHumanWithTimestamp(0, randomToken(10), false);
+            const remoteCollection = await humansCollection.createHumanWithTimestamp(0, randomToken(10), false);
+
+            // insert a document with the same id on both sides so that the push creates a conflict
+            await Promise.all([localCollection, remoteCollection].map((c, i) => c.insert({
+                id: 'conflicting-doc',
+                name: 'name-' + i,
+                updatedAt: 1001,
+                age: i
+            })));
+
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                pull: {
+                    handler: getPullHandler(remoteCollection)
+                },
+                push: {
+                    handler: getPushHandler(remoteCollection)
+                }
+            });
+            ensureReplicationHasNoErrors(replicationState);
+
+            const emitted: RxReplicationConflict<TestDocType>[] = [];
+            replicationState.conflict$.subscribe(c => emitted.push(c));
+
+            await replicationState.awaitInitialReplication();
+            await waitUntil(() => emitted.length > 0);
+
+            const conflict = emitted[0];
+            // the input contains the conflicting document states
+            assert.strictEqual(conflict.input.newDocumentState.age, 0, 'newDocumentState must be the local state that was pushed');
+            assert.strictEqual(conflict.input.realMasterState.age, 1, 'realMasterState must be the remote state that was reported as conflict');
+            // the default conflict handler resolves conflicts by using the realMasterState
+            assert.strictEqual(conflict.output.age, 1, 'output must be the resolved document state from the conflictHandler');
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
     });
-    describeParallel('other', () => {
+    describe('other', () => {
         describe('autoStart', () => {
+            it('should handle and recover from a failed start', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+                const replicationState = replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: false,
+                    autoStart: false,
+                    pull: {
+                        handler: getPullHandler(remoteCollection)
+                    }
+                });
+                const originalStart = replicationState._start.bind(replicationState);
+                let firstStart = true;
+                replicationState._start = () => {
+                    if (firstStart) {
+                        firstStart = false;
+                        return Promise.reject(new Error('start failed'));
+                    }
+                    return originalStart();
+                };
+                replicationState.autoStart = true;
+
+                const errorPromise = firstValueFrom(replicationState.error$);
+                await startReplicationOnLeaderShip(false, replicationState);
+                const emittedError = await errorPromise;
+                assert.strictEqual(emittedError.code, 'RC_START');
+
+                await replicationState.start();
+                await replicationState.awaitInitialReplication();
+                assert.ok(replicationState.internalReplicationState);
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
             it('should run first replication by default', async () => {
                 const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
                 const replicationState = replicateRxCollection({
@@ -627,7 +837,7 @@ describe('replication.test.ts', () => {
         });
         describe('.awaitInSync()', () => {
             it('should resolve after some time', async () => {
-                const { localCollection, remoteCollection } = await getTestCollections({ local: 5, remote: 5 });
+                const { localCollection, remoteCollection } = await getTestCollections({ local: isFastMode() ? 2 : 5, remote: isFastMode() ? 2 : 5 });
 
                 const replicationState = replicateRxCollection({
                     collection: localCollection,
@@ -646,7 +856,7 @@ describe('replication.test.ts', () => {
                 remoteCollection.database.close();
             });
             it('should never resolve when offline', async () => {
-                const { localCollection, remoteCollection } = await getTestCollections({ local: 5, remote: 5 });
+                const { localCollection, remoteCollection } = await getTestCollections({ local: isFastMode() ? 2 : 5, remote: isFastMode() ? 2 : 5 });
 
                 const replicationState = replicateRxCollection({
                     collection: localCollection,
@@ -673,8 +883,234 @@ describe('replication.test.ts', () => {
                 remoteCollection.database.close();
             });
         });
+        describe('.awaitDocumentPushed()', () => {
+            it('should resolve after the document was pushed to the master', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+                const replicationState = replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remoteCollection)
+                    },
+                    push: {
+                        handler: getPushHandler(remoteCollection)
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'foobar-local'
+                }));
+
+                await replicationState.awaitDocumentPushed(doc);
+
+                const remoteDoc = await remoteCollection.findOne('foobar-local').exec();
+                assert.ok(remoteDoc, 'document must exist on the remote after awaitDocumentPushed()');
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
+            it('should resolve when the insert happened before the replication state was created', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+                // insert BEFORE the replication state exists
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'foobar-local'
+                }));
+
+                const replicationState = replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remoteCollection)
+                    },
+                    push: {
+                        handler: getPushHandler(remoteCollection)
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                await replicationState.awaitDocumentPushed(doc);
+
+                const remoteDoc = await remoteCollection.findOne('foobar-local').exec();
+                assert.ok(remoteDoc, 'document must exist on the remote after awaitDocumentPushed()');
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
+            it('should resolve immediately if the document was already pushed', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+                const replicationState = replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remoteCollection)
+                    },
+                    push: {
+                        handler: getPushHandler(remoteCollection)
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'foobar-local'
+                }));
+                await replicationState.awaitInSync();
+
+                // must resolve even though the push already happened before.
+                await replicationState.awaitDocumentPushed(doc);
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
+            it('should not resolve before the document was pushed', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+                let continuePush: Function = () => { };
+                const pushBlock = new Promise<void>(res => {
+                    continuePush = res;
+                });
+
+                const replicationState = replicateRxCollection<TestDocType, CheckpointType>({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    push: {
+                        handler: async (docs) => {
+                            await pushBlock;
+                            return getPushHandler(remoteCollection)(docs);
+                        }
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'foobar-local'
+                }));
+
+                let resolved = false;
+                replicationState.awaitDocumentPushed(doc).then(() => {
+                    resolved = true;
+                });
+                await wait(isFastMode() ? 100 : 400);
+                assert.strictEqual(resolved, false);
+
+                continuePush();
+                await replicationState.awaitDocumentPushed(doc);
+                assert.strictEqual(resolved, true);
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
+            it('should resolve after a push conflict was resolved', async () => {
+                /**
+                 * Use a conflict handler that keeps the local state
+                 * so that the resolved document gets pushed to the master
+                 * after the conflict was resolved.
+                 */
+                const conflictHandler: RxConflictHandler<TestDocType> = {
+                    isEqual: defaultConflictHandler.isEqual,
+                    resolve: (i) => Promise.resolve(i.newDocumentState)
+                };
+                const localCollection = await humansCollection.createHumanWithTimestamp(
+                    0,
+                    randomToken(10),
+                    false,
+                    undefined,
+                    conflictHandler
+                );
+
+                // the master already has a different state -> the first push must conflict
+                const masterDocs = new Map<string, WithDeleted<TestDocType>>();
+                masterDocs.set('conflict-doc', Object.assign(
+                    schemaObjects.humanWithTimestampData({
+                        id: 'conflict-doc',
+                        name: 'remote-name'
+                    }),
+                    { _deleted: false }
+                ));
+
+                let hadConflict = false;
+                const replicationState = replicateRxCollection<TestDocType, CheckpointType>({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    push: {
+                        handler: async (rows) => {
+                            // short sleep to simulate network latency
+                            await wait(10);
+                            const conflicts: WithDeleted<TestDocType>[] = [];
+                            rows.forEach(row => {
+                                const currentMasterDoc = masterDocs.get(row.newDocumentState.id);
+                                if (
+                                    currentMasterDoc &&
+                                    (
+                                        !row.assumedMasterState ||
+                                        !conflictHandler.isEqual(currentMasterDoc, row.assumedMasterState, 'push-handler')
+                                    )
+                                ) {
+                                    hadConflict = true;
+                                    conflicts.push(currentMasterDoc);
+                                } else {
+                                    masterDocs.set(row.newDocumentState.id, row.newDocumentState);
+                                }
+                            });
+                            return conflicts;
+                        }
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'conflict-doc',
+                    name: 'local-name'
+                }));
+
+                await replicationState.awaitDocumentPushed(doc);
+
+                assert.strictEqual(hadConflict, true, 'the first push must have returned a conflict');
+                const masterDoc = ensureNotFalsy(masterDocs.get('conflict-doc'));
+                assert.strictEqual(masterDoc.name, 'local-name', 'the resolved state must exist on the master');
+
+                await localCollection.database.close();
+            });
+            it('should throw if the replication has no push handler', async () => {
+                const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+                const replicationState = replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remoteCollection)
+                    }
+                });
+                ensureReplicationHasNoErrors(replicationState);
+
+                const doc = await localCollection.insert(schemaObjects.humanWithTimestampData({
+                    id: 'foobar-local'
+                }));
+
+                let thrown = false;
+                try {
+                    await replicationState.awaitDocumentPushed(doc);
+                } catch (err) {
+                    thrown = true;
+                    assert.ok((err as RxError).code === 'RC_PUSH_AWAIT');
+                }
+                assert.ok(thrown, 'awaitDocumentPushed() must throw without a push handler');
+
+                await localCollection.database.close();
+                await remoteCollection.database.close();
+            });
+        });
         it('should clean up the replication meta storage when the get collection gets removed', async () => {
-            const { localCollection, remoteCollection } = await getTestCollections({ local: 5, remote: 5 });
+            const { localCollection, remoteCollection } = await getTestCollections({ local: isFastMode() ? 2 : 5, remote: isFastMode() ? 2 : 5 });
             const localDbName = localCollection.database.name;
 
             const replicationState1 = replicateRxCollection({
@@ -823,7 +1259,7 @@ describe('replication.test.ts', () => {
             remoteCollection.database.close();
         });
     });
-    describeParallel('RxReplicationState.remove()', () => {
+    describe('RxReplicationState.remove()', () => {
         it('should remove the replication state and start the replication from scratch', async () => {
             const { localCollection, remoteCollection } = await getTestCollections({ local: 1, remote: 1 });
             const calledCheckpoints: any[] = [];
@@ -845,10 +1281,10 @@ describe('replication.test.ts', () => {
                 await replicationState.awaitInSync();
                 return replicationState;
             };
-            let currentReplicationState = await startReplication();
+            const currentReplicationState = await startReplication();
             await currentReplicationState.remove();
 
-            currentReplicationState = await startReplication();
+            await startReplication();
 
             assert.deepStrictEqual(calledCheckpoints, [undefined, undefined]);
 
@@ -912,8 +1348,127 @@ describe('replication.test.ts', () => {
             localCollection.database.close();
             remoteCollection.database.close();
         });
+        it('should not crash when calling remove() without ever calling start()', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                autoStart: false,
+                live: true,
+                pull: {
+                    handler: getPullHandler(remoteCollection),
+                },
+                push: {
+                    handler: getPushHandler(remoteCollection),
+                }
+            });
+            // remove() without ever calling start() should not throw
+            await replicationState.remove();
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
+        it('remove() on a non-started replication should clear meta data from a previous run', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 1, remote: 1 });
+            const calledCheckpoints: any[] = [];
+            const makeReplication = (autoStart: boolean) => {
+                return replicateRxCollection({
+                    collection: localCollection,
+                    replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                    autoStart,
+                    live: true,
+                    pull: {
+                        handler: (checkpoint, batchSize) => {
+                            calledCheckpoints.push(checkpoint);
+                            return getPullHandler(remoteCollection)(checkpoint, batchSize);
+                        },
+                    },
+                    push: {
+                        handler: getPushHandler(remoteCollection),
+                    }
+                });
+            };
+
+            // 1. Start a replication, sync data, then cancel it (leaves meta data behind)
+            const rep1 = makeReplication(true);
+            await rep1.awaitInSync();
+            await rep1.cancel();
+
+            // The first call should have used checkpoint=undefined (fresh start)
+            assert.strictEqual(calledCheckpoints[0], undefined);
+
+            // 2. Create a non-started replication with same identifier and call remove()
+            //    This should delete the leftover meta data
+            const rep2 = makeReplication(false);
+            await rep2.remove();
+
+            // 3. Start yet another replication; it should start fresh (checkpoint undefined)
+            calledCheckpoints.length = 0;
+            const rep3 = makeReplication(true);
+            await rep3.awaitInSync();
+
+            assert.strictEqual(calledCheckpoints[0], undefined);
+
+            await rep3.cancel();
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
+        it('should remove replication state from REPLICATION_STATE_BY_COLLECTION on cancel()', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                pull: {
+                    handler: getPullHandler(remoteCollection),
+                },
+                push: {
+                    handler: getPushHandler(remoteCollection),
+                }
+            });
+            await replicationState.awaitInitialReplication();
+
+            const statesBefore = REPLICATION_STATE_BY_COLLECTION.get(localCollection);
+            assert.ok(statesBefore);
+            assert.ok(statesBefore.includes(replicationState));
+
+            await replicationState.cancel();
+
+            const statesAfter = REPLICATION_STATE_BY_COLLECTION.get(localCollection);
+            assert.ok(!statesAfter || !statesAfter.includes(replicationState));
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
+        it('should remove replication state from REPLICATION_STATE_BY_COLLECTION on remove()', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                pull: {
+                    handler: getPullHandler(remoteCollection),
+                },
+                push: {
+                    handler: getPushHandler(remoteCollection),
+                }
+            });
+            await replicationState.awaitInitialReplication();
+
+            const statesBefore = REPLICATION_STATE_BY_COLLECTION.get(localCollection);
+            assert.ok(statesBefore);
+            assert.ok(statesBefore.includes(replicationState));
+
+            await replicationState.remove();
+
+            const statesAfter = REPLICATION_STATE_BY_COLLECTION.get(localCollection);
+            assert.ok(!statesAfter || !statesAfter.includes(replicationState));
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
     });
-    describeParallel('attachment replication', () => {
+    describe('attachment replication', () => {
         if (!config.storage.hasAttachments) {
             return;
         }
@@ -921,6 +1476,15 @@ describe('replication.test.ts', () => {
          * Here we use a RxDatabase insteaf of the plain RxStorageInstance.
          * This makes handling attachment easier
          */
+
+        // Deno's structuredClone() silently destroys Blob data, returning {}. https://github.com/denoland/deno/issues/12067#issuecomment-1975001079
+        // fake-indexeddb (used by dexie in non-browser envs) relies on
+        // structuredClone, so Blob attachment roundtrips are broken in Deno+dexie.
+        // These tests pass fine on Node and Bun, which is sufficient coverage.
+        if (isDeno && config.storage.name === 'dexie') {
+            return;
+        }
+
         it('attachments replication: up and down with streaming', async () => {
             const localCollection = await humansCollection.createAttachments(3);
             const remoteCollection = await humansCollection.createAttachments(3);
@@ -1019,7 +1583,31 @@ describe('replication.test.ts', () => {
             await remoteCollection.database.close();
         });
     });
-    describeParallel('start/pause/restart', () => {
+    describe('start/pause/restart', () => {
+        it('should reject start() with the error from _start()', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: false,
+                autoStart: false,
+                pull: {
+                    handler: getPullHandler(remoteCollection)
+                }
+            });
+            const originalStart = replicationState._start.bind(replicationState);
+            const startError = new Error('start failed');
+            replicationState._start = () => Promise.reject(startError);
+
+            await assert.rejects(replicationState.start(), err => err === startError);
+
+            replicationState._start = originalStart;
+            await replicationState.start();
+            await replicationState.awaitInitialReplication();
+
+            await localCollection.database.close();
+            await remoteCollection.database.close();
+        });
         it('should sync again after pause->restart', async () => {
             const startDocsAmount = 2;
             const { localCollection, remoteCollection } = await getTestCollections({ local: startDocsAmount, remote: startDocsAmount });
@@ -1069,7 +1657,435 @@ describe('replication.test.ts', () => {
             remoteCollection.database.close();
         });
     });
-    describeParallel('issues', () => {
+    describe('pull-only', () => {
+        it('should not store document metadata on pull only replications', async () => {
+            const startDocsAmount = 2;
+            const { localCollection, remoteCollection } = await getTestCollections({ local: startDocsAmount, remote: startDocsAmount });
+
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                pull: {
+                    handler: getPullHandler(remoteCollection)
+                }
+            });
+            ensureReplicationHasNoErrors(replicationState);
+            await replicationState.awaitInitialReplication();
+            await replicationState.awaitInSync();
+            await remoteCollection.insert(schemaObjects.humanWithTimestampData({ id: 'insert-after-sync' }));
+            await replicationState.awaitInSync();
+
+
+            const metaInstance = ensureNotFalsy(replicationState.metaInstance);
+            const prepared = prepareQuery(
+                metaInstance.schema,
+                normalizeMangoQuery(
+                    metaInstance.schema,
+                    {}
+                )
+            );
+            const result = await metaInstance.query(prepared);
+
+            const nonCheckpointMetaDocs = result.documents.filter(d => d.isCheckpoint === '0');
+            assert.deepStrictEqual(nonCheckpointMetaDocs, [], 'must not have non-checkpoint meta documents');
+
+            localCollection.database.close();
+            remoteCollection.database.close();
+        });
+    });
+    describe('issues', () => {
+        /**
+         * @link https://github.com/pubkey/rxdb/pull/7804
+         */
+
+        /**
+         * Simulates a crash between fork write and meta write in downstream.
+        *
+        * When the process dies after forkInstance.bulkWrite() succeeds but before
+        * metaInstance.bulkWrite() completes, the fork has the new state but the
+        * assumed master in meta is stale. On the next downstream cycle, this
+        * mismatch is detected as a "non-upstream-replicated local write" and the
+        * document is skipped — expecting upstream to resolve the conflict. But
+        * upstream never picks it up because the fork write came from downstream,
+        * leaving the document permanently stuck.
+        */
+        it('#7804 (1/3) should recover downstream sync after meta write is lost between fork and meta write (simulated crash)', async () => {
+            function setupReplication(
+                local: RxCollection<TestDocType>,
+                remote: RxCollection<TestDocType>
+            ) {
+                return replicateRxCollection<TestDocType, any>({
+                    collection: local,
+                    replicationIdentifier: 'downstream-test',
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remote),
+                        stream$: getPullStream(remote)
+                    },
+                    push: {
+                        handler: getPushHandler(remote)
+                    }
+                });
+            }
+
+
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+            const docId = 'crash-test-doc';
+
+            // Insert initial document on remote
+            await remoteCollection.insert(schemaObjects.humanWithTimestampData({
+                id: docId,
+                name: 'Initial',
+                age: 1
+            }));
+
+            // Start replication and let it sync the initial document
+            const replicationState = setupReplication(localCollection, remoteCollection);
+            ensureReplicationHasNoErrors(replicationState);
+            await replicationState.awaitInitialReplication();
+
+            // Verify initial sync
+            const initialLocal = await localCollection.findOne(docId).exec(true);
+            assert.strictEqual(initialLocal.name, 'Initial');
+
+            // Monkey-patch metaInstance.bulkWrite to silently drop the next
+            // downstream meta write — simulating a crash between fork and meta write.
+            const metaInstance = ensureNotFalsy(replicationState.internalReplicationState).input.metaInstance;
+            const originalBulkWrite = metaInstance.bulkWrite.bind(metaInstance);
+            let metaWriteDropped = false;
+
+            metaInstance.bulkWrite = function (rows: any[], context: string) {
+                if (context === 'replication-down-write-meta' && !metaWriteDropped) {
+                    metaWriteDropped = true;
+                    // Silently swallow the write: fork already persisted, meta is lost.
+                    return Promise.resolve({ success: [], error: [] });
+                }
+                return originalBulkWrite(rows, context);
+            } as any;
+
+            // Update the document on remote.
+            // Downstream will write the new state to the fork, but the
+            // corresponding meta write is silently dropped above.
+            const remoteDoc = await remoteCollection.findOne(docId).exec(true);
+            const internalState = ensureNotFalsy(replicationState.internalReplicationState);
+            let prevDown = internalState.streamQueue.down;
+            await remoteDoc.incrementalPatch({
+                name: 'FirstUpdate',
+                age: 2
+            });
+
+            // Wait for the downstream cycle to finish
+            await waitUntil(() => internalState.streamQueue.down !== prevDown, undefined, 40);
+            await internalState.streamQueue.down;
+
+            assert.ok(metaWriteDropped, 'Meta write should have been intercepted and dropped');
+            const afterFirst = await localCollection.findOne(docId).exec(true);
+            assert.strictEqual(afterFirst.name, 'FirstUpdate');
+
+            // Restore original bulkWrite so meta works normally again.
+            metaInstance.bulkWrite = originalBulkWrite;
+
+            // At this point the replication state is:
+            //   forkState       = { name: 'FirstUpdate', age: 2 }
+            //   assumedMaster   = { name: 'Initial', age: 1 }      (stale — meta write was lost)
+            //
+            // Downstream will see forkState != assumedMaster and treat it as a
+            // "non-upstream-replicated local write", skipping the document.
+
+            // Update the document on remote again.
+            prevDown = internalState.streamQueue.down;
+            const remoteDoc2 = await remoteCollection.findOne(docId).exec(true);
+
+
+            await remoteDoc2.incrementalPatch({
+                name: 'SecondUpdate',
+                age: 3
+            });
+
+            // Wait for downstream to finish processing, then verify it recovered.
+            await waitUntil(() => internalState.streamQueue.down !== prevDown, undefined, 40);
+            await internalState.streamQueue.down;
+
+            const localDoc = await localCollection.findOne(docId).exec(true);
+            assert.strictEqual(localDoc.name, 'SecondUpdate', 'should have replicated the second update from the remote');
+            assert.strictEqual(localDoc.age, 3);
+
+            await replicationState.cancel();
+            await localCollection.database.close();
+            await remoteCollection.database.close();
+        });
+        it('#7804 (2/3) should sync downstream updates when local and remote have different documents', async () => {
+            function setupReplication(
+                local: RxCollection<TestDocType>,
+                remote: RxCollection<TestDocType>
+            ) {
+                return replicateRxCollection<TestDocType, any>({
+                    collection: local,
+                    replicationIdentifier: 'downstream-test',
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remote),
+                        stream$: getPullStream(remote)
+                    },
+                    push: {
+                        handler: getPushHandler(remote)
+                    }
+                });
+            }
+
+
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+            const docId = 'different-doc';
+
+            // Insert different documents in each
+            await remoteCollection.insert(schemaObjects.humanWithTimestampData({
+                id: docId,
+                name: 'RemoteDocument',
+                age: 10
+            }));
+            await localCollection.insert(schemaObjects.humanWithTimestampData({
+                id: docId,
+                name: 'LocalDocument',
+                age: 20
+            }));
+
+            // Start replication
+            const replicationState = setupReplication(localCollection, remoteCollection);
+            ensureReplicationHasNoErrors(replicationState);
+
+            await replicationState.awaitInitialReplication();
+            await replicationState.awaitInSync();
+
+            // Update document on remote
+            const internalState = ensureNotFalsy(replicationState.internalReplicationState);
+            const prevDown = internalState.streamQueue.down;
+            const remoteDoc = await remoteCollection.findOne(docId).exec(true);
+            await remoteDoc.incrementalPatch({
+                name: 'UpdatedFromRemote',
+                age: 999
+            });
+
+            // Wait for downstream cycle to complete
+            await waitUntil(() => internalState.streamQueue.down !== prevDown, 1000, 10);
+            await internalState.streamQueue.down;
+
+            // Verify local received the update
+            const localDoc = await localCollection.findOne(docId).exec(true);
+            assert.strictEqual(localDoc.name, 'UpdatedFromRemote');
+            assert.strictEqual(localDoc.age, 999);
+
+            await replicationState.cancel();
+            await localCollection.database.close();
+            await remoteCollection.database.close();
+        });
+
+        it('#7804 (3/3) should sync downstream updates when local and remote have identical documents', async () => {
+            function setupReplication(
+                local: RxCollection<TestDocType>,
+                remote: RxCollection<TestDocType>
+            ) {
+                return replicateRxCollection<TestDocType, any>({
+                    collection: local,
+                    replicationIdentifier: 'downstream-test',
+                    live: true,
+                    pull: {
+                        handler: getPullHandler(remote),
+                        stream$: getPullStream(remote)
+                    },
+                    push: {
+                        handler: getPushHandler(remote)
+                    }
+                });
+            }
+
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+            const docId = 'identical-doc';
+            const docData = schemaObjects.humanWithTimestampData({
+                id: docId,
+                name: 'SharedDocument',
+                age: 25
+            });
+
+            // Insert identical document in both before replication
+            await remoteCollection.insert(clone(docData));
+            await localCollection.insert(clone(docData));
+
+            // Start replication
+            const replicationState = setupReplication(localCollection, remoteCollection);
+            ensureReplicationHasNoErrors(replicationState);
+
+            await replicationState.awaitInitialReplication();
+            await replicationState.awaitInSync();
+
+            // Update document on remote
+            const internalState = ensureNotFalsy(replicationState.internalReplicationState);
+            const prevDown = internalState.streamQueue.down;
+            const remoteDoc = await remoteCollection.findOne(docId).exec(true);
+
+            await remoteDoc.incrementalPatch({
+                name: 'UpdatedFromRemote',
+                age: 999
+            });
+
+            // Wait for downstream cycle to complete
+            await waitUntil(() => internalState.streamQueue.down !== prevDown, 1000, 10);
+            await internalState.streamQueue.down;
+
+            // Verify local received the update
+
+            const localDoc = await localCollection.findOne(docId).exec(true);
+            assert.strictEqual(localDoc.name, 'UpdatedFromRemote');
+            assert.strictEqual(localDoc.age, 999);
+
+            await replicationState.cancel();
+            await localCollection.database.close();
+            await remoteCollection.database.close();
+        });
+        it('#7587 should correctly handle short primary key lengths', async () => {
+            type CollectionCheckpoint = { Checkpoint: number; };
+
+            type Doc = {
+                id: string;
+                firstName: string;
+                lastName: string;
+                age: number;
+            };
+
+            const mySchema = {
+                version: 0,
+                primaryKey: 'id',
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        maxLength: 1,
+                    },
+                    firstName: {
+                        type: 'string',
+                    },
+                    lastName: {
+                        type: 'string',
+                    },
+                    age: {
+                        type: 'integer',
+                        minimum: 0,
+                        maximum: 150,
+                    },
+                },
+            };
+
+            const name = randomToken(10);
+
+            // create a database
+            const db = await createRxDatabase({
+                name,
+                storage: config.storage.getStorage(),
+                eventReduce: true,
+                ignoreDuplicate: true,
+            });
+            const { mycollection }: { mycollection: RxCollection<Doc>; } =
+                await db.addCollections({
+                    mycollection: {
+                        schema: mySchema,
+                    },
+                });
+
+            const syncSubj = new Subject<{
+                docs: Array<WithDeleted<Doc>>;
+                checkpoint: number;
+            }>();
+
+            const dummyPull = {
+                batchSize: 10,
+                async handler(
+                    lastPulledCheckpoint: CollectionCheckpoint | undefined
+                ): Promise<
+                    ReplicationPullHandlerResult<Doc, CollectionCheckpoint>
+                > {
+                    if (!lastPulledCheckpoint) {
+                        return {
+                            documents: [
+                                {
+                                    id: 'd',
+                                    firstName: 'Bob',
+                                    lastName: 'Kelso',
+                                    age: 56,
+                                    _deleted: false
+                                }
+                            ],
+                            checkpoint: {
+                                Checkpoint: 1
+                            }
+                        };
+                    }
+                    // no new data
+                    return await {
+                        documents: [],
+                        checkpoint: lastPulledCheckpoint,
+                    };
+                },
+                stream$: syncSubj.asObservable().pipe(
+                    map((sync) => ({
+                        documents: sync.docs,
+                        checkpoint: { Checkpoint: sync.checkpoint },
+                    }))
+                ),
+            };
+
+            let lastCheckpoint: number | null = null;
+            const dummyPush = {
+                batchSize: 10,
+                handler(
+                    rows: RxReplicationWriteToMasterRow<Doc>[]
+                ): Promise<WithDeleted<Doc>[]> {
+                    // simply send the write rows back as synced data
+                    lastCheckpoint = (lastCheckpoint ?? 0) + 1;
+                    syncSubj.next({
+                        docs: rows.map((r) => ({
+                            id: r.newDocumentState.id,
+                            firstName: r.newDocumentState.firstName,
+                            lastName: r.newDocumentState.lastName,
+                            age: r.newDocumentState.age,
+                            _deleted: r.newDocumentState._deleted,
+                        })),
+                        checkpoint: lastCheckpoint,
+                    });
+                    // no conflicts
+                    return Promise.resolve([]);
+                },
+            };
+
+            const repl = new RxReplicationState<Doc, CollectionCheckpoint>(
+                'repltest-' + db.name,
+                mycollection,
+                '_deleted',
+                dummyPull,
+                dummyPush,
+                true,
+                5000
+            );
+            repl.start();
+
+            // insert a document
+            await mycollection.insert({
+                id: 'f',
+                firstName: 'Bob',
+                lastName: 'Kelso',
+                age: 56,
+            });
+
+            // The bug appears here, the following call will throw an error, the error comes from
+            // https://github.com/pubkey/rxdb/blob/3ab3124eed2cf952c58ebb0b26955a3d3879cff2/src/replication-protocol/checkpoint.ts#L130
+            // and the error is that the key `up|1` is too long, since the meta instance has a maximum
+            // key length of 1 + 2 = 3.
+            await repl.awaitInSync();
+
+            // clean up afterwards
+            db.close();
+        });
         /**
          * @link https://discord.com/channels/969553741705539624/1407063219062702111
          */
@@ -1221,6 +2237,12 @@ describe('replication.test.ts', () => {
                         return d;
                     },
                 },
+                push: {
+                    handler: async () => {
+                        await wait(0);
+                        return [];
+                    }
+                }
             });
             ensureReplicationHasNoErrors(replicationStateBefore);
 
@@ -1489,6 +2511,12 @@ describe('replication.test.ts', () => {
                             };
                         }
                     },
+                    push: {
+                        handler: async () => {
+                            await wait(0);
+                            return [];
+                        },
+                    }
                 });
                 ensureReplicationHasNoErrors(replicationState);
                 return replicationState;
@@ -1520,7 +2548,7 @@ describe('replication.test.ts', () => {
         it('upstreamInitialSync() running on all data instead of continuing from checkpoint', async () => {
             const { localCollection, remoteCollection } = await getTestCollections({
                 local: 0,
-                remote: 30
+                remote: isFastMode() ? 10 : 30
             });
 
             let replicationState = replicateRxCollection({
@@ -1758,6 +2786,173 @@ describe('replication.test.ts', () => {
 
             serverCollection.database.close();
             clientCollection.database.close();
+        });
+        it('waitBeforePersist delays the push until the promise resolves', async () => {
+            const serverCollection = await humansCollection.create(0);
+            const clientCollection = await humansCollection.create(0);
+
+            let waitBeforePersistCalled = false;
+            let resolveWait!: () => void;
+            let waitPromise: Promise<void> = Promise.resolve();
+
+            const replicationState = replicateRxCollection({
+                replicationIdentifier: 'replicate-' + randomToken(10),
+                collection: clientCollection,
+                pull: {
+                    handler: getPullHandler(serverCollection)
+                },
+                push: {
+                    handler: getPushHandler(serverCollection),
+                    waitBeforePersist: () => {
+                        waitBeforePersistCalled = true;
+                        return waitPromise;
+                    }
+                }
+            });
+            ensureReplicationHasNoErrors(replicationState);
+            await replicationState.awaitInitialReplication();
+
+            // Block the push by switching to a pending promise
+            waitPromise = new Promise(resolve => {
+                resolveWait = resolve;
+            });
+
+            // Insert a document while push is blocked
+            await clientCollection.insert(schemaObjects.humanData('p1'));
+
+            // The server must have no documents yet because the push is blocked
+            // by the pending waitBeforePersist promise. This is deterministic:
+            // the push handler can only run after waitBeforePersist resolves.
+            const serverDocsBefore = await serverCollection.find().exec();
+            assert.strictEqual(serverDocsBefore.length, 0);
+
+            // Release the gate and wait for sync to complete
+            resolveWait();
+            await replicationState.awaitInSync();
+
+            // The document should now have been pushed to the server
+            const serverDocsAfter = await serverCollection.find().exec();
+            assert.strictEqual(serverDocsAfter.length, 1);
+            assert.ok(waitBeforePersistCalled);
+
+            serverCollection.database.close();
+            clientCollection.database.close();
+        });
+    });
+    describe('push-only', () => {
+        it('should push documents written during pause after resume', async () => {
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 2, remote: 0 });
+
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                push: {
+                    handler: getPushHandler(remoteCollection)
+                }
+            });
+            ensureReplicationHasNoErrors(replicationState);
+            await replicationState.awaitInitialReplication();
+            await replicationState.awaitInSync();
+
+            // Remote should have the 2 initial docs
+            let remoteDocs = await remoteCollection.find().exec();
+            assert.strictEqual(remoteDocs.length, 2);
+
+            // Pause the replication
+            await replicationState.pause();
+
+            // Insert a document locally while paused
+            await localCollection.insert(
+                schemaObjects.humanWithTimestampData({ id: 'written-during-pause' })
+            );
+
+            // The document should NOT have been synced yet
+            await wait(isFastMode() ? 50 : 200);
+            remoteDocs = await remoteCollection.find().exec();
+            assert.strictEqual(remoteDocs.length, 2);
+
+            // Resume the replication
+            await replicationState.start();
+            await replicationState.awaitInSync();
+
+            // The document written during pause should now be on the remote
+            remoteDocs = await remoteCollection.find().exec();
+            assert.strictEqual(
+                remoteDocs.length,
+                3,
+                'push-only replication must sync documents written during pause after resume'
+            );
+
+            await localCollection.database.close();
+            await remoteCollection.database.close();
+        });
+        it('should push documents after pause during push retry', async () => {
+            if (isFastMode()) {
+                return;
+            }
+            const { localCollection, remoteCollection } = await getTestCollections({ local: 0, remote: 0 });
+
+            const realPushHandler = getPushHandler(remoteCollection);
+
+            /**
+             * Use a flag to control whether the push handler fails.
+             * When pushShouldFail is true, the handler throws so
+             * the replication enters its retry loop.
+             */
+            let pushShouldFail = true;
+            const pushHandler: typeof realPushHandler = (rows) => {
+                if (pushShouldFail) {
+                    throw new Error('simulated network error');
+                }
+                return realPushHandler(rows);
+            };
+
+            const replicationState = replicateRxCollection({
+                collection: localCollection,
+                replicationIdentifier: REPLICATION_IDENTIFIER_TEST,
+                live: true,
+                retryTime: 100,
+                pull: {
+                    handler: getPullHandler(remoteCollection)
+                },
+                push: {
+                    handler: pushHandler
+                }
+            });
+            await replicationState.awaitInitialReplication();
+
+            // Insert a document locally
+            await localCollection.insert(
+                schemaObjects.humanWithTimestampData({ id: 'pause-retry-doc' })
+            );
+
+            // Wait for at least one push error to be emitted
+            await firstValueFrom(replicationState.error$);
+
+            // Pause while the push is retrying
+            await replicationState.pause();
+
+            // Allow enough time for the retry loop to observe the paused state
+            await wait(300);
+
+            // Fix the push handler so it succeeds on resume
+            pushShouldFail = false;
+
+            // Resume the replication
+            await replicationState.start();
+            await replicationState.awaitInSync();
+
+            // The document must be present on the remote
+            const remoteDocs = await remoteCollection.find().exec();
+            assert.strictEqual(
+                remoteDocs.length,
+                1,
+                'document must reach the remote after pause-during-retry and resume'
+            );
+
+            await localCollection.database.close();
+            await remoteCollection.database.close();
         });
     });
 });

@@ -2,18 +2,18 @@
 title: RxDB - The Perfect Ionic Database
 slug: ionic-database.html
 description: Supercharge your Ionic hybrid apps with RxDB's offline-first database. Experience real-time sync, top performance, and easy replication.
+image: /headers/ionic-database.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # Ionic Storage - RxDB as database for hybrid apps
 
 In the fast-paced world of mobile app development, **hybrid applications** have emerged as a versatile solution, offering the best of both worlds - the web and native app experiences. One key challenge these apps face is efficiently storing and querying data on the **client's device**. Enter [RxDB](https://rxdb.info/), a powerful client-side database tailored for ionic hybrid applications. In this article, we'll explore how RxDB addresses the requirements of storing and querying data in ionic apps, and why it stands out as a preferred choice.
 
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/icons/ionic.svg" alt="Ionic Database Storage" width="120" />
-    </a>
-</center>
+<CenteredImage src="../files/icons/ionic.svg" alt="Ionic Database Storage" width={120} href="https://rxdb.info/" />
 
 ## What are Ionic Hybrid Apps?
 
@@ -29,11 +29,7 @@ RxDB steps in as a powerful solution to address the data management needs of ion
 ### Getting Started with RxDB
 
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="../files/logo/rxdb_javascript_database.svg" alt="JavaScript Ionic Database Storage" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Ionic Database Storage" />
 
 ### What is RxDB?
 
@@ -43,11 +39,9 @@ At its core, [RxDB](https://rxdb.info/) is a **NoSQL** database that operates wi
 The [local-first](../offline-first.md) approach adopted by RxDB is a game-changer for hybrid applications. Storing data locally allows your app to function seamlessly without an internet connection, providing users with uninterrupted access to their data. When connectivity is restored, RxDB handles the synchronization of data, ensuring that any changes made offline are appropriately propagated.
 
 ### Observable Queries
-One of RxDB's standout features is its implementation of observable queries. This concept allows your app's user interface to be dynamically updated in real time as data changes within the database. RxDB's observables create a bridge between your database and user interface, keeping them in sync effortlessly.
+One of RxDB's standout features is its implementation of [observable queries](../rx-query.md). This concept allows your app's user interface to be dynamically updated in real time as data changes within the database. RxDB's observables create a bridge between your database and user interface, keeping them in sync effortlessly.
 
-<p align="center">
-  <img src="../files/animations/realtime.gif" alt="realtime ui updates" width="700" />
-</p>
+<CenteredImage src="../files/animations/realtime.gif" alt="realtime ui updates" width={700} />
 
 ### NoSQL Query Engine
 RxDB's NoSQL query engine empowers you to perform powerful queries on your app's data, without the constraints imposed by traditional relational databases. This flexibility is particularly valuable when dealing with unstructured or semi-structured data. With the NoSQL query engine, you can retrieve, filter, and manipulate data according to your app's unique requirements.
@@ -68,7 +62,7 @@ RxDB introduces a concept called [EventReduce](https://github.com/pubkey/event-r
 
 
 ## Why NoSQL is a Better Fit for Client-Side Applications Compared to relational databases like SQLite
-When it comes to choosing the right database solution for your client-side applications, NoSQL RxDB presents compelling advantages over traditional options like SQLite. Let's delve into the key reasons why NoSQL RxDB is a superior fit for your ionic hybrid app development.
+When it comes to choosing the right database solution for your client-side applications, NoSQL RxDB presents compelling advantages over traditional options like [SQLite](../rx-storage-sqlite.md). Let's delve into the key reasons why NoSQL RxDB is a superior fit for your ionic hybrid app development.
 
 ### Easier Document-Based Replication
 NoSQL databases, like RxDB, inherently embrace a document-based approach to [data storage](./ionic-storage.md). This design choice simplifies data [replication](../replication.md) between clients and servers. With documents representing discrete units of data, you can easily synchronize individual pieces of information without the complexity that can arise when dealing with rows and tables in a relational database like SQLite. This document-centric replication model streamlines the synchronization process and ensures that your app's data remains consistent across devices.
@@ -98,7 +92,7 @@ For a full instruction, follow the [RxDB Quickstart](https://rxdb.info/quickstar
 RxDB seamlessly integrates with various JavaScript frameworks, ensuring compatibility with your preferred development environment. Whether you're building your ionic hybrid app with [React](./react-database.md), [Angular](./angular-database.md), or [Vue.js](./vue-database.md), RxDB offers bindings and tools that enable you to leverage its features effortlessly. This compatibility allows you to stay within the comfort zone of your chosen framework while benefiting from RxDB's powerful data management capabilities.
 
 ### Different RxStorage Layers for RxDB
-RxDB doesn't limit you to a single storage solution. Instead, it provides a range of RxStorage layers to accommodate diverse use cases. These storage layers offer flexibility and customization, enabling you to tailor your data management strategy to match your app's requirements. Let's explore some of the available RxStorage options:
+RxDB doesn't limit you to a single storage solution. Instead, it provides a range of [RxStorage](../rx-storage.md) layers to accommodate diverse use cases. These storage layers offer flexibility and customization, enabling you to tailor your data management strategy to match your app's requirements. Let's explore some of the available RxStorage options:
 
 - [LocalStorage RxStorage](../rx-storage-localstorage.md): Based on the browsers [localStorage](./localstorage.md). Easy to set up and fast for small datasets.
 - [IndexedDB RxStorage](../rx-storage-indexeddb.md): Leveraging the native browser storage, IndexedDB RxStorage offers reliable data persistence. This storage option is suitable for a wide range of scenarios and is supported by most modern browsers.
@@ -112,7 +106,7 @@ RxDB doesn't limit you to a single storage solution. Instead, it provides a rang
 Efficient data replication between clients and servers is the backbone of modern application development, ensuring that data remains consistent and up-to-date across various devices and platforms. RxDB provides a suite of replication methods that facilitate seamless communication between clients and servers, ensuring that your data is always in sync.
 
 ### RxDB Replication Algorithm
-At the heart of RxDB's replication capabilities lies a sophisticated [algorithm](../replication.md) designed to manage data synchronization between clients and servers. This algorithm intelligently handles data changes, conflict resolution, and network connectivity fluctuations, resulting in reliable and efficient data replication. With the RxDB replication algorithm, your application can maintain data consistency across devices without unnecessary complexities.
+At the heart of RxDB's replication capabilities lies a sophisticated [algorithm](../replication.md) designed to manage data synchronization between clients and servers. This algorithm intelligently handles data changes, [conflict resolution](../transactions-conflicts-revisions.md), and network connectivity fluctuations, resulting in reliable and efficient data replication. With the RxDB replication algorithm, your application can maintain data consistency across devices without unnecessary complexities.
 
 - [CouchDB Replication](../replication-couchdb.md):
 RxDB's integration with CouchDB replication presents a powerful way to synchronize data between clients and servers. CouchDB, a well-established NoSQL database, excels at distributed and decentralized data scenarios. By utilizing RxDB's CouchDB replication, you can establish bidirectional synchronization between your RxDB-powered client and a CouchDB server. This synchronization ensures that data updates made on either end are seamlessly propagated to the other, facilitating collaboration and data sharing.
@@ -130,7 +124,7 @@ Peer-to-peer (P2P) replication via WebRTC introduces a cutting-edge approach to 
 When it comes to securing sensitive data in your Ionic applications, RxDB emerges as a powerful alternative to traditional secure storage solutions. Let's delve into why RxDB is an exceptional choice for safeguarding your data while providing additional benefits.
 
 ### RxDB On-Device Encryption Plugin
-RxDB offers an [on-device encryption plugin](https://rxdb.info/encryption.html), adding an extra layer of security to your app's data. This means that data stored within the RxDB database can be encrypted, ensuring that even if the device falls into the wrong hands, the sensitive information remains inaccessible without the proper decryption key. This level of data protection is crucial for applications that deal with personal or confidential information. Encryption runs either with `AES` on `crypto-js` or with the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) which is faster and more secure.
+RxDB offers an [on-device encryption plugin](https://rxdb.info/encryption.html), adding an extra layer of security to your app's data. This means that data stored within the RxDB database can be encrypted, ensuring that even if the device falls into the wrong hands, the sensitive information remains inaccessible without the proper decryption key. This level of data protection is crucial for applications that deal with personal or confidential information. [Encryption](../encryption.md) runs either with `AES` on `crypto-js` or with the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) which is faster and more secure.
 
 ### Works Offline
 Security should never compromise functionality. RxDB excels in this area by allowing your application to operate seamlessly even when offline. The locally stored encrypted data remains accessible and functional, enabling users to interact with the app's features even without an active internet connection. This offline capability ensures that user data is secure, while the app continues to deliver a responsive and uninterrupted experience.
@@ -149,9 +143,19 @@ In addition to its security features, RxDB offers cost-effective benefits. RxDB 
 
 
 
+## FAQ
+
+<Faq>
+<FaqItem question="What are the best peer-to-peer syncing databases for mobile applications?">
+
+RxDB excels as a peer-to-peer syncing database for mobile applications. You build mobile applications using local storage on the user device. RxDB synchronizes changes directly between multiple clients utilizing WebRTC data channels. You connect devices locally without depending on a central server. This approach minimizes latency and ensures continuous data sharing even across isolated network environments.
+
+</FaqItem>
+</Faq>
+
 ## Follow Up
 
-- Try out the [RxDB ionic example project](https://github.com/pubkey/rxdb/tree/master/examples/ionic2)
+- Try out the [RxDB ionic example project](https://github.com/pubkey/rxdb/tree/master/examples/ionic)
 - Try out the [RxDB Quickstart](https://rxdb.info/quickstart.html)
 - Join the [RxDB Chat](https://rxdb.info/chat/)
 

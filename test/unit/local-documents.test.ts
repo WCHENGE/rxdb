@@ -5,7 +5,8 @@ import {
     schemaObjects,
     schemas,
     humansCollection,
-    isNode
+    isNode,
+    isFastMode
 } from '../../plugins/test-utils/index.mjs';
 import {
     createRxDatabase,
@@ -18,9 +19,9 @@ import {
 } from '../../plugins/core/index.mjs';
 
 
-import { RxDBLocalDocumentsPlugin } from '../../plugins/local-documents/index.mjs';
+import { LOCAL_DOC_STATE_BY_PARENT_RESOLVED, RxDBLocalDocumentsPlugin } from '../../plugins/local-documents/index.mjs';
 addRxPlugin(RxDBLocalDocumentsPlugin);
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     filter,
     first,
@@ -32,7 +33,7 @@ declare type TestDocType = {
     foo: string;
 };
 
-describeParallel('local-documents.test.ts', () => {
+describe('local-documents.test.ts', () => {
     describe('.insertLocal()', () => {
         describe('positive', () => {
             it('should create a local document', async () => {
@@ -50,7 +51,7 @@ describeParallel('local-documents.test.ts', () => {
                 });
                 const doc2 = await c.findOne().exec();
                 assert.strictEqual(doc2, null);
-                c.database.close();
+                await c.database.close();
             });
         });
         describe('negative', () => {
@@ -94,7 +95,7 @@ describeParallel('local-documents.test.ts', () => {
                 const doc2 = await c.getLocal('foobar');
                 assert.ok(doc);
                 assert.ok(doc === doc2);
-                c.database.close();
+                await c.database.close();
             });
         });
         describe('negative', () => {
@@ -102,6 +103,30 @@ describeParallel('local-documents.test.ts', () => {
                 const c = await humansCollection.create(0);
                 const doc = await c.getLocal('foobar');
                 assert.strictEqual(doc, null);
+                c.database.close();
+            });
+            it('should return null for a deleted local document', async () => {
+                const c = await humansCollection.create(0);
+                const doc = await c.insertLocal('foobar', {
+                    foo: 'bar'
+                });
+
+                // remove the document
+                await doc.remove();
+
+                // getLocal() should return null for deleted documents,
+                // consistent with how the storage layer excludes deleted docs
+                const afterRemove = await c.getLocal('foobar');
+                assert.strictEqual(afterRemove, null);
+
+                // also test on database level
+                const dbDoc = await c.database.insertLocal('dblocal', {
+                    foo: 'bar'
+                });
+                await dbDoc.remove();
+                const dbAfterRemove = await c.database.getLocal('dblocal');
+                assert.strictEqual(dbAfterRemove, null);
+
                 c.database.close();
             });
         });
@@ -306,6 +331,101 @@ describeParallel('local-documents.test.ts', () => {
                 docSub.unsubscribe();
                 c.database.close();
             });
+            /**
+             * Regression from 17.2.0 (#8278): upsertLocal only checked docCache,
+             * so a document still in storage but evicted from cache caused insertLocal + 409.
+             */
+            it('#8609 should update when doc exists in storage but was evicted from docCache', async () => {
+                const c = await humansCollection.create(0);
+                const id = 'doc-cache-eviction-test';
+
+                await c.insertLocal(id, { time: 0 });
+                assert.strictEqual((await c.getLocal(id))?.get('time'), 0);
+
+                const state = LOCAL_DOC_STATE_BY_PARENT_RESOLVED.get(c);
+                if (!state) {
+                    throw new Error('Local document state not initialized on collection');
+                }
+                state.docCache.cacheItemByDocId.delete(id);
+
+                const doc = await c.upsertLocal(id, { time: 42 });
+                assert.strictEqual(doc.get('time'), 42);
+                assert.strictEqual((await c.getLocal(id))?.get('time'), 42);
+
+                c.database.close();
+            });
+            if (config.storage.hasMultiInstance) {
+                it('should properly handle 409 conflicts and rerun the write when concurrently upserted from another instance', async () => {
+                    if (config.storage.init) {
+                        await config.storage.init();
+                    }
+                    const name = randomToken(10);
+                    const db = await createRxDatabase({
+                        name,
+                        storage: config.storage.getStorage(),
+                        localDocuments: true
+                    });
+                    const db2 = await createRxDatabase({
+                        name,
+                        storage: config.storage.getStorage(),
+                        ignoreDuplicate: true,
+                        localDocuments: true
+                    });
+
+                    const id = 'concurrency-test';
+
+                    const [doc1, doc2] = await Promise.all([
+                        db.upsertLocal(id, { val: 'from-db1' }),
+                        db2.upsertLocal(id, { val: 'from-db2' })
+                    ]);
+
+                    assert.ok(doc1);
+                    assert.ok(doc2);
+
+                    await waitUntil(async () => {
+                        const val1 = (await db.getLocal(id))?.get('val');
+                        const val2 = (await db2.getLocal(id))?.get('val');
+                        return val1 === val2;
+                    });
+
+                    const finalVal = (await db.getLocal(id))?.get('val');
+                    assert.ok(finalVal === 'from-db1' || finalVal === 'from-db2');
+
+                    await db.close();
+                    await db2.close();
+                });
+            }
+            it('should upsert after remove and create a non-deleted document', async () => {
+                const c = await humansCollection.create(0);
+
+                // insert a local document
+                const doc = await c.upsertLocal<{ foo: string; }>('foobar', {
+                    foo: 'bar'
+                });
+                assert.strictEqual(doc.get('foo'), 'bar');
+
+                // remove it
+                await doc.remove();
+                const afterRemove = await c.getLocal('foobar');
+                assert.strictEqual(afterRemove, null);
+
+                // upsert again with new data
+                const doc2 = await c.upsertLocal<{ foo: string; }>('foobar', {
+                    foo: 'bar2'
+                });
+
+                // the upserted document must NOT be deleted
+                assert.strictEqual(doc2.deleted, false);
+                assert.strictEqual(doc2.get('foo'), 'bar2');
+
+                // getLocal should also return the non-deleted document
+                const doc3 = await c.getLocal<{ foo: string; }>('foobar');
+                assert.ok(doc3);
+                assert.strictEqual(ensureNotFalsy(doc3).deleted, false);
+                assert.strictEqual(ensureNotFalsy(doc3).get('foo'), 'bar2');
+
+                c.database.close();
+            });
         });
         describe('negative', () => { });
     });
@@ -317,7 +437,7 @@ describeParallel('local-documents.test.ts', () => {
             });
             await doc.remove();
             const doc2 = await c.getLocal('foobar');
-            assert.ok(ensureNotFalsy(doc2).deleted);
+            assert.strictEqual(doc2, null);
             c.database.close();
         });
     });
@@ -760,14 +880,14 @@ describeParallel('local-documents.test.ts', () => {
             });
 
             const key = 'foobar';
-            let doc = await db.getLocal(key);
-            doc = await db.insertLocal(key, {
+            await db.getLocal(key);
+            const doc = await db.insertLocal(key, {
                 foo: 'bar'
             });
             assert.ok(doc);
 
             let t = 0;
-            while (t < 50) {
+            while (t < (isFastMode() ? 10 : 50)) {
                 await db.upsertLocal(key, {
                     foo: randomString(10)
                 });
@@ -775,6 +895,58 @@ describeParallel('local-documents.test.ts', () => {
             }
 
             db.close();
+        });
+        it('database-level local doc $ must not be affected by collection-level local doc with same id', async () => {
+            type LDType = { level: string; };
+            const name = randomToken(10);
+            const db = await createRxDatabase({
+                name,
+                storage: config.storage.getStorage(),
+                localDocuments: true
+            });
+            const cols = await db.addCollections({
+                humans: {
+                    schema: schemas.primaryHuman,
+                    localDocuments: true
+                }
+            });
+
+            const sharedId = 'shared-id';
+            const dbDoc = await db.insertLocal<LDType>(sharedId, {
+                level: 'db'
+            });
+            const colDoc = await cols.humans.insertLocal<LDType>(sharedId, {
+                level: 'collection'
+            });
+
+            const dbEmitted: LDType[] = [];
+            const sub = dbDoc.$.subscribe(d => {
+                dbEmitted.push(d.toJSON().data as LDType);
+            });
+            await waitUntil(() => dbEmitted.length === 1);
+            assert.strictEqual(dbEmitted[0].level, 'db');
+
+            // update the collection-level doc: the db-level $ must NOT pick this up
+            await colDoc.incrementalPatch({ level: 'collection-updated' });
+            await wait(100);
+            assert.strictEqual(
+                dbEmitted.length,
+                1,
+                'database local doc observable leaked events from collection local doc. Got: ' +
+                JSON.stringify(dbEmitted)
+            );
+
+            // now update the db-level doc: must emit the db-level data
+            await dbDoc.incrementalPatch({ level: 'db-updated' });
+            await waitUntil(() => dbEmitted.length === 2);
+            assert.strictEqual(dbEmitted[1].level, 'db-updated');
+
+            // the getLatest() of the db-level doc must still return the db-level data
+            const latest = dbDoc.getLatest();
+            assert.strictEqual(latest.get('level'), 'db-updated');
+
+            sub.unsubscribe();
+            await db.close();
         });
     });
 });

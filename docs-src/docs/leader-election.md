@@ -1,7 +1,13 @@
 ---
 title: Leader Election
 slug: leader-election.html
+description: Use RxDB leader election to coordinate browser tabs so that only one tab manages remote data access, reducing redundant connections and saving resources.
+image: /headers/leader-election.jpg
 ---
+
+import {CenteredImage} from '@site/src/components/centered-image';
+import {DocsAnimation} from '@site/src/components/docs-animation';
+import {LeaderElectionTabs} from '@site/src/components/animations/leader-election-tabs';
 
 # Leader-Election
 
@@ -10,9 +16,13 @@ Before you read this, please check out on how many of your open browser-tabs you
 
 So if you would now inspect the traffic that these open tabs produce, you can see that many of them send exact the same data over wire for every tab. No matter if the data is sent with an open websocket or by polling.
 
+<DocsAnimation subtitle="One browser tab elected as the leader">
+<LeaderElectionTabs />
+</DocsAnimation>
+
 ## Use-case-example
 
-Imagine we have a website which displays the current temperature of the visitors location in various charts, numbers or heatmaps. To always display the live-data, the website opens a websocket to our API-Server which sends the current temperature every 10 seconds. Using the way most sites are currently build, we can now open it in 5 browser-tabs and it will open 5 websockets which send data 6*5=30 times per minute. This will not only waste the power of your clients device, but also wastes your api-servers resources by opening redundant connections.
+Imagine we have a website which displays the current temperature of the visitors location in various charts, numbers or heatmaps. To always display the live-data, the website opens a [websocket](./articles/websockets-sse-polling-webrtc-webtransport.md) to our API-Server which sends the current temperature every 10 seconds. Using the way most sites are currently build, we can now open it in 5 browser-tabs and it will open 5 websockets which send data 6*5=30 times per minute. This will not only waste the power of your clients device, but also wastes your api-servers resources by opening redundant connections.
 
 ## Solution
 
@@ -67,7 +77,7 @@ db.waitForLeadership()
 ## Handle Duplicate Leaders
 
 On rare occasions, it can happen that [more than one leader](https://github.com/pubkey/broadcast-channel/blob/master/.github/README.md#handle-duplicate-leaders) is elected. This can happen when the CPU is on 100% or for any other reason the JavaScript process is fully blocked for a long time.
-For most cases this is not really problem because on duplicate leaders, both browser tabs replicate with the same backend anyways.
+For most cases this is not really a problem because on duplicate leaders, both browser tabs replicate with the same backend anyways.
 To handle the duplicate leader event, you can access the leader elector and set a handler:
 
 ```ts
@@ -86,9 +96,7 @@ leaderElector.onduplicate = async () => {
 
 In this example the leader is marked with the crown ♛
 
-<p align="center">
-  <img src="./files/leader-election.gif" alt="Leader Election" width="300" />
-</p>
+<CenteredImage src="./files/leader-election.gif" alt="Leader Election" width={300} />
 
 ## Try it out
 
@@ -97,4 +105,4 @@ Run the [angular-example](https://github.com/pubkey/rxdb/tree/master/examples/an
 ## Notice
 
 The leader election is implemented via the  [broadcast-channel module](https://github.com/pubkey/broadcast-channel#using-the-leaderelection).
-The leader is elected between different processes on the same javascript-runtime. Like multiple tabs in the same browser or multiple NodeJs-processes on the same machine. It will not run between different replicated instances.
+The leader is elected between different processes on the same javascript-runtime. Like multiple tabs in the same browser or multiple Node.js processes on the same machine. It will not run between different replicated instances.

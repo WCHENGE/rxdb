@@ -1,23 +1,25 @@
 ---
 title: DenoKV RxStorage
 slug: rx-storage-denokv.html
+description: Run a full-featured RxDB NoSQL database on top of Deno Key Value Store with queries, encryption, compression, and replication support across 35 global regions.
+image: /headers/rx-storage-denokv.jpg
 ---
 
-# RxDB Database on top of Deno Key Value Store (beta)
+import {CenteredImage} from '@site/src/components/centered-image';
+
+# RxDB Database on top of Deno Key Value Store
 
 With the DenoKV [RxStorage](./rx-storage.md) layer for [RxDB](https://rxdb.info), you can run a fully featured **NoSQL database** on top of the [DenoKV API](https://docs.deno.com/kv/manual).
 This gives you the benefits and features of the RxDB JavaScript Database, combined with the global availability and distribution features of the DenoKV.
 
 
-<p align="center">
-  <img src="./files/icons/deno.svg" alt="DenoKV Database" width="160" />
-</p>
+<CenteredImage src="./files/icons/deno.svg" alt="DenoKV Database" width={160} />
 
 ## What is DenoKV
 
 [DenoKV](https://deno.com/kv) is a strongly consistent key-value storage, globally replicated for low-latency reads across 35 worldwide regions via [Deno Deploy](https://deno.com/deploy).
 When you release your Deno application on Deno Deploy, it will start a instance on each of the [35 worldwide regions](https://docs.deno.com/deploy/manual/regions). This edge deployment guarantees minimal latency when serving requests to end users devices around the world. DenoKV is a shared storage which shares its state across all instances.
-But, because DenoKV is "only" a **Key-Value storage**, it only supports basic CRUD operations on datasets and indexes. Complex features like queries, encryption, compression or client-server replication, are missing. Using RxDB on top of DenoKV fills this gap and makes it easy to build realtime [offline-first](./offline-first.md) application on top of Deno backend.
+But, because DenoKV is "only" a **Key-Value storage**, it only supports basic CRUD operations on datasets and indexes. Complex features like queries, [encryption](./encryption.md), compression or client-server replication, are missing. Using RxDB on top of DenoKV fills this gap and makes it easy to build realtime [offline-first](./offline-first.md) application on top of Deno backend.
 
 ## Use cases
 
@@ -29,7 +31,7 @@ Using RxDB-DenoKV instead of plain DenoKV, can have a wide range of benefits dep
 
 - **Reuse Client and Server Code**: When you use RxDB on the server and on the client side, many parts of your code can be reused on both sides which decreases development time significantly.
 
-- **Replicate from DenoKV to a local RxDB state**: Instead of running all operations against the global DenoKV, you can run a [realtime-replication](./replication.md) between a DenoKV-RxDatabase and a [locally stored dataset](./rx-storage-filesystem-node.md) or maybe even an [in-memory](./rx-storage-memory.md) stored one. This improves **query performance** and can **reduce your Deno Deploy cloud costs** because less operations run against the DenoKV, they only locally instead.
+- **Replicate from DenoKV to a local RxDB state**: Instead of running all operations against the global DenoKV, you can run a [realtime-replication](./replication.md) between a DenoKV-RxDatabase and a [locally stored dataset](./rx-storage-filesystem-node.md) or maybe even an [in-memory](./rx-storage-memory.md) stored one. This improves **query performance** and can **reduce your Deno Deploy cloud costs** because less operations run against the DenoKV, they run only locally instead.
 
 - **Replicate with other backends**: The RxDB [Sync Engine](./replication.md) is pretty simple and allows you to easily build a replication with any backend architecture. For example if you already have your data stored in a self-hosted MySQL server, you can use RxDB to do a realtime replication of that data into a DenoKV RxDatabase instance. RxDB also has many plugins for replication with backend/protocols like [GraphQL](./replication-graphql.md), [Websocket](./replication-websocket.md), [CouchDB](./replication-couchdb.md), [WebRTC](./replication-webrtc.md), [Firestore](./replication-firestore.md) and [NATS](./replication-nats.md).
 
@@ -66,7 +68,7 @@ const myRxDatabase = await createRxDatabase({
        * you can test different batch sizes to improve performance.
        * (Optional) default=100
        */
-      batchSize: number
+      batchSize: 100
     })
 });
 
@@ -106,11 +108,3 @@ const db = await createRxDatabase({
   multiInstance: false
 });
 ```
-
-
-
-
-
-## Limitations
-
-- The DenoKV RxStorage is in currently in beta mode. There might be breaking changes without a major RxDB version release.

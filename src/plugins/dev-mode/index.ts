@@ -15,7 +15,8 @@ import {
 } from './check-schema.ts';
 import {
     checkOrmDocumentMethods,
-    checkOrmMethods
+    checkOrmMethods,
+    RX_ATTACHMENT_RESERVED_NAMES
 } from './check-orm.ts';
 import { checkMigrationStrategies } from './check-migration-strategies.ts';
 import {
@@ -81,6 +82,8 @@ export const RxDBDevModePlugin: RxPlugin = {
                     '🤗 Hint: To get the most out of RxDB, check out the Premium Plugins',
                     'to get access to faster storages and more professional features: https://rxdb.info/premium/?console=dev-mode ',
                     '',
+                    '💬 Need help? The RxDB Discord is the fastest place to reach maintainers: https://rxdb.info/chat/?console=dev-mode ',
+                    '',
                     'You can disable this warning by calling disableWarnings() from the dev-mode plugin.',
                     // '',
                     // 'Also take part in the RxDB User Survey: https://rxdb.info/survey.html',
@@ -95,14 +98,29 @@ export const RxDBDevModePlugin: RxPlugin = {
         },
         deepFreezeWhenDevMode,
         tunnelErrorMessage(code: RxErrorKey) {
-            if (!ERROR_MESSAGES[code]) {
+            const err = ERROR_MESSAGES[code];
+            if (!err) {
                 console.error('RxDB: Error-Code not known: ' + code);
                 throw new Error('Error-Code ' + code + ' not known, contact the maintainer');
             }
-            const errorMessage = ERROR_MESSAGES[code];
-            return `
-Error message: ${errorMessage}
+            let errorMessage = `
+Error message: ${err.message}
 Error code: ${code}`;
+
+            if (err.cause) {
+                errorMessage += `
+Cause: ${err.cause}`;
+            }
+            if (err.fix) {
+                errorMessage += `
+Fix: ${err.fix}`;
+            }
+            if (err.docs) {
+                errorMessage += `
+Docs: ${err.docs}`;
+            }
+
+            return errorMessage;
         }
     },
     hooks: {
@@ -173,7 +191,7 @@ Error code: ${code}`;
                 // check ORM-methods
                 checkOrmMethods(args.creator.statics);
                 checkOrmMethods(args.creator.methods);
-                checkOrmMethods(args.creator.attachments);
+                checkOrmMethods(args.creator.attachments, RX_ATTACHMENT_RESERVED_NAMES);
 
                 // check migration strategies
                 if (args.creator.schema && args.creator.migrationStrategies) {

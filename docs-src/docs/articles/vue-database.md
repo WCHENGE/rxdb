@@ -2,7 +2,11 @@
 title: RxDB as a Database in a Vue.js Application
 slug: vue-database.html
 description: Level up your Vue projects with RxDB. Build real-time, resilient, and responsive apps powered by a reactive NoSQL database right in the browser.
+image: /headers/vue-database.jpg
 ---
+
+import {Faq, FaqItem} from '@site/src/components/faq';
+import {CenteredImage} from '@site/src/components/centered-image';
 
 # RxDB as a Database in a Vue Application
 
@@ -10,11 +14,7 @@ In the modern web ecosystem, [Vue](https://vuejs.org/) has become a leading choi
 
 This article explores how RxDB works, why it's a perfect match for Vue, and how you can leverage it to build more engaging, performant, and data-resilient Vue applications.
 
-<center>
-    <a href="https://rxdb.info/">
-        <img src="/files/logo/rxdb_javascript_database.svg" alt="JavaScript Vue Database" width="220" />
-    </a>
-</center>
+<RxdbLogo alt="JavaScript Vue Database" />
 
 ## Why Vue Applications Need a Database
 Vue is renowned for its lightweight core and flexible architecture centered around reactive state management and reusable components. However, modern Vue applications often require:
@@ -36,7 +36,7 @@ RxDB - short for Reactive Database - is built on the principle of combining [NoS
 5. **Observable Queries**: Automatically refresh the result set when documents in your queried collection change.
 
 ### RxDB vs. Other Vue Database Options
-Compared to traditional approaches - like raw IndexedDB or local storage - RxDB adds a powerful, reactive layer that simplifies your data flow. While tools like Vuex or Pinia are great for state management, they are not fully fledged databases with features like replication, conflict resolution, and offline persistence. RxDB bridges the gap by providing an integrated data handling solution tailor-made for modern, data-intensive Vue applications.
+Compared to traditional approaches - like raw IndexedDB or local storage - RxDB adds a powerful, reactive layer that simplifies your data flow. While tools like Vuex or Pinia are great for state management, they are not fully fledged databases with features like [replication](../replication.md), conflict resolution, and offline persistence. RxDB bridges the gap by providing an integrated data handling solution tailor-made for modern, data-intensive Vue applications.
 
 ## Getting Started with RxDB
 Let's break down the essentials for using RxDB within a Vue application.
@@ -75,7 +75,7 @@ export async function initDatabase() {
         primaryKey: 'id',
         type: 'object',
         properties: {
-          id: { type: 'string' },
+          id: { type: 'string', maxLength: 100 },
           name: { type: 'string' },
           healthpoints: { type: 'number' }
         }
@@ -133,7 +133,7 @@ onMounted(async () => {
 
 ## Different RxStorage Layers for RxDB
 
-RxDB supports multiple storage backends - called "RxStorage layers" - giving you flexibility in how data is persisted:
+RxDB supports multiple storage backends - called "[RxStorage](../rx-storage.md) layers" - giving you flexibility in how data is persisted:
 
 - [LocalStorage RxStorage](../rx-storage-localstorage.md): Uses the browsers localstorage API.
 - [IndexedDB RxStorage](../rx-storage-indexeddb.md): Direct usage of native IndexedDB.
@@ -147,7 +147,7 @@ Choose the storage option that best aligns with your Vue application's requireme
 
 RxDB champions an offline-first approach: data is kept locally so that your Vue app remains usable, even without internet. When connectivity is restored, RxDB ensures your local changes synchronize to the server, resolving conflicts as necessary.
 
-<p align="center"><img src="../files/database-replication.png" alt="database replication" width="200" /></p>
+<CenteredImage src="../files/database-replication.png" alt="database replication" width={200} />
 
 
 - [Real-Time Synchronization](./realtime-database.md): With RxDB's replication plugins, any local change can be instantly pushed to a remote endpoint while pulling down remote changes to ensure consistency.
@@ -174,7 +174,7 @@ This [optimization](../key-compression.md) shortens field names in stored JSON d
 ### Multi-Tab Support
 If your users open multiple tabs of your Vue application, RxDB ensures data is synchronized across all instances in real time. Changes made in one tab are immediately reflected in others, creating a unified user experience.
 
-<p align="center"> <img src="../files/multiwindow.gif" alt="multi tab support" width="450" /> </p>
+<CenteredImage src="../files/multiwindow.gif" alt="multi tab support" width={450} />
 
 
 ## Best Practices for Using RxDB in Vue
@@ -188,6 +188,16 @@ Here are some recommendations to get the most out of RxDB in your Vue projects:
 - Optimize Queries and Indexes: Only query the data you need, and define indexes to speed up lookups.
 - Test [Offline Scenarios](../offline-first.md): Make sure your offline logic works as expected by simulating network disconnections and reconnections.
 - [Plan Conflict Resolution](../transactions-conflicts-revisions.md): For multi-user apps, decide how to merge concurrent changes to prevent data inconsistencies.
+
+## FAQ
+
+<Faq>
+<FaqItem question="How to safely access LocalStorage or IndexedDB in a Vue.js project?">
+
+Accessing raw standard LocalStorage or IndexedDB inside Vue components directly creates synchronization and lifecycle vulnerabilities. Instead, you safely access browser storage by initializing a specialized local-first database like **[RxDB](https://rxdb.info)**. RxDB provides cross-tab synchronization bindings, robust event routing, and integrates flawlessly into Vue 3's Composition API by exposing query results as reactive arrays you can strictly monitor with local `ref()` variables.
+
+</FaqItem>
+</Faq>
 
 ## Follow Up
 

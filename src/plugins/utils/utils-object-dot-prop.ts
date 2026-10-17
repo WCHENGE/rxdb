@@ -206,6 +206,31 @@ export function getProperty(object: any, path: string | string[], value?: any) {
         return value === undefined ? object : value;
     }
 
+    /**
+     * Fast path for simple dot-notation paths without bracket
+     * notation or backslash escaping. This covers the vast majority
+     * of RxDB property access patterns (e.g. 'nested.field')
+     * and avoids the expensive getPathSegments() parser.
+     */
+    if (!path.includes('[') && !path.includes('\\')) {
+        const segments = path.split('.');
+        let current = object;
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            if (disallowedKeys.has(seg)) {
+                return value;
+            }
+            current = current[seg];
+            if (current === undefined || current === null) {
+                if (i !== segments.length - 1) {
+                    return value;
+                }
+                break;
+            }
+        }
+        return current === undefined ? value : current;
+    }
+
     const pathArray = getPathSegments(path);
     if (pathArray.length === 0) {
         return value;
@@ -330,7 +355,7 @@ function entries(value: any) {
     return Object.entries(value);
 }
 
-function stringifyPath(pathSegments: never[]) {
+function stringifyPath(pathSegments: any[]) {
     let result = '';
 
     // eslint-disable-next-line prefer-const
@@ -346,7 +371,7 @@ function stringifyPath(pathSegments: never[]) {
     return result;
 }
 
-function* deepKeysIterator(object: any, currentPath = []): any {
+function* deepKeysIterator(object: any, currentPath: any[] = []): any {
     if (!isObject(object)) {
         if (currentPath.length > 0) {
             yield stringifyPath(currentPath);

@@ -1,7 +1,10 @@
+import type { ReactElement } from 'react';
+import { JsonLd, nodeText } from './json-ld';
+
 /**
  * @link https://chatgpt.com/c/67af1c3a-4d98-8005-a86c-8f9b4192b519
  */
-export function Steps(props: { children: JSX.Element[]; }) {
+export function Steps(props: { children: ReactElement<any>[]; name?: string; }) {
     const steps = [];
     let currentStep = null;
 
@@ -25,8 +28,30 @@ export function Steps(props: { children: JSX.Element[]; }) {
         steps.push(currentStep);
     }
 
+    const howToSteps = steps.map((step, index) => {
+        const name = nodeText(step.headline.props.children).replace(/\s+/g, ' ').trim();
+        const text = step.paragraphs
+            .map(paragraph => nodeText(paragraph.props.children))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return {
+            '@type': 'HowToStep',
+            position: index + 1,
+            name,
+            text: text || name,
+        };
+    });
+    const howToJsonLd = {
+        '@context': 'https://schema.org',
+        '@type': 'HowTo',
+        name: props.name || 'How-to guide',
+        step: howToSteps,
+    };
+
     return (
         <div style={styles.stepsContainer}>
+            {howToSteps.length > 0 && <JsonLd data={howToJsonLd} />}
             {steps.map((step, index) => (
                 <div key={index} style={styles.stepWrapper}>
                     <div style={styles.stepIndicator}>
@@ -58,7 +83,7 @@ const styles = {
     stepWrapper: {
         display: 'flex',
         alignItems: 'stretch',
-        marginBottom: '1rem',
+        marginBottom: '1.5rem',
         position: 'relative',
         // Allow the .stepContent (to the right) to shrink without pushing the layout horizontally
         minWidth: 0,
@@ -80,22 +105,22 @@ const styles = {
         width: '33px',
         height: '33px',
         borderRadius: '50%',
-        backgroundColor: 'var(--color-middle)',
-        border: '3px solid #391a3b',
+        backgroundColor: 'var(--color-top)',
         color: '#fff',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         fontWeight: 'bold',
+        marginTop: -4
     },
     verticalLine: {
         position: 'absolute',
-        top: '33px',
+        top: 29,
         bottom: '0',
         left: '50%',
         width: '1px',
         background:
-            'linear-gradient(to bottom, var(--color-middle) 0%, var(--color-middle) 80%, rgba(0,0,0,0) 100%)',
+            'linear-gradient(to bottom, var(--color-top) 0%, var(--color-top) 80%, rgba(0,0,0,0) 100%)',
         transform: 'translateX(-50%)',
     },
     stepContent: {

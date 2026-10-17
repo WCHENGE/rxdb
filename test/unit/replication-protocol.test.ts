@@ -1,6 +1,6 @@
 import assert from 'assert';
 
-import config, { describeParallel } from './config.ts';
+import config from './config.ts';
 import {
     randomToken,
     now,
@@ -28,13 +28,13 @@ import {
     RxJsonSchema,
     RxDocumentWriteData,
     createBlob,
-    blobToBase64String,
     RxAttachmentWriteData,
     flatClone,
     requestIdlePromise,
     promiseSeries,
     prepareQuery,
-    runXTimes
+    runXTimes,
+    ensureNotFalsy
 } from '../../plugins/core/index.mjs';
 
 
@@ -49,7 +49,8 @@ import {
     EXAMPLE_REVISION_3,
     HumanDocumentType,
     EXAMPLE_REVISION_2,
-    EXAMPLE_REVISION_1
+    EXAMPLE_REVISION_1,
+    isDeno
 } from '../../plugins/test-utils/index.mjs';
 import {
     clone,
@@ -59,8 +60,6 @@ import {
 } from 'async-test-util';
 
 const testContext = 'replication-protocol.test.ts';
-
-const useParallel = describeParallel;
 
 function ensureReplicationHasNoErrors(replicationState: RxStorageInstanceReplicationState<any>) {
     /**
@@ -74,7 +73,7 @@ function ensureReplicationHasNoErrors(replicationState: RxStorageInstanceReplica
     });
 }
 
-useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () => {
+describe(testContext + ' (implementation: ' + config.storage.name + ')', () => {
     if (!config.storage.hasReplication) {
         return;
     }
@@ -150,12 +149,11 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
     async function getAttachmentWriteData(): Promise<RxAttachmentWriteData> {
         const attachmentData = randomToken(20);
         const dataBlob = createBlob(attachmentData, 'text/plain');
-        const dataString = await blobToBase64String(dataBlob);
         return {
-            data: dataString,
+            data: dataBlob,
             length: attachmentData.length,
             type: 'text/plain',
-            digest: await defaultHashSha256(dataString)
+            digest: await defaultHashSha256(dataBlob)
         };
     }
     async function createRxStorageInstance(
@@ -288,7 +286,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 console.log('## ERROR: State not equal (docs count: ' + resA.length + ')');
                 console.log(JSON.stringify({ col: instanceA.collectionName, docA }, null, 4));
                 console.log(JSON.stringify({ col: instanceB.collectionName, docB }, null, 4));
-                throw new Error('STATE not equal');
+                throw new Error('STATE not equal', { cause: err });
             }
         });
     }
@@ -317,6 +315,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                     ),
                     forkInstance,
                     metaInstance,
+                    skipStoringPullMeta: false,
                     pullBatchSize: 100,
                     pushBatchSize: 100,
                     conflictHandler: THROWING_CONFLICT_HANDLER,
@@ -382,6 +381,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 ),
                 forkInstance,
                 metaInstance,
+                skipStoringPullMeta: false,
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
@@ -423,6 +423,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 metaInstance,
                 pullBatchSize: 100,
                 pushBatchSize: 100,
+                skipStoringPullMeta: false,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
                 hashFunction: defaultHashSha256
             });
@@ -460,6 +461,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 metaInstance,
                 pullBatchSize: 100,
                 pushBatchSize: 100,
+                skipStoringPullMeta: false,
                 conflictHandler: HIGHER_AGE_CONFLICT_HANDLER,
                 hashFunction: defaultHashSha256
             });
@@ -543,6 +545,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 metaInstance: metaInstanceA,
                 pullBatchSize: 100,
                 pushBatchSize: 100,
+                skipStoringPullMeta: false,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
                 hashFunction: defaultHashSha256
             });
@@ -554,6 +557,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 metaInstance: metaInstanceB,
                 pullBatchSize: 100,
                 pushBatchSize: 100,
+                skipStoringPullMeta: false,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
                 hashFunction: defaultHashSha256
             });
@@ -597,6 +601,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             const replicationStateBtoC = replicateRxStorageInstance({
@@ -607,6 +612,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             const replicationStateCtoMaster = replicateRxStorageInstance({
@@ -617,6 +623,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
 
@@ -708,6 +715,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             const replicationStateBtoMaster = replicateRxStorageInstance({
@@ -718,6 +726,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
 
@@ -764,6 +773,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: HIGHER_AGE_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256,
                 initialCheckpoint: {
                     upstream: lastForkCheckpoint
@@ -802,6 +812,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             await awaitRxStorageReplicationFirstInSync(replicationState);
@@ -846,6 +857,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: HIGHER_AGE_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
 
@@ -903,6 +915,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: HIGHER_AGE_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
 
@@ -946,6 +959,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: Math.ceil(writeAmount / 4),
                 pushBatchSize: Math.ceil(writeAmount / 4),
                 conflictHandler: HIGHER_AGE_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 /**
                  * To give the fork some time to do additional writes
                  * before the persistence is running,
@@ -1017,11 +1031,11 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                      * because firefox IndexedDB is so slow.
                      */
                     writesOnMaster <= writeAmount,
-                    'Writes on master(' + writesOnMaster + ') not smaller then writeAmount (' + writeAmount + ')'
+                    'Writes on master(' + writesOnMaster + ') not smaller than writeAmount (' + writeAmount + ')'
                 );
                 assert.ok(
                     writesOnMaster < writesOnFork,
-                    'Writes on master(' + writesOnMaster + ') not smaller then writes on fork (' + writesOnFork + ')'
+                    'Writes on master(' + writesOnMaster + ') not smaller than writes on fork (' + writesOnFork + ')'
                 );
             }
 
@@ -1030,6 +1044,13 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
     });
     describe('attachment replication', () => {
         if (!config.storage.hasAttachments) {
+            return;
+        }
+        // Deno's structuredClone() silently destroys Blob data, returning {}. https://github.com/denoland/deno/issues/12067#issuecomment-1975001079
+        // fake-indexeddb (used by dexie in non-browser envs) relies on
+        // structuredClone, so Blob attachment roundtrips are broken in Deno+dexie.
+        // These tests pass fine on Node and Bun, which is sufficient coverage.
+        if (isDeno && config.storage.name === 'dexie') {
             return;
         }
         it('push-only: should replicate the attachments to master', async () => {
@@ -1046,6 +1067,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             await awaitRxStorageReplicationFirstInSync(replicationState);
@@ -1066,6 +1088,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             await awaitRxStorageReplicationFirstInSync(replicationState);
@@ -1153,11 +1176,11 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 metaInstance,
                 pullBatchSize: 8,
                 pushBatchSize: 8,
+                skipStoringPullMeta: false,
                 conflictHandler,
                 hashFunction: defaultHashSha256,
             });
-            // TODO why does this throw an an error with the foundationdb RxStorage?
-            // ensureReplicationHasNoErrors(replicationState);
+            ensureReplicationHasNoErrors(replicationState);
             await awaitRxStorageReplicationIdle(replicationState);
 
             // master must contain a resolved conflict
@@ -1202,10 +1225,10 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                     pullBatchSize: Math.ceil(writeAmount / 4),
                     pushBatchSize: Math.ceil(writeAmount / 4),
                     conflictHandler,
+                    skipStoringPullMeta: false,
                     hashFunction: defaultHashSha256,
                 });
-                // TODO why does this throw an an error with the foundationdb RxStorage?
-                // ensureReplicationHasNoErrors(replicationState);
+                ensureReplicationHasNoErrors(replicationState);
 
                 // insert
                 const document = getDocData();
@@ -1303,6 +1326,7 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER as any,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             await awaitRxStorageReplicationFirstInSync(replicationState);
@@ -1356,17 +1380,113 @@ useParallel(testContext + ' (implementation: ' + config.storage.name + ')', () =
                 forkInstance,
                 metaInstance,
                 /**
-                 * Must be smaller then the amount of document
+                 * Must be smaller than the amount of document
                  */
                 pullBatchSize: 100,
                 pushBatchSize: 100,
                 conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
                 hashFunction: defaultHashSha256
             });
             ensureReplicationHasNoErrors(replicationState);
 
             await awaitRxStorageReplicationFirstInSync(replicationState);
             await cleanUp(replicationState, masterInstance);
+        });
+        /**
+         * The upstream initial sync throttles the reads from the fork instance
+         * by awaiting the running persistToMaster() promises when the master
+         * is slower than the fork. When the replication got canceled while it
+         * waited, the fork instance might already be closed, so it must not
+         * be read from anymore.
+         * This happened with a fast RxStorage (rxdb-premium IndexedDB) during an
+         * interrupted schema migration: RxMigrationState.cancel() canceled the
+         * replication and closed the old storage, the upstream then called
+         * getChangedDocumentsSince() on the closed instance and the
+         * "instance is closed" error ended up as an unhandled rejection.
+         */
+        it('must not read from the fork instance after the replication was canceled', async () => {
+            const masterInstance = await createRxStorageInstance(0);
+            const forkInstance = await createRxStorageInstance(100);
+            const metaInstance = await createMetaInstance(forkInstance.schema);
+
+            /**
+             * Track reads on the fork instance that happen after it was closed.
+             * Return an empty result instead of throwing so that a regression
+             * shows up as a failed assertion and not as an unhandled rejection.
+             */
+            let forkClosed = false;
+            let forkReadsAfterClose = 0;
+            const queryBefore = forkInstance.query.bind(forkInstance);
+            forkInstance.query = (preparedQuery: any) => {
+                if (forkClosed) {
+                    forkReadsAfterClose = forkReadsAfterClose + 1;
+                    return Promise.resolve({ documents: [] });
+                }
+                return queryBefore(preparedQuery);
+            };
+            if (forkInstance.getChangedDocumentsSince) {
+                const getChangedDocumentsSinceBefore = forkInstance.getChangedDocumentsSince.bind(forkInstance);
+                forkInstance.getChangedDocumentsSince = (limit: number, checkpoint?: any) => {
+                    if (forkClosed) {
+                        forkReadsAfterClose = forkReadsAfterClose + 1;
+                        return Promise.resolve({ documents: [], checkpoint });
+                    }
+                    return getChangedDocumentsSinceBefore(limit, checkpoint);
+                };
+            }
+            const closeBefore = forkInstance.close.bind(forkInstance);
+            forkInstance.close = () => {
+                forkClosed = true;
+                return closeBefore();
+            };
+
+            const baseHandler = rxStorageInstanceToReplicationHandler(
+                masterInstance,
+                THROWING_CONFLICT_HANDLER,
+                randomToken(10)
+            );
+            let cancelPromise: Promise<void> | undefined;
+            const replicationState = replicateRxStorageInstance({
+                identifier: randomToken(10),
+                replicationHandler: {
+                    masterChangeStream$: baseHandler.masterChangeStream$,
+                    masterChangesSince: baseHandler.masterChangesSince,
+                    masterWrite: async (rows) => {
+                        // a slow master makes the upstream throttle its reads from the fork
+                        await wait(20);
+                        if (!cancelPromise) {
+                            /**
+                             * Cancel while a batch is pushed and close the fork instance,
+                             * like RxMigrationState.cancel() does when a migration is interrupted.
+                             */
+                            cancelPromise = cancelRxStorageReplication(replicationState)
+                                .then(() => forkInstance.close());
+                            await cancelPromise;
+                        }
+                        return baseHandler.masterWrite(rows);
+                    }
+                },
+                forkInstance,
+                metaInstance,
+                pullBatchSize: 10,
+                pushBatchSize: 10,
+                conflictHandler: THROWING_CONFLICT_HANDLER,
+                skipStoringPullMeta: false,
+                hashFunction: defaultHashSha256
+            });
+            ensureReplicationHasNoErrors(replicationState);
+
+            await waitUntil(() => !!cancelPromise);
+            await ensureNotFalsy(cancelPromise);
+            await awaitRxStorageReplicationInSync(replicationState);
+
+            assert.strictEqual(forkReadsAfterClose, 0, 'the fork instance was read after it was closed');
+
+            await Promise.all([
+                masterInstance.close(),
+                metaInstance.remove()
+            ]);
         });
     });
 });

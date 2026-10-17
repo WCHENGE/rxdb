@@ -17,7 +17,7 @@ function parametersToString(parameters: any): string {
     let ret = '';
     if (Object.keys(parameters).length === 0)
         return ret;
-    ret +='-'.repeat(20) + '\n';
+    ret += '-'.repeat(20) + '\n';
     ret += 'Parameters:\n';
     ret += Object.keys(parameters)
         .map(k => {
@@ -53,7 +53,7 @@ export class RxError extends Error {
     public message: string;
     public url: string;
     public parameters: RxErrorParameters;
-    // always true, use this to detect if its an rxdb-error
+    // always true, use this to detect if it's an rxdb-error
     public rxdb: true;
     constructor(
         code: RxErrorKey,
@@ -84,7 +84,7 @@ export class RxTypeError extends TypeError {
     public message: string;
     public url: string;
     public parameters: RxErrorParameters;
-    // always true, use this to detect if its an rxdb-error
+    // always true, use this to detect if it's an rxdb-error
     public rxdb: true;
     constructor(
         code: RxErrorKey,
@@ -116,7 +116,8 @@ export function getErrorUrl(code: RxErrorKey) {
 }
 
 export function errorUrlHint(code: RxErrorKey) {
-    return '\nFind out more about this error here: ' + getErrorUrl(code) + ' \n';
+    return '\nFind out more about this error here: ' + getErrorUrl(code) + ' \n' +
+        'Still stuck? Ask in the RxDB Discord: https://rxdb.info/chat \n';
 }
 
 export function newRxError(
@@ -172,4 +173,19 @@ export function rxStorageWriteErrorToRxError(err: RxStorageWriteError<any>): RxE
         document: err.documentId,
         writeError: err
     });
+}
+
+export async function newRxFetchError(
+    input: Response,
+    additionalParameters?: RxErrorParameters
+): Promise<RxError> {
+    const errorText = await input.text().catch(() => '');
+    const parameters: RxErrorParameters = {
+        ...additionalParameters,
+        ...(input.url ? { url: input.url } : {}),
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.statusText ? { statusText: input.statusText } : {}),
+        ...(errorText ? { errorText } : {})
+    };
+    return newRxError('FETCH', parameters);
 }
