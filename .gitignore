@@ -23,11 +23,11 @@ pouch__all_dbs__/
 isolate-*
 release-body.md
 /test-db-*
-dist/
 # only the generated plugins folder in the root, not src/plugins/
 /plugins/
 *-debug.log
 .vscode
+.codegraph
 ai-context.txt
 docs-src/static/files/video-thumbnails/
 ERROR-MESSAGES.md
