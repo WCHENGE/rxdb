@@ -10,6 +10,6 @@ export const NON_PREMIUM_COLLECTION_LIMIT = Number.MAX_SAFE_INTEGER;
  * However you might better spend this time developing your real project
  * and supporting the RxDB efforts by buying premium.
  */
-export async function hasPremiumFlag() {
+export function hasPremiumFlag(): Promise<true> {
     return PROMISE_RESOLVE_TRUE;
 }
