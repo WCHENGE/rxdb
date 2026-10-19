@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","names":[],"sources":["../../../../src/plugins/react/index.ts"],"sourcesContent":["export { RxDatabaseProvider } from './database-provider.tsx';\nexport * from './hooks/index.ts';\n"],"mappings":";;;;;;;;;;;;;;AAAA;AACA;AAAA;EAAA;EAAA;EAAA;EAAA;IAAA;IAAA;MAAA;IAAA;EAAA;AAAA","ignoreList":[]}

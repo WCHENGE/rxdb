@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","names":[],"sources":["../../../../src/plugins/webmcp/index.ts"],"sourcesContent":["export * from './webmcp.ts';\nexport * from './webmcp-target.ts';\nexport * from './webmcp-tools.ts';\nexport * from './nosql-query-schema.ts';\n"],"mappings":"AAAA,cAAc,aAAa;AAC3B,cAAc,oBAAoB;AAClC,cAAc,mBAAmB;AACjC,cAAc,yBAAyB","ignoreList":[]}
