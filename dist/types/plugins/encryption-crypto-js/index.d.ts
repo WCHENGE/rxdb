@@ -1,5 +1,11 @@
 import type { InternalStoreDocType, RxStorage } from '../../types/index.js';
 export declare const MINIMUM_PASSWORD_LENGTH: 8;
+/**
+ * Encrypts to `base64(nonce ‖ ciphertext ‖ tag)`.
+ *
+ * GCM is authenticated: a tampered or truncated payload makes decryption throw
+ * instead of silently returning garbage.
+ */
 export declare function encryptString(value: string, password: string): string;
 export declare function decryptString(cipherText: string, password: any): string;
 export type InternalStorePasswordDocType = InternalStoreDocType<{
