@@ -1,21 +1,51 @@
 /**
  * this plugin adds the encryption-capabilities to rxdb
- * It's using crypto-js/aes for password-encryption
- * @link https://github.com/brix/crypto-js
+ *
+ * It uses AES-256-GCM (authenticated encryption) via @noble/ciphers.
+ * The module path keeps the historical `encryption-crypto-js` name so existing
+ * imports stay valid; the crypto-js dependency itself is gone.
  */
-import pkg from 'crypto-js';
-var {
-  AES,
-  enc: cryptoEnc
-} = pkg;
+import { gcm } from '@noble/ciphers/aes.js';
+import { concatBytes, bytesToUtf8, utf8ToBytes } from '@noble/ciphers/utils.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { wrapRxStorageInstance } from "../../plugin-helpers.js";
 import { newRxError, newRxTypeError } from "../../rx-error.js";
 import { hasEncryption } from "../../rx-storage-helper.js";
 import { arrayBufferToBase64, base64ToArrayBuffer, clone, ensureNotFalsy, flatClone, getProperty, setProperty } from "../../plugins/utils/index.js";
 export var MINIMUM_PASSWORD_LENGTH = 8;
+
+/** 96-bit nonce, the size recommended for AES-GCM */
+var NONCE_BYTES = 12;
+function deriveKey(password) {
+  // 32-byte AES-256 key. Password is hashed so any string length works.
+  return sha256(utf8ToBytes(password));
+}
+function bytesToBase64(bytes) {
+  var binary = '';
+  for (var i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+function base64ToBytes(text) {
+  var binary = atob(text);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Encrypts to `base64(nonce ‖ ciphertext ‖ tag)`.
+ *
+ * GCM is authenticated: a tampered or truncated payload makes decryption throw
+ * instead of silently returning garbage.
+ */
 export function encryptString(value, password) {
-  var encrypted = AES.encrypt(value, password);
-  return encrypted.toString();
+  var nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
+  var ciphertext = gcm(deriveKey(password), nonce).encrypt(utf8ToBytes(value));
+  return bytesToBase64(concatBytes(nonce, ciphertext));
 }
 export function decryptString(cipherText, password) {
   /**
@@ -30,9 +60,9 @@ export function decryptString(cipherText, password) {
       }
     });
   }
-  var decrypted = AES.decrypt(cipherText, password);
-  var ret = decrypted.toString(cryptoEnc.Utf8);
-  return ret;
+  var payload = base64ToBytes(cipherText);
+  var plaintext = gcm(deriveKey(password), payload.slice(0, NONCE_BYTES)).decrypt(payload.slice(NONCE_BYTES));
+  return bytesToUtf8(plaintext);
 }
 export function wrappedKeyEncryptionCryptoJsStorage(args) {
   return Object.assign({}, args.storage, {

@@ -1,7 +1,7 @@
 {
   "name": "rxdb",
   "description": "A local-first realtime NoSQL Database for JavaScript applications - https://rxdb.info/",
-  "version": "17.6.0",
+  "version": "17.6.1",
   "author": "pubkey",
   "repository": {
     "type": "git",
@@ -568,6 +568,8 @@
   },
   "dependencies": {
     "@babel/runtime": "8.0.5",
+    "@noble/ciphers": "1.3.0",
+    "@noble/hashes": "2.0.1",
     "@types/simple-peer": "9.11.9",
     "@types/ws": "8.18.1",
     "ajv": "8.20.0",
@@ -575,9 +577,8 @@
     "array-push-at-sort-position": "5.0.0",
     "as-typed": "1.3.2",
     "broadcast-channel": "7.4.0",
-    "crypto-js": "4.2.0",
     "custom-idle-queue": "5.0.2",
-    "dexie": "4.4.2",
+    "dexie": "4.4.7",
     "event-reduce-js": "6.0.0",
     "get-graphql-from-jsonschema": "8.1.0",
     "graphql": "17.0.2",
@@ -619,7 +620,6 @@
     "@testing-library/react": "16.3.3",
     "@types/assert": "1.5.11",
     "@types/cors": "2.8.19",
-    "@types/crypto-js": "4.2.2",
     "@types/mocha": "10.0.10",
     "@types/node": "26.6.3",
     "@types/react": "19.3.0",

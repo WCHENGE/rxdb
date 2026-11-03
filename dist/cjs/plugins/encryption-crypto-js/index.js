@@ -1,6 +1,5 @@
 "use strict";
 
-var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault").default;
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
@@ -8,25 +7,55 @@ exports.MINIMUM_PASSWORD_LENGTH = void 0;
 exports.decryptString = decryptString;
 exports.encryptString = encryptString;
 exports.wrappedKeyEncryptionCryptoJsStorage = wrappedKeyEncryptionCryptoJsStorage;
-var _cryptoJs = _interopRequireDefault(require("crypto-js"));
+var _aes = require("@noble/ciphers/aes.js");
+var _utils = require("@noble/ciphers/utils.js");
+var _sha = require("@noble/hashes/sha2.js");
 var _pluginHelpers = require("../../plugin-helpers.js");
 var _rxError = require("../../rx-error.js");
 var _rxStorageHelper = require("../../rx-storage-helper.js");
 var _index = require("../../plugins/utils/index.js");
 /**
  * this plugin adds the encryption-capabilities to rxdb
- * It's using crypto-js/aes for password-encryption
- * @link https://github.com/brix/crypto-js
+ *
+ * It uses AES-256-GCM (authenticated encryption) via @noble/ciphers.
+ * The module path keeps the historical `encryption-crypto-js` name so existing
+ * imports stay valid; the crypto-js dependency itself is gone.
  */
 
-var {
-  AES,
-  enc: cryptoEnc
-} = _cryptoJs.default;
 var MINIMUM_PASSWORD_LENGTH = exports.MINIMUM_PASSWORD_LENGTH = 8;
+
+/** 96-bit nonce, the size recommended for AES-GCM */
+var NONCE_BYTES = 12;
+function deriveKey(password) {
+  // 32-byte AES-256 key. Password is hashed so any string length works.
+  return (0, _sha.sha256)((0, _utils.utf8ToBytes)(password));
+}
+function bytesToBase64(bytes) {
+  var binary = '';
+  for (var i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+function base64ToBytes(text) {
+  var binary = atob(text);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Encrypts to `base64(nonce ‖ ciphertext ‖ tag)`.
+ *
+ * GCM is authenticated: a tampered or truncated payload makes decryption throw
+ * instead of silently returning garbage.
+ */
 function encryptString(value, password) {
-  var encrypted = AES.encrypt(value, password);
-  return encrypted.toString();
+  var nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
+  var ciphertext = (0, _aes.gcm)(deriveKey(password), nonce).encrypt((0, _utils.utf8ToBytes)(value));
+  return bytesToBase64((0, _utils.concatBytes)(nonce, ciphertext));
 }
 function decryptString(cipherText, password) {
   /**
@@ -41,9 +70,9 @@ function decryptString(cipherText, password) {
       }
     });
   }
-  var decrypted = AES.decrypt(cipherText, password);
-  var ret = decrypted.toString(cryptoEnc.Utf8);
-  return ret;
+  var payload = base64ToBytes(cipherText);
+  var plaintext = (0, _aes.gcm)(deriveKey(password), payload.slice(0, NONCE_BYTES)).decrypt(payload.slice(NONCE_BYTES));
+  return (0, _utils.bytesToUtf8)(plaintext);
 }
 function wrappedKeyEncryptionCryptoJsStorage(args) {
   return Object.assign({}, args.storage, {
